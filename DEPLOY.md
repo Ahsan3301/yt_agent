@@ -55,16 +55,22 @@ client secrets, and `web/node_modules/` out of the repo.
 3. **Root directory**: `web`
 4. **Environment Variables** (Production):
 
-   Set only this one:
+   Set these two:
 
-   | Key                          | Value                                                  |
-   |------------------------------|--------------------------------------------------------|
-   | `NEXT_PUBLIC_REGISTRY_URL`   | `https://yourdomain.com/yt-agent/registry.json`        |
+   | Key                          | Value                                                                                       |
+   |------------------------------|---------------------------------------------------------------------------------------------|
+   | `NEXT_PUBLIC_REGISTRY_URL`   | `https://yourdomain.com/yt-agent/registry.json`                                              |
+   | `NEXT_PUBLIC_COLAB_URL`     | `https://colab.research.google.com/github/<your-user>/yt_agent/blob/main/colab/yt_agent_colab.ipynb` |
+
+   `NEXT_PUBLIC_COLAB_URL` powers the dashboard's **"Launch backend"**
+   button — when no Colab is registered, the banner shows that button.
+   One click opens the notebook in a new tab; you then hit
+   *Runtime → Run all*. The dashboard polls the registry every 5s and
+   removes the banner automatically once the tunnel registers.
 
    **Do NOT set `NEXT_PUBLIC_BACKEND_URL`** — Vercel rejects empty values
    and the registry already resolves the backend dynamically. The override
-   only exists for local dev / single-known-backend testing; set it only
-   if you're pointing at one specific Colab URL.
+   only exists for local dev / single-known-backend testing.
 
 5. **Deploy.** Vercel gives you a `*.vercel.app` URL. The FastAPI CORS
    layer already allows `https://*.vercel.app` so it works out of the box.
@@ -100,7 +106,75 @@ immediately. No code change needed.
 
 ---
 
-## 4. Idle auto-shutdown (preserves Colab free-tier hours)
+## 4. (Optional) HuggingFace Space — always-on CPU fallback
+
+The Colab path is fast but only runs when you click. If you want a
+backend that's reachable 24/7 (even if slow), deploy a free HF Docker
+Space as a parallel registry entry. The frontend resolver already prefers
+GPU → so Colab takes precedence when available; HF only handles requests
+when no Colab is up.
+
+**Speed reality check:** CPU video encoding on the HF free tier is ~5-10×
+slower than Colab T4. A 60s short renders in ~6-10 min. Everything else
+(LLM, vision, TTS) is hosted API — same speed regardless of tier.
+
+### Steps
+
+1. **Create the Space:** https://huggingface.co/new-space →
+   - Owner: your HF account
+   - Space name: `yt-agent-backend` (or anything)
+   - License: choose any
+   - Space SDK: **Docker**
+   - Hardware: **CPU basic — Free**
+   - Visibility: Private (recommended)
+
+2. **Set secrets** (Settings → *Variables and secrets*):
+
+   | Secret                       | Value                                    |
+   |------------------------------|------------------------------------------|
+   | `NVIDIA_NIM_API_KEY`        | your NIM key                              |
+   | `SHUTTERSTOCK_API_TOKEN`    | user token                                |
+   | `PEXELS_API_KEY`            |                                          |
+   | `PIXABAY_API_KEY`           |                                          |
+   | `COVERR_API_KEY`            | optional                                  |
+   | `FTP_HOST` `FTP_USER` `FTP_PASS` `PUBLIC_BASE_URL` | Hostinger storage     |
+   | `PUBLIC_BACKEND_URL`        | `https://YOUR_USER-YOUR_SPACE.hf.space`   |
+
+   Other env vars (already baked into the Dockerfile as defaults):
+   `INSTANCE_TIER=cpu`, `IDLE_TIMEOUT_SECONDS=0` (never auto-shutdown).
+
+3. **Push the code.** Clone the Space's empty Git repo, copy in the files,
+   commit, push:
+   ```bash
+   huggingface-cli login
+   git clone https://huggingface.co/spaces/YOUR_USER/yt-agent-backend hf-space
+   cp huggingface/Dockerfile huggingface/README.md huggingface/.dockerignore  hf-space/
+   cp -r backend modules requirements.txt main.py                             hf-space/
+   cd hf-space
+   git add . && git commit -m "deploy" && git push
+   ```
+
+4. **Build + boot.** HF builds the image (~3-5 min) then runs `uvicorn`.
+   Within ~30s the Space registers itself in `registry.json` with
+   `tier: "cpu"`. Your dashboard sees it.
+
+5. **Verify.** When no Colab is online and you submit a job, the dashboard
+   shows a small amber banner: *"CPU fallback running — renders take
+   5-10 min. Launch a Colab GPU for ~10× faster."* The job still completes
+   and the video gets uploaded to Hostinger normally.
+
+### When does the HF Space actually run jobs?
+
+| State | What handles the job |
+|---|---|
+| Colab GPU available  | Colab (HF idle)            |
+| Colab GPU busy on N jobs | Colab (HF waits) — GPU still beats CPU even queued |
+| No Colab registered      | HF Space (slow but works)  |
+| Both offline             | Dashboard shows red "Launch backend" |
+
+---
+
+## 5. Idle auto-shutdown (preserves Colab free-tier hours)
 
 The backend self-terminates when there's nothing to do, so an open Colab
 session can't burn your daily compute budget overnight.
@@ -129,7 +203,7 @@ secrets and re-run cell 4. Not recommended on free tier.
 
 ---
 
-## 5. Verifying the chain end-to-end
+## 6. Verifying the chain end-to-end
 
 | Step | What to check |
 |---|---|
@@ -142,7 +216,7 @@ secrets and re-run cell 4. Not recommended on free tier.
 
 ---
 
-## 6. Local development (no Colab, no Vercel)
+## 7. Local development (no Colab, no Vercel)
 
 Same as before — `python launch.py` runs the backend on `:8000` and the
 Next.js dev server on `:3000`. Set neither `NEXT_PUBLIC_BACKEND_URL` nor
@@ -155,7 +229,7 @@ directly from the backend.
 
 ---
 
-## 7. Troubleshooting
+## 8. Troubleshooting
 
 | Symptom | Cause / Fix |
 |---|---|

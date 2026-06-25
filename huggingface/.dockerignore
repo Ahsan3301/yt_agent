@@ -1,0 +1,16 @@
+# Reduces the Docker build context size when pushed to HF.
+.env
+.git
+.gitignore
+__pycache__
+.pytest_cache
+.next
+node_modules
+web
+data
+logs
+output
+tests
+Logs.txt
+*.log
+*.md

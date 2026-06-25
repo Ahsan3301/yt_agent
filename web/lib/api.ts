@@ -9,15 +9,42 @@
 
 const REGISTRY_TTL_MS = 20_000;
 
-type RegistryEntry = {
+export type RegistryEntry = {
   instance_id: string;
   url: string;
   status: "available" | "busy";
   queue_depth: number;
   last_seen: number;
+  started_at?: number;
+  tier?: "gpu" | "cpu";
+  label?: string | null;
+  version?: string;
 };
 
 let _cached: { at: number; url: string } | null = null;
+
+/**
+ * Backend selection priority — lower rank wins:
+ *   1. tier=gpu + available + idle (Colab, no queue)
+ *   2. tier=gpu + busy            (Colab working — wait for it)
+ *   3. tier=cpu + available       (HF Space — slow but free)
+ *   4. tier=cpu + busy
+ * Within a tier+status group, prefer the lowest queue_depth.
+ *
+ * Why GPU > busy GPU > CPU: on a GPU instance the render finishes in ~1 min;
+ * a CPU instance takes 5-10 min. Queueing on a free GPU is faster than
+ * starting fresh on a slow CPU.
+ */
+export function rankBackend(a: RegistryEntry, b: RegistryEntry): number {
+  const score = (e: RegistryEntry) => {
+    const tier = e.tier === "cpu" ? 2 : 0;              // GPU = 0, CPU = 2
+    const busy = e.status === "available" ? 0 : 1;
+    return tier + busy;                                  // 0..3
+  };
+  const sa = score(a), sb = score(b);
+  if (sa !== sb) return sa - sb;
+  return (a.queue_depth || 0) - (b.queue_depth || 0);
+}
 
 async function resolveBackend(): Promise<string> {
   // Hard override wins.
@@ -35,13 +62,7 @@ async function resolveBackend(): Promise<string> {
         const entries = (await r.json()) as RegistryEntry[];
         const fresh = entries
           .filter((e) => e && e.url && Date.now() / 1000 - (e.last_seen || 0) < 120)
-          .sort((a, b) => {
-            // available before busy; then least loaded
-            const aa = a.status === "available" ? 0 : 1;
-            const bb = b.status === "available" ? 0 : 1;
-            if (aa !== bb) return aa - bb;
-            return (a.queue_depth || 0) - (b.queue_depth || 0);
-          });
+          .sort(rankBackend);
         if (fresh.length > 0) {
           const url = fresh[0].url.replace(/\/$/, "");
           _cached = { at: Date.now(), url };
@@ -169,6 +190,37 @@ export async function runVideoUrl(id: string): Promise<string> {
 // ── Misc ──────────────────────────────────────────────────
 export const getPreflight = () => call<{ ok: boolean; error?: string }>("/api/preflight");
 export const getEdgeVoices = () => call<string[]>("/api/edge-voices");
+
+/**
+ * Inspect the registry directly. Returns the list of live backends (after
+ * pruning stale ones), or an empty array if the registry is unreachable
+ * or empty. Bypasses the backend resolver — used by the launch banner to
+ * decide whether to show "click to start".
+ */
+export async function fetchLiveBackends(): Promise<RegistryEntry[]> {
+  const fixed = process.env.NEXT_PUBLIC_BACKEND_URL;
+  if (fixed) {
+    // Fixed backend overrides the registry — pretend it's always available.
+    return [{
+      instance_id: "fixed", url: fixed, status: "available",
+      queue_depth: 0, last_seen: Date.now() / 1000,
+    }];
+  }
+  const registry = process.env.NEXT_PUBLIC_REGISTRY_URL;
+  if (!registry) return [];
+  try {
+    const r = await fetch(registry, { cache: "no-store" });
+    if (!r.ok) return [];
+    const entries = (await r.json()) as RegistryEntry[];
+    return entries.filter((e) =>
+      e && e.url && Date.now() / 1000 - (e.last_seen || 0) < 120,
+    );
+  } catch {
+    return [];
+  }
+}
+
+export const COLAB_URL = process.env.NEXT_PUBLIC_COLAB_URL || "";
 
 // Backward-compat type for older components.
 export type RunState = {

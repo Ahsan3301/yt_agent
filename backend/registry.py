@@ -38,6 +38,14 @@ STALE_AFTER = int(os.getenv("REGISTRY_STALE_AFTER_SECONDS", "120") or 120)
 INSTANCE_ID = os.getenv("INSTANCE_ID") or f"{socket.gethostname()}-{uuid.uuid4().hex[:6]}"
 PUBLIC_URL = os.getenv("PUBLIC_BACKEND_URL", "")  # set by the Colab notebook after cloudflared
 
+# Tier — published with each heartbeat so the frontend can prefer GPU
+# backends (Colab) over CPU fallbacks (HuggingFace Space). Accepted:
+#   "gpu" — fast, on-demand. Default for Colab.
+#   "cpu" — slow, always-on. Use this on HF Spaces.
+INSTANCE_TIER = (os.getenv("INSTANCE_TIER", "gpu") or "gpu").lower()
+# Optional human-readable label that shows up in the dashboard.
+INSTANCE_LABEL = os.getenv("INSTANCE_LABEL", "")
+
 _lock = threading.Lock()
 _running = False
 _status = "available"
@@ -91,6 +99,8 @@ def _merge_self(entries: list[dict], from_jobs_queue_depth: int = 0) -> list[dic
         "queue_depth":  from_jobs_queue_depth,
         "started_at":   _startup_epoch,
         "last_seen":    now,
+        "tier":         INSTANCE_TIER,            # "gpu" | "cpu"
+        "label":        INSTANCE_LABEL or None,   # optional UI hint
         "version":      "1.0",
     }
     fresh.append(me)
