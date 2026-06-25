@@ -1,0 +1,812 @@
+python launch.py
+[launch] backend: C:\Users\BEST BUY COMPUTERS\anaconda3\python.exe -m uvicorn backend.server:app --host 127.0.0.1 --port 8000 --reload
+[launch] frontend: C:\Program Files\nodejs\npm.CMD run dev
+[api ] INFO:     Will watch for changes in these directories: ['C:\\Users\\BEST BUY COMPUTERS\\Downloads\\Personal\\yt_agent']
+[api ] INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+[api ] INFO:     Started reloader process [17744] using WatchFiles
+[web ]
+[web ] > yt-agent-web@1.0.0 dev
+[web ] > next dev
+[web ]
+[api ] INFO:     Started server process [16832]
+[api ] INFO:     Waiting for application startup.
+[api ] INFO:     Application startup complete.
+[web ] ▲ Next.js 16.2.9 (Turbopack)
+[web ] - Local:         http://localhost:3000
+[web ] - Network:       http://169.254.83.107:3000
+[web ] ✓ Ready in 606ms
+[web ]
+[web ] ○ Compiling / ...
+[web ]  GET / 200 in 3.9s (next.js: 3.5s, application-code: 472ms)
+[web ] [browser] A tree hydrated but some attributes of the server rendered HTML didn't match the client properties. This won't be patched up. This can happen if a SSR-ed Client Component used:
+[web ]
+[web ] - A server/client branch `if (typeof window !== 'undefined')`.
+[web ] - Variable input such as `Date.now()` or `Math.random()` which changes each time it's called.
+[web ] - Date formatting in a user's locale which doesn't match the server.
+[web ] - External changing data without sending a snapshot of it along with the HTML.
+[web ] - Invalid HTML tag nesting.
+[web ]
+[web ] It can also happen if the client has a browser extension installed which messes with the HTML before React loaded.
+[web ]
+[web ] https://react.dev/link/hydration-mismatch
+[web ]
+[web ]   ...
+[web ]     <HotReload globalError={[...]} webSocket={WebSocket} staticIndicatorState={{pathname:null, ...}}>
+[web ]       <AppDevOverlayErrorBoundary globalError={[...]}>
+[web ]         <ReplaySsrOnlyErrors>
+[web ]         <DevRootHTTPAccessFallbackBoundary>
+[web ]           <HTTPAccessFallbackBoundary notFound={<NotAllowedRootHTTPFallbackError>}>
+[web ]             <HTTPAccessFallbackErrorBoundary pathname="/" notFound={<NotAllowedRootHTTPFallbackError>} ...>
+[web ]               <RedirectBoundary>
+[web ]                 <RedirectErrorBoundary router={{...}}>
+[web ]                   <Head headCacheNode={{rsc:{...}, ...}}>
+[web ]                     <__next_viewport_boundary__>
+[web ]                     <MetadataWrapper>
+[web ]                       <div
+[web ]                         hidden={true}
+[web ] -                       bis_skin_checked="1"
+[web ]                       >
+[web ]                   <__next_root_layout_boundary__>
+[web ]                     <SegmentViewNode type="layout" pagePath="layout.tsx">
+[web ]                       <SegmentTrieNode>
+[web ]                       <link>
+[web ]                       <script>
+[web ]                       <script>
+[web ]                       <script>
+[web ]                       <RootLayout>
+[web ]                         <html lang="en">
+[web ]                           <body
+[web ] -                           __processed_9c906b11-a775-4ec1-892e-55154a437aab__="true"
+[web ] -                           bis_register="W3sibWFzdGVyIjp0cnVlLCJleHRlbnNpb25JZCI6ImVwcGlvY2VtaG1ubGJoanBsY2drb2ZjaWll..."
+[web ] -                           data-new-gr-c-s-check-loaded="14.1305.0"
+[web ] -                           data-gr-ext-installed=""
+[web ]                           >
+[web ]                             <div
+[web ]                               className="flex h-screen overflow-hidden"
+[web ] -                             bis_skin_checked="1"
+[web ]                             >
+[web ]                               ...
+[web ]                                 <LinkComponent href="/" className="flex items...">
+[web ]                                   <a className="flex items..." ref={function} onClick={function onClick} ...>
+[web ]                                     <Clapperboard>
+[web ]                                     <div
+[web ] -                                     bis_skin_checked="1"
+[web ]                                     >
+[web ]                                       <div
+[web ]                                         className="font-semibold leading-tight"
+[web ] -                                       bis_skin_checked="1"
+[web ]                                       >
+[web ] +                                       YT Agent
+[web ]                                       <div
+[web ]                                         className="text-xs text-neutral-500"
+[web ] -                                       bis_skin_checked="1"
+[web ]                                       >
+[web ] +                                       automation studio
+[web ]                               <main className="flex-1 ove...">
+[web ]                                 <div
+[web ]                                   className="mx-auto max-w-6xl p-8"
+[web ] -                                 bis_skin_checked="1"
+[web ]                                 >
+[web ]                                   ...
+[web ]                                     <SegmentViewNode type="page" pagePath="page.tsx">
+[web ]                                       <SegmentTrieNode>
+[web ]                                       <ClientPageRoot Component={function Dashboard} serverProvidedParams={{...}}>
+[web ]                                         <Dashboard params={Promise} searchParams={Promise}>
+[web ]                                           <div
+[web ]                                             className="space-y-6"
+[web ] -                                           bis_skin_checked="1"
+[web ]                                           >
+[web ]                                             <div
+[web ]                                               className="flex items-center justify-between"
+[web ] -                                             bis_skin_checked="1"
+[web ]                                             >
+[web ]                                               <div
+[web ] -                                               bis_skin_checked="1"
+[web ]                                               >
+[web ]                                               ...
+[web ]                                             <div
+[web ]                                               className="card space-y-4"
+[web ] -                                             bis_skin_checked="1"
+[web ]                                             >
+[web ]                                               <div
+[web ]                                                 className="text-lg font-semibold flex items-center gap-2"
+[web ] -                                               bis_skin_checked="1"
+[web ]                                               >
+[web ]                                               <div
+[web ]                                                 className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end"
+[web ] -                                               bis_skin_checked="1"
+[web ]                                               >
+[web ]                                                 <div
+[web ] -                                                 bis_skin_checked="1"
+[web ]                                                 >
+[web ]                                                 ...
+[web ]                   ...
+[web ]
+[web ]     at <unknown> (file://C:/Users/BEST BUY COMPUTERS/Downloads/Personal/yt_agent/web/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_096_9a-._.js:3439:25)
+[web ]     at runWithFiberInDEV (file://C:/Users/BEST BUY COMPUTERS/Downloads/Personal/yt_agent/web/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_096_9a-._.js:965:74)
+[web ]     at emitPendingHydrationWarnings (file://C:/Users/BEST BUY COMPUTERS/Downloads/Personal/yt_agent/web/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_096_9a-._.js:3438:13)
+[web ]     at completeWork (file://C:/Users/BEST BUY COMPUTERS/Downloads/Personal/yt_agent/web/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_096_9a-._.js:6885:102)
+[web ]     at runWithFiberInDEV (file://C:/Users/BEST BUY COMPUTERS/Downloads/Personal/yt_agent/web/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_096_9a-._.js:965:131)
+[web ]     at completeUnitOfWork (file://C:/Users/BEST BUY COMPUTERS/Downloads/Personal/yt_agent/web/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_096_9a-._.js:9622:23)
+[web ]     at performUnitOfWork (file://C:/Users/BEST BUY COMPUTERS/Downloads/Personal/yt_agent/web/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_096_9a-._.js:9557:28)
+[web ]     at workLoopConcurrentByScheduler (file://C:/Users/BEST BUY COMPUTERS/Downloads/Personal/yt_agent/web/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_096_9a-._.js:9551:58)
+[web ]     at renderRootConcurrent (file://C:/Users/BEST BUY COMPUTERS/Downloads/Personal/yt_agent/web/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_096_9a-._.js:9534:71)
+[web ]     at performWorkOnRoot (file://C:/Users/BEST BUY COMPUTERS/Downloads/Personal/yt_agent/web/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_096_9a-._.js:9061:150)
+[web ]     at performWorkOnRootViaSchedulerTask (file://C:/Users/BEST BUY COMPUTERS/Downloads/Personal/yt_agent/web/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_096_9a-._.js:10255:9)
+[web ]     at MessagePort.performWorkUntilDeadline (file://C:/Users/BEST BUY COMPUTERS/Downloads/Personal/yt_agent/web/.next/dev/static/chunks/node_modules_next_dist_compiled_1amofcm._.js:2647:64) (file://C:/Users/BEST BUY COMPUTERS/Downloads/Personal/yt_agent/web/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_096_9a-._.js:3439:25)
+[api ] INFO:     127.0.0.1:56917 - "GET /api/settings HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:56918 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:08:04,839 [INFO] modules.config: Preflight ok | channel=horror tone=chilling privacy=public tts=edge
+[api ] INFO:     127.0.0.1:56920 - "GET /api/preflight HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:56922 - "GET /api/runs HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:56957 - "POST /api/cancel HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:56974 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:62777 - "GET /api/runs HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:50369 - "GET /api/state HTTP/1.1" 200 OK
+[web ]  GET /settings 200 in 783ms (next.js: 718ms, application-code: 65ms)
+[api ] INFO:     127.0.0.1:63929 - "GET /api/settings HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:63930 - "GET /api/edge-voices HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:63932 - "GET /api/edge-voices HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:63931 - "GET /api/settings HTTP/1.1" 200 OK
+[web ]  GET /history 200 in 700ms (next.js: 651ms, application-code: 49ms)
+[api ] INFO:     127.0.0.1:63372 - "GET /api/runs HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:63374 - "GET /api/runs HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:63414 - "GET /api/runs/20260625_105252/video HTTP/1.1" 206 Partial Content
+[api ] INFO:     127.0.0.1:53533 - "GET /api/runs/20260625_105252/video HTTP/1.1" 206 Partial Content
+[api ] INFO:     127.0.0.1:61724 - "GET /api/runs/20260625_105252/video HTTP/1.1" 206 Partial Content
+[web ]  GET /keys 200 in 879ms (next.js: 786ms, application-code: 94ms)
+[api ] INFO:     127.0.0.1:64348 - "GET /api/keys HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:64347 - "GET /api/keys HTTP/1.1" 200 OK
+[web ]  GET / 200 in 31ms (next.js: 3ms, application-code: 27ms)
+[api ] INFO:     127.0.0.1:54129 - "GET /api/settings HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:54131 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:54133 - "GET /api/settings HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:54135 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:08:53,361 [INFO] modules.config: Preflight ok | channel=horror tone=chilling privacy=public tts=edge
+[api ] INFO:     127.0.0.1:64199 - "GET /api/preflight HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:08:53,384 [INFO] modules.config: Preflight ok | channel=horror tone=chilling privacy=public tts=edge
+[api ] INFO:     127.0.0.1:51729 - "GET /api/preflight HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:59044 - "GET /api/runs HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:53239 - "GET /api/runs HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:63109 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:49938 - "POST /api/run HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:09:00,988 [INFO] numexpr.utils: NumExpr defaulting to 8 threads.
+[api ] INFO:     127.0.0.1:57068 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:09:02,095 [INFO] agent: ==================================================
+[api ] 2026-06-25 12:09:02,095 [INFO] agent: Starting pipeline | channel=horror | run=20260625_120902
+[api ] 2026-06-25 12:09:02,095 [INFO] agent: ==================================================
+[api ] 2026-06-25 12:09:02,098 [INFO] agent: [1/6] Researching content...
+[api ] 2026-06-25 12:09:02,107 [INFO] agent: Topic: Someone experiences a power outage that only ever affects one specific room, whi
+[api ] 2026-06-25 12:09:02,107 [INFO] agent: [2/6] Writing script with LLM...
+[api ] 2026-06-25 12:09:02,110 [INFO] modules.scriptwriter: Calling LLM | primary=NIM (nvidia/nemotron-3-super-120b-a12b) | prompt_version=v7 | tone=chilling | words=60-100
+[api ] INFO:     127.0.0.1:64421 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:51441 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:50674 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:57266 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:58574 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:60478 - "POST /api/cancel HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:57252 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:61392 - "GET /api/runs HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:09:26,278 [WARNING] modules.scriptwriter: NIM call failed (("Connection broken: InvalidChunkLength(got length b'', 0 bytes read)", InvalidChunkLength(got length b'', 0 bytes read))); falling back to Groq
+[api ] INFO:     127.0.0.1:64905 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:09:30,365 [INFO] modules.scriptwriter: Script written: 'Room 314'
+[api ] 2026-06-25 12:09:30,366 [INFO] agent: Title: Room 314
+[api ] 2026-06-25 12:09:30,366 [INFO] agent: Script length: 115 words
+[api ] 2026-06-25 12:09:30,366 [INFO] agent: [3/6] Generating voiceover...
+[api ] 2026-06-25 12:09:30,370 [INFO] modules.voiceover: Generating TTS with edge-tts | voice=en-US-BrianMultilingualNeural rate=-5% pitch=-2Hz (timeout=90s/attempt)
+[api ] INFO:     127.0.0.1:57003 - "POST /api/run HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:09:30,474 [INFO] agent: ==================================================
+[api ] 2026-06-25 12:09:30,474 [INFO] agent: Starting pipeline | channel=horror | run=20260625_120930
+[api ] 2026-06-25 12:09:30,475 [INFO] agent: ==================================================
+[api ] 2026-06-25 12:09:30,489 [INFO] agent: [1/6] Researching content...
+[api ] 2026-06-25 12:09:30,523 [INFO] agent: Topic: Someone experiences a figure in the distance that mimics every move you make, wh
+[api ] 2026-06-25 12:09:30,524 [INFO] agent: [2/6] Writing script with LLM...
+[api ] 2026-06-25 12:09:30,533 [INFO] modules.scriptwriter: Calling LLM | primary=NIM (nvidia/nemotron-3-super-120b-a12b) | prompt_version=v7 | tone=chilling | words=60-100
+[api ] INFO:     127.0.0.1:63565 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:56567 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:09:40,662 [INFO] modules.voiceover: Audio saved: output\videos\20260625_120902\audio\voiceover.mp3
+[api ] 2026-06-25 12:09:40,667 [INFO] agent: [4/6] Fetching stock footage (storyboard-driven)...
+[api ] 2026-06-25 12:09:40,870 [INFO] agent: Voiceover 41.1s \u2192 planning 7 shots
+[api ] INFO:     127.0.0.1:56792 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:59298 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:62256 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:59741 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:64501 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:57020 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:63814 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:56674 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:61416 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:10:13,912 [INFO] modules.storyboard: Storyboard attempt 1: kept 6 of 7 shots (dropped 1 malformed)
+[api ] 2026-06-25 12:10:13,912 [INFO] agent:   shot 1: [0.0-3.0s] 'dark victorian dormitory room candlelight'
+[api ] 2026-06-25 12:10:13,913 [INFO] agent:   shot 2: [3.0-13.9s] 'haunted wall thickening supernatural horror'
+[api ] 2026-06-25 12:10:13,913 [INFO] agent:   shot 3: [13.9-18.8s] 'moving cold spot fog supernatural dormitory'
+[api ] 2026-06-25 12:10:13,913 [INFO] agent:   shot 4: [18.8-24.8s] 'creaking floorboard bare foot horror closeup'
+[api ] 2026-06-25 12:10:13,913 [INFO] agent:   shot 5: [24.8-31.4s] 'vibrating air supernatural absence horror'
+[api ] 2026-06-25 12:10:13,913 [INFO] agent:   shot 6: [31.4-41.1s] 'shifting shadows wall candlelight horror'
+[api ] 2026-06-25 12:10:13,918 [INFO] modules.shotfinder: Shot 1/6
+[api ] 2026-06-25 12:10:13,920 [INFO] modules.shotfinder: Shot fetch | query='dark victorian dormitory room candlelight' | excerpt='The lights only go out in my dorm room.'
+[api ] INFO:     127.0.0.1:54589 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:10:20,151 [INFO] modules.shotfinder:   AI prompt (try 1): A dim dormitory bedroom at night, low angle wide establishing shot, overhead light extingu...
+[api ] INFO:     127.0.0.1:58015 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:50549 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:62583 - "GET /api/state HTTP/1.1" 200 OK
+[web ]  GET / 200 in 208ms (next.js: 7ms, application-code: 201ms)
+[web ] ⚠ Blocked cross-origin request to Next.js dev resource /_next/webpack-hmr from "ahsan-main-current.tail9c7a4f.ts.net".
+[web ] Cross-origin access to Next.js dev resources is blocked by default for safety.
+[web ]
+[web ] To allow this host in development, add it to "allowedDevOrigins" in next.config.js and restart the dev server:
+[web ]
+[web ] // next.config.js
+[web ] module.exports = {
+[web ]   allowedDevOrigins: ['ahsan-main-current.tail9c7a4f.ts.net'],
+[web ] }
+[web ]
+[web ] Read more: https://nextjs.org/docs/app/api-reference/config/next-config-js/allowedDevOrigins
+[api ] INFO:     127.0.0.1:63278 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:64229 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:63292 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:52990 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:54684 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:63177 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:51759 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:53326 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:11:02,665 [WARNING] modules.scriptwriter: Attempt 1: invalid JSON: Unterminated string starting at: line 1 column 15 (char 14)
+[web ]  GET / 200 in 88ms (next.js: 8ms, application-code: 80ms)
+[api ] INFO:     127.0.0.1:54936 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:11:09,434 [WARNING] modules.scriptwriter: Attempt 2: schema problems: ['narration too long (190 words; want <=160)']
+[api ] INFO:     127.0.0.1:52678 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:60566 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:49868 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:51170 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:11:22,495 [WARNING] modules.scriptwriter: Attempt 3: schema problems: ['narration too long (186 words; want <=160)']
+[api ] 2026-06-25 12:11:22,495 [ERROR] modules.scriptwriter: Script generation failed after 3 attempts. Last raw: {"narration": "I fill my tank at the lone pump, but the shadow beside me copies my every motion�hand on the nozzle, I see its hand rise too, though no one stands there. The fluorescent light flickers, and for a split second, its outline lags, as if it�s learning. I wipe my brow; it wipes its brow in
+[api ] 2026-06-25 12:11:22,501 [ERROR] agent: Script generation failed. Aborting.
+[web ]  GET / 200 in 84ms (next.js: 6ms, application-code: 78ms)
+[api ] INFO:     127.0.0.1:50549 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:57665 - "GET /api/runs HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:51192 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:62201 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:64789 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:54609 - "POST /api/reset-state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:62162 - "GET /api/state HTTP/1.1" 200 OK
+[web ]  GET / 200 in 110ms (next.js: 10ms, application-code: 100ms)
+[web ] [browser] A tree hydrated but some attributes of the server rendered HTML didn't match the client properties. This won't be patched up. This can happen if a SSR-ed Client Component used:
+[web ]
+[web ] - A server/client branch `if (typeof window !== 'undefined')`.
+[web ] - Variable input such as `Date.now()` or `Math.random()` which changes each time it's called.
+[web ] - Date formatting in a user's locale which doesn't match the server.
+[web ] - External changing data without sending a snapshot of it along with the HTML.
+[web ] - Invalid HTML tag nesting.
+[web ]
+[web ] It can also happen if the client has a browser extension installed which messes with the HTML before React loaded.
+[web ]
+[web ] https://react.dev/link/hydration-mismatch
+[web ]
+[web ]   ...
+[web ]     <HotReload globalError={[...]} webSocket={WebSocket} staticIndicatorState={{pathname:null, ...}}>
+[web ]       <AppDevOverlayErrorBoundary globalError={[...]}>
+[web ]         <ReplaySsrOnlyErrors>
+[web ]         <DevRootHTTPAccessFallbackBoundary>
+[web ]           <HTTPAccessFallbackBoundary notFound={<NotAllowedRootHTTPFallbackError>}>
+[web ]             <HTTPAccessFallbackErrorBoundary pathname="/" notFound={<NotAllowedRootHTTPFallbackError>} ...>
+[web ]               <RedirectBoundary>
+[web ]                 <RedirectErrorBoundary router={{...}}>
+[web ]                   <Head headCacheNode={{rsc:{...}, ...}}>
+[web ]                     <__next_viewport_boundary__>
+[web ]                     <MetadataWrapper>
+[web ]                       <div
+[web ]                         hidden={true}
+[web ] -                       bis_skin_checked="1"
+[web ]                       >
+[web ]                   <__next_root_layout_boundary__>
+[web ]                     <SegmentViewNode type="layout" pagePath="layout.tsx">
+[web ]                       <SegmentTrieNode>
+[web ]                       <link>
+[web ]                       <script>
+[web ]                       <script>
+[web ]                       <script>
+[web ]                       <RootLayout>
+[web ]                         <html lang="en">
+[web ]                           <body
+[web ] -                           __processed_0f6e92f1-508f-437e-ba52-32c8bcd4aed0__="true"
+[web ] -                           cz-shortcut-listen="true"
+[web ] -                           bis_register="W3sibWFzdGVyIjp0cnVlLCJleHRlbnNpb25JZCI6ImVwcGlvY2VtaG1ubGJoanBsY2drb2ZjaWll..."
+[web ] -                           data-new-gr-c-s-check-loaded="14.1305.0"
+[web ] -                           data-gr-ext-installed=""
+[web ]                           >
+[web ]                             <div
+[web ]                               className="flex h-screen overflow-hidden"
+[web ] -                             bis_skin_checked="1"
+[web ]                             >
+[web ]                               ...
+[web ]                                 <LinkComponent href="/" className="flex items...">
+[web ]                                   <a className="flex items..." ref={function} onClick={function onClick} ...>
+[web ]                                     <Clapperboard>
+[web ]                                     <div
+[web ] -                                     bis_skin_checked="1"
+[web ]                                     >
+[web ]                                       <div
+[web ]                                         className="font-semibold leading-tight"
+[web ] -                                       bis_skin_checked="1"
+[web ]                                       >
+[web ] +                                       YT Agent
+[web ]                                       <div
+[web ]                                         className="text-xs text-neutral-500"
+[web ] -                                       bis_skin_checked="1"
+[web ]                                       >
+[web ] +                                       automation studio
+[web ]                               <main className="flex-1 ove...">
+[web ]                                 <div
+[web ]                                   className="mx-auto max-w-6xl p-8"
+[web ] -                                 bis_skin_checked="1"
+[web ]                                 >
+[web ]                                   ...
+[web ]                                     <SegmentViewNode type="page" pagePath="page.tsx">
+[web ]                                       <SegmentTrieNode>
+[web ]                                       <ClientPageRoot Component={function Dashboard} serverProvidedParams={{...}}>
+[web ]                                         <Dashboard params={Promise} searchParams={Promise}>
+[web ]                                           <div
+[web ]                                             className="space-y-6"
+[web ] -                                           bis_skin_checked="1"
+[web ]                                           >
+[web ]                                             <div
+[web ]                                               className="flex items-center justify-between"
+[web ] -                                             bis_skin_checked="1"
+[web ]                                             >
+[web ]                                               <div
+[web ] -                                               bis_skin_checked="1"
+[web ]                                               >
+[web ]                                               ...
+[web ]                                             <div
+[web ]                                               className="card space-y-4"
+[web ] -                                             bis_skin_checked="1"
+[web ]                                             >
+[web ]                                               <div
+[web ]                                                 className="text-lg font-semibold flex items-center gap-2"
+[web ] -                                               bis_skin_checked="1"
+[web ]                                               >
+[web ]                                               <div
+[web ]                                                 className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end"
+[web ] -                                               bis_skin_checked="1"
+[web ]                                               >
+[web ]                                                 <div
+[web ] -                                                 bis_skin_checked="1"
+[web ]                                                 >
+[web ]                                                 ...
+[web ]                   ...
+[web ]
+[web ]     at <unknown> (file://C:/Users/BEST BUY COMPUTERS/Downloads/Personal/yt_agent/web/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_096_9a-._.js:3439:25)
+[web ]     at runWithFiberInDEV (file://C:/Users/BEST BUY COMPUTERS/Downloads/Personal/yt_agent/web/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_096_9a-._.js:965:74)
+[web ]     at emitPendingHydrationWarnings (file://C:/Users/BEST BUY COMPUTERS/Downloads/Personal/yt_agent/web/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_096_9a-._.js:3438:13)
+[web ]     at completeWork (file://C:/Users/BEST BUY COMPUTERS/Downloads/Personal/yt_agent/web/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_096_9a-._.js:6885:102)
+[web ]     at runWithFiberInDEV (file://C:/Users/BEST BUY COMPUTERS/Downloads/Personal/yt_agent/web/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_096_9a-._.js:965:131)
+[web ]     at completeUnitOfWork (file://C:/Users/BEST BUY COMPUTERS/Downloads/Personal/yt_agent/web/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_096_9a-._.js:9622:23)
+[web ]     at performUnitOfWork (file://C:/Users/BEST BUY COMPUTERS/Downloads/Personal/yt_agent/web/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_096_9a-._.js:9557:28)
+[web ]     at workLoopConcurrentByScheduler (file://C:/Users/BEST BUY COMPUTERS/Downloads/Personal/yt_agent/web/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_096_9a-._.js:9551:58)
+[web ]     at renderRootConcurrent (file://C:/Users/BEST BUY COMPUTERS/Downloads/Personal/yt_agent/web/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_096_9a-._.js:9534:71)
+[web ]     at performWorkOnRoot (file://C:/Users/BEST BUY COMPUTERS/Downloads/Personal/yt_agent/web/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_096_9a-._.js:9061:150)
+[web ]     at performWorkOnRootViaSchedulerTask (file://C:/Users/BEST BUY COMPUTERS/Downloads/Personal/yt_agent/web/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_096_9a-._.js:10255:9)
+[web ]     at MessagePort.performWorkUntilDeadline (file://C:/Users/BEST BUY COMPUTERS/Downloads/Personal/yt_agent/web/.next/dev/static/chunks/node_modules_next_dist_compiled_1amofcm._.js:2647:64) (file://C:/Users/BEST BUY COMPUTERS/Downloads/Personal/yt_agent/web/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_096_9a-._.js:3439:25)
+[api ] INFO:     127.0.0.1:59273 - "GET /api/settings HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:59275 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:11:44,353 [INFO] modules.config: Preflight ok | channel=horror tone=chilling privacy=public tts=edge
+[api ] INFO:     127.0.0.1:59277 - "GET /api/preflight HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:59279 - "GET /api/runs HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:59281 - "GET /api/state HTTP/1.1" 200 OK
+[web ]  GET /history 200 in 32ms (next.js: 4ms, application-code: 28ms)
+[api ] INFO:     127.0.0.1:61029 - "GET /api/runs HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:61030 - "GET /api/runs HTTP/1.1" 200 OK
+[web ]  GET /settings 200 in 32ms (next.js: 5ms, application-code: 27ms)
+[api ] INFO:     127.0.0.1:60008 - "GET /api/settings HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:60012 - "GET /api/edge-voices HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:60013 - "GET /api/settings HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:60014 - "GET /api/edge-voices HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:11:53,985 [WARNING] modules.nim: vision_score error: HTTPSConnectionPool(host='integrate.api.nvidia.com', port=443): Read timed out. (read timeout=90)
+[api ] 2026-06-25 12:11:53,985 [INFO] modules.shotfinder:   Pollinations AI: -1/10 (seed 2097464438)
+[api ] 2026-06-25 12:11:57,128 [INFO] modules.shotfinder:   AI prompt (try 2): A tight close-up of a dim dormitory bedroom at night, overhead light just extinguished, pl...
+[api ] INFO:     127.0.0.1:58190 - "PUT /api/settings HTTP/1.1" 200 OK
+[web ]  GET / 200 in 33ms (next.js: 5ms, application-code: 28ms)
+[api ] INFO:     127.0.0.1:60262 - "GET /api/settings HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:60266 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:60268 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:60267 - "GET /api/settings HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:12:21,453 [INFO] modules.config: Preflight ok | channel=horror tone=chilling privacy=public tts=edge
+[api ] INFO:     127.0.0.1:58115 - "GET /api/preflight HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:61406 - "GET /api/runs HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:12:21,532 [INFO] modules.config: Preflight ok | channel=horror tone=chilling privacy=public tts=edge
+[api ] INFO:     127.0.0.1:58572 - "GET /api/preflight HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:54328 - "GET /api/runs HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:56834 - "POST /api/run HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:12:23,231 [INFO] agent: ==================================================
+[api ] 2026-06-25 12:12:23,231 [INFO] agent: Starting pipeline | channel=horror | run=20260625_121223
+[api ] 2026-06-25 12:12:23,231 [INFO] agent: ==================================================
+[api ] 2026-06-25 12:12:23,236 [INFO] agent: [1/6] Researching content...
+[api ] 2026-06-25 12:12:23,246 [INFO] agent: Topic: Someone experiences footsteps that match yours, one step behind, even when you s
+[api ] 2026-06-25 12:12:23,246 [INFO] agent: [2/6] Writing script with LLM...
+[api ] 2026-06-25 12:12:23,250 [INFO] modules.scriptwriter: Calling LLM | primary=NIM (nvidia/nemotron-3-super-120b-a12b) | prompt_version=v7 | tone=chilling | words=60-100
+[api ] INFO:     127.0.0.1:52384 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:12:27,606 [INFO] modules.scriptwriter: Script written: 'The Footsteps Behind You'
+[api ] 2026-06-25 12:12:27,616 [INFO] agent: Title: The Footsteps Behind You
+[api ] 2026-06-25 12:12:27,617 [INFO] agent: Script length: 159 words
+[api ] 2026-06-25 12:12:27,617 [INFO] agent: [3/6] Generating voiceover...
+[api ] 2026-06-25 12:12:27,630 [INFO] modules.voiceover: Generating TTS with edge-tts | voice=en-US-BrianMultilingualNeural rate=-5% pitch=-2Hz (timeout=90s/attempt)
+[api ] INFO:     127.0.0.1:58447 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:58368 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:53394 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:58921 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:12:43,755 [INFO] modules.voiceover: Audio saved: output\videos\20260625_121223\audio\voiceover.mp3
+[api ] 2026-06-25 12:12:43,765 [INFO] agent: [4/6] Fetching stock footage (storyboard-driven)...
+[api ] 2026-06-25 12:12:43,836 [INFO] agent: Voiceover 60.9s \u2192 planning 11 shots
+[api ] INFO:     127.0.0.1:64944 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:49672 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:63411 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:49672 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:55517 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:54020 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:61986 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:65394 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:52916 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:58235 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:50549 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:13:30,904 [WARNING] modules.nim: vision_score error: HTTPSConnectionPool(host='integrate.api.nvidia.com', port=443): Read timed out. (read timeout=90)
+[api ] 2026-06-25 12:13:30,905 [INFO] modules.shotfinder:   Pollinations AI: -1/10 (seed 1607340666)
+[api ] INFO:     127.0.0.1:64616 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:13:33,055 [INFO] modules.shotfinder:   AI prompt (try 3): over-the-shoulder POV from a narrow dormitory corridor looking into a small gothic bedroom...
+[api ] INFO:     127.0.0.1:59187 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:63838 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:59318 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:50549 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:51191 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:59755 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:49303 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:63110 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:54692 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:64213 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:54413 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:50162 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:52771 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:53105 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:56823 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:51527 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:55705 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:56491 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:55839 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:63139 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:50650 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:49203 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:64052 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:15:07,653 [WARNING] modules.nim: vision_score error: HTTPSConnectionPool(host='integrate.api.nvidia.com', port=443): Read timed out. (read timeout=90)
+[api ] 2026-06-25 12:15:07,654 [INFO] modules.shotfinder:   Pollinations AI: -1/10 (seed 1542512647)
+[api ] 2026-06-25 12:15:07,654 [WARNING] modules.shotfinder:   No image found for shot 'dark victorian dormitory room candlelight'
+[api ] 2026-06-25 12:15:07,655 [INFO] modules.shotfinder: Shot 2/6
+[api ] 2026-06-25 12:15:07,661 [INFO] modules.shotfinder: Shot fetch | query='haunted wall thickening supernatural horror' | excerpt="I sit in darkness, hearing my roommate's voice from next doo"
+[api ] INFO:     127.0.0.1:57045 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:15:10,220 [INFO] modules.shotfinder:   AI prompt (try 1): A lone figure sits rigidly on the edge of a narrow iron bed in total darkness, eyes wide a...
+[api ] INFO:     127.0.0.1:49885 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:61278 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:51592 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:57932 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:50549 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:54417 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:61965 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:53435 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:60294 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:56793 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:15:50,040 [INFO] modules.shotfinder:   Pollinations AI: 6/10 (seed 201014154)
+[api ] 2026-06-25 12:15:50,053 [INFO] modules.shotfinder: Shot 3/6
+[api ] 2026-06-25 12:15:50,058 [INFO] modules.shotfinder: Shot fetch | query='moving cold spot fog supernatural dormitory' | excerpt="I feel a draft that isn't there, a cold spot that moves with"
+[api ] INFO:     127.0.0.1:57122 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:15:53,926 [INFO] modules.shotfinder:   AI prompt (try 1): A lone figure in a tattered Victorian nightgown stands motionless in a vast, candlelit man...
+[api ] INFO:     127.0.0.1:51174 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:16:00,247 [INFO] modules.shotfinder:   Pollinations AI: 6/10 (seed 1681979929)
+[api ] 2026-06-25 12:16:00,255 [INFO] modules.shotfinder: Shot 4/6
+[api ] 2026-06-25 12:16:00,258 [INFO] modules.shotfinder: Shot fetch | query='creaking floorboard bare foot horror closeup' | excerpt='My skin prickles with each creak of the floor, even though I'
+[api ] INFO:     127.0.0.1:58027 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:50207 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:16:05,591 [INFO] modules.shotfinder:   AI prompt (try 1): Extreme close-up on a bare foot pressing into a warped, aged floorboard inside a dim Victo...
+[api ] 2026-06-25 12:16:08,518 [WARNING] modules.storyboard: Storyboard JSON parse failed (attempt 1): Unterminated string starting at: line 1 column 34 (char 33)
+[api ] INFO:     127.0.0.1:54251 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:54244 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:60769 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:60980 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:16:25,941 [INFO] modules.storyboard: Storyboard attempt 2: kept 10 of 11 shots (dropped 1 malformed)
+[api ] 2026-06-25 12:16:25,941 [INFO] agent:   shot 1: [0.0-9.9s] 'victorian nursery hallway footprints candlelight fog'
+[api ] 2026-06-25 12:16:25,941 [INFO] agent:   shot 2: [9.9-12.2s] 'terrified face close-up candlelight sweat gothic horror'
+[api ] 2026-06-25 12:16:25,941 [INFO] agent:   shot 3: [12.2-20.7s] 'stuffed animal upright rug facing door candlelight'
+[api ] 2026-06-25 12:16:25,942 [INFO] agent:   shot 4: [20.7-29.0s] 'behind person curtain draft heat distortion horror'
+[api ] 2026-06-25 12:16:25,942 [INFO] agent:   shot 5: [29.0-33.8s] 'straining throat trying to speak candlelight horror'
+[api ] 2026-06-25 12:16:25,942 [INFO] agent:   shot 6: [33.8-39.0s] 'stuffed animal button eyes staring close-up horror'
+[api ] 2026-06-25 12:16:25,942 [INFO] agent:   shot 7: [39.0-43.2s] 'memory flashback placing stuffed animal wall nursery'
+[api ] 2026-06-25 12:16:25,942 [INFO] agent:   shot 8: [43.2-47.9s] 'floorboard depression invisible weight inhale shadow'
+[api ] 2026-06-25 12:16:25,942 [INFO] agent:   shot 9: [47.9-51.1s] 'person refusing to turn dark presence behind'
+[api ] 2026-06-25 12:16:25,943 [INFO] agent:   shot 10: [51.1-60.9s] 'invisible fingers brushing collar fabric close-up'
+[api ] 2026-06-25 12:16:25,951 [INFO] modules.shotfinder: Shot 1/10
+[api ] 2026-06-25 12:16:25,953 [INFO] modules.shotfinder: Shot fetch | query='victorian nursery hallway footprints candlelight fog' | excerpt='The footsteps match mine exactly�left heel, then toe�coming '
+[api ] INFO:     127.0.0.1:64710 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:16:29,614 [INFO] modules.shotfinder:   AI prompt (try 1): Low-angle wide establishing shot down a dimly lit Victorian nursery hallway, showing only ...
+[api ] 2026-06-25 12:16:31,704 [WARNING] modules._net: retry [pollinations] attempt 1/2 failed: HTTPError('429 Client Error: Too Many Requests for url: https://image.pollinations.ai/prompt/Low-angle%20wide%20establishing%20shot%20down%20a%20dimly%20lit%20Victorian%20nursery%20hallway%2C%20showing%20only%20the%20protagonist%27s%20feet%20in%20worn%20leather%20boots%20standing%20still%20on%20dusty%20floorboards%2C%20with%20identical%20fresh%20footprints%20appearing%20to%20approach%20from%20behind%20in%20the%20fine%20dust%2C%20flickering%20candlelight%20from%20the%20nursery%20doorway%20casting%20long%20trembling%20shadows%20that%20seem%20to%20move%20independently%2C%20thick%20fog%20curling%20at%20ankle%20height%20near%20the%20doorway%2C%20deep%20shadows%20swallowing%20the%20upper%20walls%2C%20muted%20desaturated%20palette%20with%20deep%20blacks%2C%20fine%20film%20grain%2C%20cinematic%2035mm%20film%2C%20dramatic%20chiaroscuro%20lighting%2C%20candlelight%2C%20fog%2C%20victorian%20gothic%2C%20atmospheric%20horror%2C%20dread-soaked%2C%20muted%20desaturated%20palette%2C%20deep%20blacks%2C%20fine%20film%20grain%2C%20photoreal%2C%20eerie%20stillness%2C%20no%20people%20in%20modern%20clothing%2C%20no%20daylight%2C%20no%20sunny%2C%20no%20cartoon%2C%20no%20anime%2C%20no%20comic%2C%20no%20text%2C%20no%20watermark%2C%20no%20modern%20office%2C%20no%20contemporary%20urban%2C%20no%20smiling%20people?width=1080&height=1920&seed=612715389&model=flux&nologo=true&private=true&safe=false') � sleeping 1.7s
+[api ] INFO:     127.0.0.1:52781 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:16:34,961 [WARNING] modules.shotfinder: Pollinations gen failed: 429 Client Error: Too Many Requests for url: https://image.pollinations.ai/prompt/Low-angle%20wide%20establishing%20shot%20down%20a%20dimly%20lit%20Victorian%20nursery%20hallway%2C%20showing%20only%20the%20protagonist%27s%20feet%20in%20worn%20leather%20boots%20standing%20still%20on%20dusty%20floorboards%2C%20with%20identical%20fresh%20footprints%20appearing%20to%20approach%20from%20behind%20in%20the%20fine%20dust%2C%20flickering%20candlelight%20from%20the%20nursery%20doorway%20casting%20long%20trembling%20shadows%20that%20seem%20to%20move%20independently%2C%20thick%20fog%20curling%20at%20ankle%20height%20near%20the%20doorway%2C%20deep%20shadows%20swallowing%20the%20upper%20walls%2C%20muted%20desaturated%20palette%20with%20deep%20blacks%2C%20fine%20film%20grain%2C%20cinematic%2035mm%20film%2C%20dramatic%20chiaroscuro%20lighting%2C%20candlelight%2C%20fog%2C%20victorian%20gothic%2C%20atmospheric%20horror%2C%20dread-soaked%2C%20muted%20desaturated%20palette%2C%20deep%20blacks%2C%20fine%20film%20grain%2C%20photoreal%2C%20eerie%20stillness%2C%20no%20people%20in%20modern%20clothing%2C%20no%20daylight%2C%20no%20sunny%2C%20no%20cartoon%2C%20no%20anime%2C%20no%20comic%2C%20no%20text%2C%20no%20watermark%2C%20no%20modern%20office%2C%20no%20contemporary%20urban%2C%20no%20smiling%20people?width=1080&height=1920&seed=612715389&model=flux&nologo=true&private=true&safe=false
+[api ] INFO:     127.0.0.1:51394 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:16:39,370 [INFO] modules.shotfinder:   AI prompt (try 2): A low-angle tight close-up down a dim Victorian nursery hallway, focusing on the protagoni...
+[api ] 2026-06-25 12:16:41,227 [WARNING] modules._net: retry [pollinations] attempt 1/2 failed: HTTPError('429 Client Error: Too Many Requests for url: https://image.pollinations.ai/prompt/A%20low-angle%20tight%20close-up%20down%20a%20dim%20Victorian%20nursery%20hallway%2C%20focusing%20on%20the%20protagonist%27s%20worn%20leather%20shoes%20standing%20still%20on%20dusty%20floorboards%2C%20with%20identical%20fresh%20footprints%20approaching%20from%20behind%20in%20the%20shallow%20depth%20of%20field%3B%20flickering%20candlelight%20from%20the%20nursery%20doorway%20casts%20long%2C%20trembling%20shadows%20that%20move%20independently%2C%20while%20thick%20fog%20curls%20at%20ankle%20height%20near%20the%20doorway%2C%20creating%20an%20oppressive%2C%20still%20atmosphere%20of%20being%20followed%20cinematic%2035mm%20film%2C%20dramatic%20chiaroscuro%20lighting%2C%20candlelight%2C%20fog%2C%20victorian%20gothic%2C%20atmospheric%20horror%2C%20dread-soaked%2C%20muted%20desaturated%20palette%2C%20deep%20blacks%2C%20fine%20film%20grain%2C%20photoreal%2C%20eerie%20stillness%2C%20no%20people%20in%20modern%20clothing%20no%20daylight%2C%20no%20sunny%2C%20no%20cartoon%2C%20no%20anime%2C%20no%20comic%2C%20no%20text%2C%20no%20watermark%2C%20no%20modern%20office%2C%20no%20contemporary%20urban%2C%20no%20smiling%20people?width=1080&height=1920&seed=2708987631&model=flux&nologo=true&private=true&safe=false') � sleeping 1.9s
+[api ] INFO:     127.0.0.1:65122 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:16:44,721 [INFO] modules.shotfinder:   Pollinations AI: 6/10 (seed 3074162707)
+[api ] 2026-06-25 12:16:44,726 [INFO] modules.shotfinder: Shot 5/6
+[api ] 2026-06-25 12:16:44,729 [INFO] modules.shotfinder: Shot fetch | query='vibrating air supernatural absence horror' | excerpt='The air seems to vibrate with an absence, a lack of somethin'
+[api ] 2026-06-25 12:16:45,565 [WARNING] modules.image_prompter: image_prompter NIM call failed: 502 Server Error: Bad Gateway for url: https://integrate.api.nvidia.com/v1/chat/completions
+[api ] 2026-06-25 12:16:45,569 [INFO] modules.shotfinder:   AI prompt (try 1, raw): A still, candlelit gothic dormitory where the air visibly distorts with waves of absence�s...
+[api ] INFO:     127.0.0.1:52268 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:16:47,634 [WARNING] modules._net: retry [pollinations] attempt 1/2 failed: HTTPError('429 Client Error: Too Many Requests for url: https://image.pollinations.ai/prompt/A%20still%2C%20candlelit%20gothic%20dormitory%20where%20the%20air%20visibly%20distorts%20with%20waves%20of%20absence%E2%80%94subtle%20heat-haze-like%20ripples%20but%20cold%20and%20oppressive%E2%80%94making%20the%20flame%20lean%20and%20the%20shadows%20crawl%20unnaturally%2C%20evoking%20the%20unbearable%20weight%20of%20something%20vital%20that%20has%20vanished%2C%20cinematic%2C%2035mm%20film%2C%20candlelight%2C%20fog%2C%20victorian%20gothic%2C%20atmospheric%20horror%2C%20dramatic%20shadows%2C%20dread-soaked?width=1080&height=1920&seed=30482021&model=flux&nologo=true&private=true&safe=false') � sleeping 1.8s
+[api ] 2026-06-25 12:16:51,287 [WARNING] modules.shotfinder: Pollinations gen failed: 429 Client Error: Too Many Requests for url: https://image.pollinations.ai/prompt/A%20still%2C%20candlelit%20gothic%20dormitory%20where%20the%20air%20visibly%20distorts%20with%20waves%20of%20absence%E2%80%94subtle%20heat-haze-like%20ripples%20but%20cold%20and%20oppressive%E2%80%94making%20the%20flame%20lean%20and%20the%20shadows%20crawl%20unnaturally%2C%20evoking%20the%20unbearable%20weight%20of%20something%20vital%20that%20has%20vanished%2C%20cinematic%2C%2035mm%20film%2C%20candlelight%2C%20fog%2C%20victorian%20gothic%2C%20atmospheric%20horror%2C%20dramatic%20shadows%2C%20dread-soaked?width=1080&height=1920&seed=30482021&model=flux&nologo=true&private=true&safe=false
+[api ] INFO:     127.0.0.1:57150 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:16:52,253 [WARNING] modules.image_prompter: image_prompter NIM call failed: 503 Server Error: Service Unavailable for url: https://integrate.api.nvidia.com/v1/chat/completions
+[api ] 2026-06-25 12:16:52,256 [INFO] modules.shotfinder:   AI prompt (try 2, raw): A still, candlelit gothic dormitory where the air visibly distorts with waves of absence�s...
+[api ] 2026-06-25 12:16:54,191 [WARNING] modules._net: retry [pollinations] attempt 1/2 failed: HTTPError('429 Client Error: Too Many Requests for url: https://image.pollinations.ai/prompt/A%20still%2C%20candlelit%20gothic%20dormitory%20where%20the%20air%20visibly%20distorts%20with%20waves%20of%20absence%E2%80%94subtle%20heat-haze-like%20ripples%20but%20cold%20and%20oppressive%E2%80%94making%20the%20flame%20lean%20and%20the%20shadows%20crawl%20unnaturally%2C%20evoking%20the%20unbearable%20weight%20of%20something%20vital%20that%20has%20vanished%2C%20cinematic%2C%2035mm%20film%2C%20candlelight%2C%20fog%2C%20victorian%20gothic%2C%20atmospheric%20horror%2C%20dramatic%20shadows%2C%20dread-soaked?width=1080&height=1920&seed=2960124496&model=flux&nologo=true&private=true&safe=false') � sleeping 1.6s
+[api ] INFO:     127.0.0.1:53159 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:16:57,075 [WARNING] modules.shotfinder: Pollinations gen failed: 429 Client Error: Too Many Requests for url: https://image.pollinations.ai/prompt/A%20still%2C%20candlelit%20gothic%20dormitory%20where%20the%20air%20visibly%20distorts%20with%20waves%20of%20absence%E2%80%94subtle%20heat-haze-like%20ripples%20but%20cold%20and%20oppressive%E2%80%94making%20the%20flame%20lean%20and%20the%20shadows%20crawl%20unnaturally%2C%20evoking%20the%20unbearable%20weight%20of%20something%20vital%20that%20has%20vanished%2C%20cinematic%2C%2035mm%20film%2C%20candlelight%2C%20fog%2C%20victorian%20gothic%2C%20atmospheric%20horror%2C%20dramatic%20shadows%2C%20dread-soaked?width=1080&height=1920&seed=2960124496&model=flux&nologo=true&private=true&safe=false
+[api ] 2026-06-25 12:16:59,636 [INFO] modules.shotfinder:   AI prompt (try 3): Over-the-shoulder POV down a narrow Victorian dormitory corridor, compressed by a tight le...
+[api ] 2026-06-25 12:17:01,543 [WARNING] modules._net: retry [pollinations] attempt 1/2 failed: HTTPError('429 Client Error: Too Many Requests for url: https://image.pollinations.ai/prompt/Over-the-shoulder%20POV%20down%20a%20narrow%20Victorian%20dormitory%20corridor%2C%20compressed%20by%20a%20tight%20lens%2C%20revealing%20an%20empty%20room%20where%20the%20air%20visibly%20ripples%20and%20shimmers%20like%20negative%20space%2C%20a%20vacuum%20tugging%20at%20reality%E2%80%99s%20edge%3B%20the%20relit%20candle%20on%20a%20wooden%20desk%20bends%20its%20flame%20sideways%2C%20wallpaper%20subtly%20recoils%20inward%20as%20if%20fleeing%20an%20unseen%20absence%2C%20dust%20motes%20hang%20frozen%20in%20the%20distorted%20air%2C%20cold%20blue-gray%20candlelight%20fights%20encroaching%20shadows%2C%20cinematic%2035mm%20film%2C%20dramatic%20chiaroscuro%20lighting%2C%20candlelight%2C%20fog%2C%20victorian%20gothic%2C%20atmospheric%20horror%2C%20dread-soaked%2C%20muted%20desaturated%20palette%2C%20deep%20blacks%2C%20fine%20film%20grain%2C%20photoreal%2C%20eerie%20stillness%2C%20no%20people%20in%20modern%20clothing%2C%20no%20daylight%2C%20no%20sunny%2C%20no%20cartoon%2C%20no%20anime%2C%20no%20comic%2C%20no%20text%2C%20no%20watermark%2C%20no%20modern%20office%2C%20no%20contemporary%20urban%2C%20no%20smiling%20people?width=1080&height=1920&seed=1756057485&model=flux&nologo=true&private=true&safe=false') � sleeping 1.6s
+[api ] INFO:     127.0.0.1:55684 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:17:04,430 [WARNING] modules.shotfinder: Pollinations gen failed: 429 Client Error: Too Many Requests for url: https://image.pollinations.ai/prompt/Over-the-shoulder%20POV%20down%20a%20narrow%20Victorian%20dormitory%20corridor%2C%20compressed%20by%20a%20tight%20lens%2C%20revealing%20an%20empty%20room%20where%20the%20air%20visibly%20ripples%20and%20shimmers%20like%20negative%20space%2C%20a%20vacuum%20tugging%20at%20reality%E2%80%99s%20edge%3B%20the%20relit%20candle%20on%20a%20wooden%20desk%20bends%20its%20flame%20sideways%2C%20wallpaper%20subtly%20recoils%20inward%20as%20if%20fleeing%20an%20unseen%20absence%2C%20dust%20motes%20hang%20frozen%20in%20the%20distorted%20air%2C%20cold%20blue-gray%20candlelight%20fights%20encroaching%20shadows%2C%20cinematic%2035mm%20film%2C%20dramatic%20chiaroscuro%20lighting%2C%20candlelight%2C%20fog%2C%20victorian%20gothic%2C%20atmospheric%20horror%2C%20dread-soaked%2C%20muted%20desaturated%20palette%2C%20deep%20blacks%2C%20fine%20film%20grain%2C%20photoreal%2C%20eerie%20stillness%2C%20no%20people%20in%20modern%20clothing%2C%20no%20daylight%2C%20no%20sunny%2C%20no%20cartoon%2C%20no%20anime%2C%20no%20comic%2C%20no%20text%2C%20no%20watermark%2C%20no%20modern%20office%2C%20no%20contemporary%20urban%2C%20no%20smiling%20people?width=1080&height=1920&seed=1756057485&model=flux&nologo=true&private=true&safe=false
+[api ] 2026-06-25 12:17:04,430 [WARNING] modules.shotfinder:   No image found for shot 'vibrating air supernatural absence horror'
+[api ] 2026-06-25 12:17:04,430 [INFO] modules.shotfinder: Shot 6/6
+[api ] 2026-06-25 12:17:04,432 [INFO] modules.shotfinder: Shot fetch | query='shifting shadows wall candlelight horror' | excerpt='Every time the power flickers back, the shadows on my wall s'
+[api ] INFO:     127.0.0.1:54430 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:60610 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:17:15,939 [INFO] modules.shotfinder:   AI prompt (try 1): A low-angle wide establishing shot of a Victorian-era bedroom wall illuminated by a single...
+[api ] INFO:     127.0.0.1:60933 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:17:18,089 [WARNING] modules._net: retry [pollinations] attempt 1/2 failed: HTTPError('429 Client Error: Too Many Requests for url: https://image.pollinations.ai/prompt/A%20low-angle%20wide%20establishing%20shot%20of%20a%20Victorian-era%20bedroom%20wall%20illuminated%20by%20a%20single%20flickering%20candle%20on%20a%20wooden%20nightstand%2C%20casting%20intricate%2C%20shifting%20shadow%20patterns%20that%20briefly%20reconfigure%20into%20elongated%20fingers%20and%20crouching%2C%20glyph-like%20forms%20during%20power%20flickers%2C%20frozen%20in%20unsettling%20new%20positions%20when%20light%20returns%2C%20deep%20shadows%20pooling%20in%20corners%2C%20faint%20fog%20curling%20near%20baseboards%2C%20cinematic%2035mm%20film%2C%20dramatic%20chiaroscuro%20lighting%2C%20candlelight%2C%20fog%2C%20victorian%20gothic%2C%20atmospheric%20horror%2C%20dread-soaked%2C%20muted%20desaturated%20palette%2C%20deep%20blacks%2C%20fine%20film%20grain%2C%20photoreal%2C%20eerie%20stillness%2C%20no%20people%20in%20modern%20clothing%2C%20no%20daylight%2C%20no%20sunny%2C%20no%20cartoon%2C%20no%20anime%2C%20no%20comic%2C%20no%20text%2C%20no%20watermark%2C%20no%20modern%20office%2C%20no%20contemporary%20urban%2C%20no%20smiling%20people?width=1080&height=1920&seed=3488265424&model=flux&nologo=true&private=true&safe=false') � sleeping 1.5s
+[api ] 2026-06-25 12:17:21,455 [WARNING] modules.shotfinder: Pollinations gen failed: 429 Client Error: Too Many Requests for url: https://image.pollinations.ai/prompt/A%20low-angle%20wide%20establishing%20shot%20of%20a%20Victorian-era%20bedroom%20wall%20illuminated%20by%20a%20single%20flickering%20candle%20on%20a%20wooden%20nightstand%2C%20casting%20intricate%2C%20shifting%20shadow%20patterns%20that%20briefly%20reconfigure%20into%20elongated%20fingers%20and%20crouching%2C%20glyph-like%20forms%20during%20power%20flickers%2C%20frozen%20in%20unsettling%20new%20positions%20when%20light%20returns%2C%20deep%20shadows%20pooling%20in%20corners%2C%20faint%20fog%20curling%20near%20baseboards%2C%20cinematic%2035mm%20film%2C%20dramatic%20chiaroscuro%20lighting%2C%20candlelight%2C%20fog%2C%20victorian%20gothic%2C%20atmospheric%20horror%2C%20dread-soaked%2C%20muted%20desaturated%20palette%2C%20deep%20blacks%2C%20fine%20film%20grain%2C%20photoreal%2C%20eerie%20stillness%2C%20no%20people%20in%20modern%20clothing%2C%20no%20daylight%2C%20no%20sunny%2C%20no%20cartoon%2C%20no%20anime%2C%20no%20comic%2C%20no%20text%2C%20no%20watermark%2C%20no%20modern%20office%2C%20no%20contemporary%20urban%2C%20no%20smiling%20people?width=1080&height=1920&seed=3488265424&model=flux&nologo=true&private=true&safe=false
+[api ] INFO:     127.0.0.1:54419 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:56267 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:17:28,218 [INFO] modules.shotfinder:   AI prompt (try 2): Tight close-up of a weathered plaster wall in a Victorian-era bedroom, lit by a single gut...
+[api ] 2026-06-25 12:17:30,010 [INFO] modules.shotfinder:   Pollinations AI: 6/10 (seed 2708987631)
+[api ] 2026-06-25 12:17:30,023 [INFO] modules.shotfinder: Shot 2/10
+[api ] 2026-06-25 12:17:30,029 [INFO] modules.shotfinder: Shot fetch | query='terrified face close-up candlelight sweat gothic horror' | excerpt='I stopped three seconds ago.'
+[api ] INFO:     127.0.0.1:49688 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:17:32,692 [INFO] modules.shotfinder:   AI prompt (try 1): Extreme close-up on a gaunt Victorian-era woman in profile, eyes wide with terror, pupils ...
+[api ] 2026-06-25 12:17:34,820 [WARNING] modules._net: retry [pollinations] attempt 1/2 failed: HTTPError('429 Client Error: Too Many Requests for url: https://image.pollinations.ai/prompt/Extreme%20close-up%20on%20a%20gaunt%20Victorian-era%20woman%20in%20profile%2C%20eyes%20wide%20with%20terror%2C%20pupils%20dilated%2C%20sweat%20glistening%20on%20her%20temple%20under%20weak%20candlelight%20from%20a%20nursery%20rocking%20chair%2C%20her%20disheveled%20nightgown%20clinging%20to%20her%20skin%2C%20the%20blurred%20darkness%20of%20a%20doorway%20and%20hanging%20tapestry%20shadows%20behind%20her%20emphasizing%20isolation%2C%20wide%20establishing%20shot%2C%20low%20angle%2C%20deep%20shadows%20swallowing%20the%20room%2C%20cinematic%2035mm%20film%2C%20dramatic%20chiaroscuro%20lighting%2C%20candlelight%2C%20fog%2C%20victorian%20gothic%2C%20atmospheric%20horror%2C%20dread-soaked%2C%20muted%20desaturated%20palette%2C%20deep%20blacks%2C%20fine%20film%20grain%2C%20photoreal%2C%20eerie%20stillness%2C%20no%20people%20in%20modern%20clothing%2C%20no%20daylight%2C%20no%20sunny%2C%20no%20cartoon%2C%20no%20anime%2C%20no%20comic%2C%20no%20text%2C%20no%20watermark%2C%20no%20modern%20office%2C%20no%20contemporary%20urban%2C%20no%20smiling%20people?width=1080&height=1920&seed=1090911050&model=flux&nologo=true&private=true&safe=false') � sleeping 1.8s
+[api ] INFO:     127.0.0.1:54294 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:17:38,483 [WARNING] modules.shotfinder: Pollinations gen failed: 429 Client Error: Too Many Requests for url: https://image.pollinations.ai/prompt/Extreme%20close-up%20on%20a%20gaunt%20Victorian-era%20woman%20in%20profile%2C%20eyes%20wide%20with%20terror%2C%20pupils%20dilated%2C%20sweat%20glistening%20on%20her%20temple%20under%20weak%20candlelight%20from%20a%20nursery%20rocking%20chair%2C%20her%20disheveled%20nightgown%20clinging%20to%20her%20skin%2C%20the%20blurred%20darkness%20of%20a%20doorway%20and%20hanging%20tapestry%20shadows%20behind%20her%20emphasizing%20isolation%2C%20wide%20establishing%20shot%2C%20low%20angle%2C%20deep%20shadows%20swallowing%20the%20room%2C%20cinematic%2035mm%20film%2C%20dramatic%20chiaroscuro%20lighting%2C%20candlelight%2C%20fog%2C%20victorian%20gothic%2C%20atmospheric%20horror%2C%20dread-soaked%2C%20muted%20desaturated%20palette%2C%20deep%20blacks%2C%20fine%20film%20grain%2C%20photoreal%2C%20eerie%20stillness%2C%20no%20people%20in%20modern%20clothing%2C%20no%20daylight%2C%20no%20sunny%2C%20no%20cartoon%2C%20no%20anime%2C%20no%20comic%2C%20no%20text%2C%20no%20watermark%2C%20no%20modern%20office%2C%20no%20contemporary%20urban%2C%20no%20smiling%20people?width=1080&height=1920&seed=1090911050&model=flux&nologo=true&private=true&safe=false
+[api ] 2026-06-25 12:17:40,426 [INFO] modules.shotfinder:   AI prompt (try 2): Extreme close-up on the protagonist's face in profile, eyes wide with terror, pupils dilat...
+[api ] 2026-06-25 12:17:41,769 [WARNING] modules._net: retry [pollinations] attempt 1/2 failed: HTTPError('429 Client Error: Too Many Requests for url: https://image.pollinations.ai/prompt/Extreme%20close-up%20on%20the%20protagonist%27s%20face%20in%20profile%2C%20eyes%20wide%20with%20terror%2C%20pupils%20dilated%2C%20sweat%20glistening%20on%20their%20temple%20under%20weak%20candlelight%20from%20the%20nursery%2C%20background%20a%20blur%20of%20darkened%20doorway%20and%20hanging%20shadows%2C%20tight%20close-up%2C%20shallow%20depth%20of%20field%2C%20off-center%20subject%2C%20cinematic%2035mm%20film%2C%20dramatic%20chiaroscuro%20lighting%2C%20candlelight%2C%20fog%2C%20victorian%20gothic%2C%20atmospheric%20horror%2C%20dread-soaked%2C%20muted%20desaturated%20palette%2C%20deep%20blacks%2C%20fine%20film%20grain%2C%20photoreal%2C%20eerie%20stillness%2C%20no%20people%20in%20modern%20clothing%2C%20no%20daylight%2C%20no%20sunny%2C%20no%20cartoon%2C%20no%20anime%2C%20no%20comic%2C%20no%20text%2C%20no%20watermark%2C%20no%20modern%20office%2C%20no%20contemporary%20urban%2C%20no%20smiling%20people?width=1080&height=1920&seed=473814674&model=flux&nologo=true&private=true&safe=false') � sleeping 2.0s
+[api ] INFO:     127.0.0.1:64277 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:17:45,115 [WARNING] modules.shotfinder: Pollinations gen failed: 429 Client Error: Too Many Requests for url: https://image.pollinations.ai/prompt/Extreme%20close-up%20on%20the%20protagonist%27s%20face%20in%20profile%2C%20eyes%20wide%20with%20terror%2C%20pupils%20dilated%2C%20sweat%20glistening%20on%20their%20temple%20under%20weak%20candlelight%20from%20the%20nursery%2C%20background%20a%20blur%20of%20darkened%20doorway%20and%20hanging%20shadows%2C%20tight%20close-up%2C%20shallow%20depth%20of%20field%2C%20off-center%20subject%2C%20cinematic%2035mm%20film%2C%20dramatic%20chiaroscuro%20lighting%2C%20candlelight%2C%20fog%2C%20victorian%20gothic%2C%20atmospheric%20horror%2C%20dread-soaked%2C%20muted%20desaturated%20palette%2C%20deep%20blacks%2C%20fine%20film%20grain%2C%20photoreal%2C%20eerie%20stillness%2C%20no%20people%20in%20modern%20clothing%2C%20no%20daylight%2C%20no%20sunny%2C%20no%20cartoon%2C%20no%20anime%2C%20no%20comic%2C%20no%20text%2C%20no%20watermark%2C%20no%20modern%20office%2C%20no%20contemporary%20urban%2C%20no%20smiling%20people?width=1080&height=1920&seed=473814674&model=flux&nologo=true&private=true&safe=false
+[api ] INFO:     127.0.0.1:49672 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:17:47,222 [INFO] modules.shotfinder:   AI prompt (try 3): Extreme close-up on the protagonist's terrified face in profile, eyes wide with dilated pu...
+[api ] 2026-06-25 12:17:48,657 [WARNING] modules._net: retry [pollinations] attempt 1/2 failed: HTTPError('429 Client Error: Too Many Requests for url: https://image.pollinations.ai/prompt/Extreme%20close-up%20on%20the%20protagonist%27s%20terrified%20face%20in%20profile%2C%20eyes%20wide%20with%20dilated%20pupils%2C%20sweat%20glistening%20on%20the%20temple%20under%20weak%20candlelight%20from%20a%20nursery%2C%20over-the-shoulder%20POV%20in%20a%20narrow%20corridor%20compressed%20by%20lens%2C%20background%20a%20blur%20of%20darkened%20doorway%20and%20hanging%20shadows%20emphasizing%20isolation%20and%20suspended%20time%2C%20cinematic%2035mm%20film%2C%20dramatic%20chiaroscuro%20lighting%2C%20candlelight%2C%20fog%2C%20victorian%20gothic%2C%20atmospheric%20horror%2C%20dread-soaked%2C%20muted%20desaturated%20palette%2C%20deep%20blacks%2C%20fine%20film%20grain%2C%20photoreal%2C%20eerie%20stillness%2C%20no%20people%20in%20modern%20clothing%2C%20no%20daylight%2C%20no%20sunny%2C%20no%20cartoon%2C%20no%20anime%2C%20no%20comic%2C%20no%20text%2C%20no%20watermark%2C%20no%20modern%20office%2C%20no%20contemporary%20urban%2C%20no%20smiling%20people?width=1080&height=1920&seed=2405258598&model=flux&nologo=true&private=true&safe=false') � sleeping 1.6s
+[api ] INFO:     127.0.0.1:64621 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:17:52,308 [WARNING] modules.shotfinder: Pollinations gen failed: 429 Client Error: Too Many Requests for url: https://image.pollinations.ai/prompt/Extreme%20close-up%20on%20the%20protagonist%27s%20terrified%20face%20in%20profile%2C%20eyes%20wide%20with%20dilated%20pupils%2C%20sweat%20glistening%20on%20the%20temple%20under%20weak%20candlelight%20from%20a%20nursery%2C%20over-the-shoulder%20POV%20in%20a%20narrow%20corridor%20compressed%20by%20lens%2C%20background%20a%20blur%20of%20darkened%20doorway%20and%20hanging%20shadows%20emphasizing%20isolation%20and%20suspended%20time%2C%20cinematic%2035mm%20film%2C%20dramatic%20chiaroscuro%20lighting%2C%20candlelight%2C%20fog%2C%20victorian%20gothic%2C%20atmospheric%20horror%2C%20dread-soaked%2C%20muted%20desaturated%20palette%2C%20deep%20blacks%2C%20fine%20film%20grain%2C%20photoreal%2C%20eerie%20stillness%2C%20no%20people%20in%20modern%20clothing%2C%20no%20daylight%2C%20no%20sunny%2C%20no%20cartoon%2C%20no%20anime%2C%20no%20comic%2C%20no%20text%2C%20no%20watermark%2C%20no%20modern%20office%2C%20no%20contemporary%20urban%2C%20no%20smiling%20people?width=1080&height=1920&seed=2405258598&model=flux&nologo=true&private=true&safe=false
+[api ] 2026-06-25 12:17:52,309 [WARNING] modules.shotfinder:   No image found for shot 'terrified face close-up candlelight sweat gothic horror'
+[api ] 2026-06-25 12:17:52,309 [INFO] modules.shotfinder: Shot 3/10
+[api ] 2026-06-25 12:17:52,313 [INFO] modules.shotfinder: Shot fetch | query='stuffed animal upright rug facing door candlelight' | excerpt='The child�s stuffed rabbit sits upright on the rug, facing t'
+[api ] 2026-06-25 12:17:54,741 [INFO] modules.shotfinder:   AI prompt (try 1): A wide establishing low-angle view of a dim Victorian nursery rug showing an antique stuff...
+[api ] 2026-06-25 12:17:56,017 [WARNING] modules._net: retry [pollinations] attempt 1/2 failed: HTTPError('429 Client Error: Too Many Requests for url: https://image.pollinations.ai/prompt/A%20wide%20establishing%20low-angle%20view%20of%20a%20dim%20Victorian%20nursery%20rug%20showing%20an%20antique%20stuffed%20rabbit%20sitting%20perfectly%20upright%2C%20facing%20a%20closed%20wooden%20door%2C%20its%20plush%20fabric%20slightly%20matted%20as%20if%20recently%20repositioned%2C%20with%20a%20faint%20indentation%20in%20the%20rug%20nearby%20indicating%20where%20it%20had%20previously%20slumped%20sideways%3B%20a%20single%20unlit%20candle%20on%20a%20distant%20oak%20dresser%20casts%20a%20weak%2C%20trembling%20pool%20of%20light%2C%20leaving%20the%20room%20in%20deep%20shadow%20and%20slow-moving%20mist%2C%20emphasizing%20the%20eerie%20stillness%20and%20supernatural%20implication%20of%20the%20rabbit%27s%20movement%2C%20cinematic%2035mm%20film%2C%20dramatic%20chiaroscuro%20lighting%2C%20candlelight%2C%20fog%2C%20victorian%20gothic%2C%20atmospheric%20horror%2C%20dread-soaked%2C%20muted%20desaturated%20palette%2C%20deep%20blacks%2C%20fine%20film%20grain%2C%20photoreal%2C%20eerie%20stillness%2C%20no%20people%20in%20modern%20clothing%2C%20no%20daylight%2C%20no%20sunny%2C%20no%20cartoon%2C%20no%20anime%2C%20no%20comic%2C%20no%20text%2C%20no%20watermark%2C%20no%20modern%20office%2C%20no%20contemporary%20urban%2C%20no%20smiling%20people?width=1080&height=1920&seed=631957740&model=flux&nologo=true&private=true&safe=false') � sleeping 1.6s
+[api ] INFO:     127.0.0.1:54823 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:17:58,988 [WARNING] modules.shotfinder: Pollinations gen failed: 429 Client Error: Too Many Requests for url: https://image.pollinations.ai/prompt/A%20wide%20establishing%20low-angle%20view%20of%20a%20dim%20Victorian%20nursery%20rug%20showing%20an%20antique%20stuffed%20rabbit%20sitting%20perfectly%20upright%2C%20facing%20a%20closed%20wooden%20door%2C%20its%20plush%20fabric%20slightly%20matted%20as%20if%20recently%20repositioned%2C%20with%20a%20faint%20indentation%20in%20the%20rug%20nearby%20indicating%20where%20it%20had%20previously%20slumped%20sideways%3B%20a%20single%20unlit%20candle%20on%20a%20distant%20oak%20dresser%20casts%20a%20weak%2C%20trembling%20pool%20of%20light%2C%20leaving%20the%20room%20in%20deep%20shadow%20and%20slow-moving%20mist%2C%20emphasizing%20the%20eerie%20stillness%20and%20supernatural%20implication%20of%20the%20rabbit%27s%20movement%2C%20cinematic%2035mm%20film%2C%20dramatic%20chiaroscuro%20lighting%2C%20candlelight%2C%20fog%2C%20victorian%20gothic%2C%20atmospheric%20horror%2C%20dread-soaked%2C%20muted%20desaturated%20palette%2C%20deep%20blacks%2C%20fine%20film%20grain%2C%20photoreal%2C%20eerie%20stillness%2C%20no%20people%20in%20modern%20clothing%2C%20no%20daylight%2C%20no%20sunny%2C%20no%20cartoon%2C%20no%20anime%2C%20no%20comic%2C%20no%20text%2C%20no%20watermark%2C%20no%20modern%20office%2C%20no%20contemporary%20urban%2C%20no%20smiling%20people?width=1080&height=1920&seed=631957740&model=flux&nologo=true&private=true&safe=false
+[api ] 2026-06-25 12:18:01,874 [INFO] modules.shotfinder:   AI prompt (try 2): A tight close-up of a worn Victorian-era stuffed rabbit sitting perfectly upright on a fad...
+[api ] INFO:     127.0.0.1:58697 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:18:04,040 [WARNING] modules._net: retry [pollinations] attempt 1/2 failed: HTTPError('429 Client Error: Too Many Requests for url: https://image.pollinations.ai/prompt/A%20tight%20close-up%20of%20a%20worn%20Victorian-era%20stuffed%20rabbit%20sitting%20perfectly%20upright%20on%20a%20faded%20floral%20nursery%20rug%2C%20facing%20a%20closed%20wooden%20door%2C%20its%20plush%20fabric%20slightly%20matted%20and%20dusty%20as%20if%20recently%20moved%2C%20with%20a%20faint%20depression%20in%20the%20rug%20nearby%20showing%20where%20it%20was%20previously%20slumped%20sideways%3B%20a%20single%20guttering%20candle%20on%20a%20distant%20antique%20dresser%20casts%20a%20weak%2C%20trembling%20pool%20of%20light%2C%20leaving%20the%20rest%20of%20the%20room%20in%20deep%20shadow%20and%20slow-moving%20mist%2C%20shallow%20depth%20of%20field%20blurring%20the%20background%2C%20off-center%20composition%20emphasizing%20the%20rabbit%E2%80%99s%20unnatural%20stillness%2C%20cinematic%2035mm%20film%2C%20dramatic%20chiaroscuro%20lighting%2C%20candlelight%2C%20fog%2C%20victorian%20gothic%2C%20atmospheric%20horror%2C%20dread-soaked%2C%20muted%20desaturated%20palette%2C%20deep%20blacks%2C%20fine%20film%20grain%2C%20photoreal%2C%20eerie%20stillness%2C%20no%20people%20in%20modern%20clothing%2C%20no%20daylight%2C%20no%20sunny%2C%20no%20cartoon%2C%20no%20anime%2C%20no%20comic%2C%20no%20text%2C%20no%20watermark%2C%20no%20modern%20office%2C%20no%20contemporary%20urban%2C%20no%20smiling%20people?width=1080&height=1920&seed=2957040768&model=flux&nologo=true&private=true&safe=false') � sleeping 1.5s
+[api ] INFO:     127.0.0.1:58036 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:18:07,444 [WARNING] modules.shotfinder: Pollinations gen failed: 429 Client Error: Too Many Requests for url: https://image.pollinations.ai/prompt/A%20tight%20close-up%20of%20a%20worn%20Victorian-era%20stuffed%20rabbit%20sitting%20perfectly%20upright%20on%20a%20faded%20floral%20nursery%20rug%2C%20facing%20a%20closed%20wooden%20door%2C%20its%20plush%20fabric%20slightly%20matted%20and%20dusty%20as%20if%20recently%20moved%2C%20with%20a%20faint%20depression%20in%20the%20rug%20nearby%20showing%20where%20it%20was%20previously%20slumped%20sideways%3B%20a%20single%20guttering%20candle%20on%20a%20distant%20antique%20dresser%20casts%20a%20weak%2C%20trembling%20pool%20of%20light%2C%20leaving%20the%20rest%20of%20the%20room%20in%20deep%20shadow%20and%20slow-moving%20mist%2C%20shallow%20depth%20of%20field%20blurring%20the%20background%2C%20off-center%20composition%20emphasizing%20the%20rabbit%E2%80%99s%20unnatural%20stillness%2C%20cinematic%2035mm%20film%2C%20dramatic%20chiaroscuro%20lighting%2C%20candlelight%2C%20fog%2C%20victorian%20gothic%2C%20atmospheric%20horror%2C%20dread-soaked%2C%20muted%20desaturated%20palette%2C%20deep%20blacks%2C%20fine%20film%20grain%2C%20photoreal%2C%20eerie%20stillness%2C%20no%20people%20in%20modern%20clothing%2C%20no%20daylight%2C%20no%20sunny%2C%20no%20cartoon%2C%20no%20anime%2C%20no%20comic%2C%20no%20text%2C%20no%20watermark%2C%20no%20modern%20office%2C%20no%20contemporary%20urban%2C%20no%20smiling%20people?width=1080&height=1920&seed=2957040768&model=flux&nologo=true&private=true&safe=false
+[api ] INFO:     127.0.0.1:54093 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:18:14,903 [INFO] modules.shotfinder:   Pollinations AI: 6/10 (seed 2979937265)
+[api ] 2026-06-25 12:18:14,911 [INFO] modules.shotfinder: Storyboard fetch: 4/6 shots filled
+[api ] INFO:     127.0.0.1:60070 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:18:16,482 [INFO] modules.shotfinder:   AI prompt (try 3): A static wide shot from an over-the-shoulder POV in a narrow Victorian nursery corridor, c...
+[api ] 2026-06-25 12:18:16,995 [INFO] modules.footage: Downloading Openverse music (cc0, 220s)
+[api ] INFO:     127.0.0.1:62142 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:59488 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:63826 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:60175 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:60682 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:53955 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:58172 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:63620 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:64993 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:63154 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:18:59,780 [INFO] modules.shotfinder:   Pollinations AI: 6/10 (seed 2674331234)
+[api ] 2026-06-25 12:18:59,788 [INFO] modules.shotfinder: Shot 4/10
+[api ] 2026-06-25 12:18:59,791 [INFO] modules.shotfinder: Shot fetch | query='behind person curtain draft heat distortion horror' | excerpt='A draft lifts the curtain, but the air between my shoulder b'
+[api ] INFO:     127.0.0.1:60486 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:19:03,780 [INFO] modules.shotfinder:   AI prompt (try 1): A lone figure stands in a dim Victorian nursery, medium shot from behind at a low angle, s...
+[api ] INFO:     127.0.0.1:57750 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:62752 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:53622 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:54380 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:19:22,357 [INFO] agent: [5/6] Assembling video with ffmpeg...
+[api ] 2026-06-25 12:19:22,373 [INFO] modules.editor: Getting audio duration...
+[api ] INFO:     127.0.0.1:63818 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:19:22,452 [INFO] modules.editor: Voiceover duration: 41.1s
+[api ] 2026-06-25 12:19:22,452 [INFO] modules.editor: Preparing background montage...
+[api ] 2026-06-25 12:19:22,452 [INFO] modules.editor: Montage plan: 4 segments (no repeats) � 0 videos + 4 images, target ~41.1s
+[api ] 2026-06-25 12:19:22,454 [INFO] modules.editor: Running image segment (zoom_in, fx=0.7) from pollinations_0bfb3b8a.jpg 10.9s: ffmpeg -y -hide_banner -loglevel warning -loop...
+[api ] INFO:     127.0.0.1:60316 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:60109 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:51656 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:55966 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:56252 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:51484 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:19:47,291 [INFO] modules.shotfinder:   Pollinations AI: 6/10 (seed 46471253)
+[api ] 2026-06-25 12:19:47,304 [INFO] modules.shotfinder: Shot 5/10
+[api ] 2026-06-25 12:19:47,306 [INFO] modules.shotfinder: Shot fetch | query='straining throat trying to speak candlelight horror' | excerpt='I try to call out, but my voice sticks, thick as wet wool.'
+[api ] 2026-06-25 12:19:50,413 [INFO] modules.shotfinder:   AI prompt (try 1): Extreme close-up on a pale, sweat-slicked throat and clenched jaw of a young woman in a Vi...
+[api ] INFO:     127.0.0.1:58437 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:51219 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:56264 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:51633 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:62293 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:20:10,732 [INFO] modules.editor: Running image segment (pan_right, fx=0.7) from pollinations_6440fa19.jpg 4.9s: ffmpeg -y -hide_banner -loglevel warning -loop...
+[api ] INFO:     127.0.0.1:59528 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:55858 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:52231 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:64668 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:57861 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:63009 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:62115 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:20:35,409 [INFO] modules.shotfinder:   Pollinations AI: 6/10 (seed 3904808184)
+[api ] 2026-06-25 12:20:35,416 [INFO] modules.shotfinder: Shot 6/10
+[api ] 2026-06-25 12:20:35,419 [INFO] modules.shotfinder: Shot fetch | query='stuffed animal button eyes staring close-up horror' | excerpt='The rabbit�s button eyes have shifted; now they lock onto mi'
+[api ] 2026-06-25 12:20:38,225 [INFO] modules.editor: Running image segment (zoom_out, fx=0.7) from pollinations_b73c0013.jpg 6.0s: ffmpeg -y -hide_banner -loglevel warning -loop...
+[api ] INFO:     127.0.0.1:55801 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:20:39,520 [INFO] modules.shotfinder:   AI prompt (try 1): Extreme close-up on a weathered stuffed rabbit's face, its two old, slightly cracked butto...
+[api ] INFO:     127.0.0.1:65464 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:58274 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:63897 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:57828 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:60861 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:62438 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:21:05,700 [INFO] modules.editor: Running image segment (pan_left, fx=0.7) from pollinations_b19e3bf1.jpg 9.7s: ffmpeg -y -hide_banner -loglevel warning -loop...
+[api ] INFO:     127.0.0.1:65144 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:61009 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:58222 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:21:15,530 [INFO] modules.shotfinder:   Pollinations AI: 6/10 (seed 2386441533)
+[api ] 2026-06-25 12:21:15,541 [INFO] modules.shotfinder: Shot 7/10
+[api ] 2026-06-25 12:21:15,543 [INFO] modules.shotfinder: Shot fetch | query='memory flashback placing stuffed animal wall nursery' | excerpt='I remember tucking it in with its back to the wall.'
+[api ] INFO:     127.0.0.1:58149 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:56898 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:58123 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:52810 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:60378 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:21:37,921 [INFO] modules.shotfinder:   AI prompt (try 1): {"prompt": "Wide<unk><unk><unk><unk><unk><unk><unk><unk><unk><unk><unk><unk><unk><unk><unk...
+[api ] INFO:     127.0.0.1:49192 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:56737 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:61337 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:21:49,396 [INFO] modules.editor: Running concat segments: ffmpeg -y -hide_banner -loglevel warning -f...
+[api ] INFO:     127.0.0.1:61153 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:63545 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:50395 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:22:02,343 [INFO] modules.shotfinder:   Pollinations AI: 6/10 (seed 1150667423)
+[api ] 2026-06-25 12:22:02,375 [INFO] modules.shotfinder: Shot 8/10
+[api ] 2026-06-25 12:22:02,383 [INFO] modules.shotfinder: Shot fetch | query='floorboard depression invisible weight inhale shadow' | excerpt='The floorboard behind me sighs�not a creak, a wet inhale.'
+[api ] INFO:     127.0.0.1:54638 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:22:07,421 [INFO] modules.shotfinder:   AI prompt (try 1): Low angle shot focusing on aged oak floorboards in a Victorian nursery just behind bare he...
+[api ] INFO:     127.0.0.1:56672 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:63592 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:49672 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:56210 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:57064 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:51432 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:61782 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:52489 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:22:46,653 [INFO] modules.shotfinder:   Pollinations AI: 6/10 (seed 3620505709)
+[api ] 2026-06-25 12:22:46,678 [INFO] modules.shotfinder: Shot 9/10
+[api ] 2026-06-25 12:22:46,690 [INFO] modules.shotfinder: Shot fetch | query='person refusing to turn dark presence behind' | excerpt='I don�t dare turn. I know what�s there.'
+[api ] INFO:     127.0.0.1:51363 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:23:00,549 [INFO] modules.shotfinder:   AI prompt (try 1): Medium shot, low angle, wide establishing view of a pale, sweat-glistening protagonist in ...
+[api ] 2026-06-25 12:23:31,086 [INFO] modules.shotfinder:   Pollinations AI: 6/10 (seed 657961291)
+[api ] 2026-06-25 12:23:31,102 [INFO] modules.shotfinder: Shot 10/10
+[api ] 2026-06-25 12:23:31,110 [INFO] modules.shotfinder: Shot fetch | query='invisible fingers brushing collar fabric close-up' | excerpt='I�ve felt its fingers brush my collar once, just once, when '
+[api ] 2026-06-25 12:23:35,127 [INFO] modules.shotfinder:   AI prompt (try 1): Extreme close-up on the protagonist's collarbone and neck, the fabric of a Victorian-era n...
+[api ] 2026-06-25 12:24:13,444 [INFO] modules.editor: Output encode: crf=23 preset=fast audio=192k
+[api ] 2026-06-25 12:24:13,445 [INFO] modules.editor: Running final assembly with ducked music: ffmpeg -y -hide_banner -loglevel warning -i...
+[api ] 2026-06-25 12:24:14,832 [INFO] modules.shotfinder:   Pollinations AI: 3/10 (seed 2945937001)
+[api ] 2026-06-25 12:24:22,213 [INFO] modules.shotfinder:   AI prompt (try 2): Extreme close-up on a weathered linen collarbone and neck area of a pale Victorian-era fig...
+[api ] 2026-06-25 12:25:04,790 [INFO] modules.shotfinder:   Pollinations AI: 6/10 (seed 996520287)
+[api ] 2026-06-25 12:25:04,804 [INFO] modules.shotfinder: Storyboard fetch: 9/10 shots filled
+[api ] 2026-06-25 12:25:12,283 [INFO] modules.footage: Downloading Openverse music (cc0, 103s)
+[api ] INFO:     127.0.0.1:55569 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:51588 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:63027 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:25:45,183 [INFO] agent: [5/6] Assembling video with ffmpeg...
+[api ] 2026-06-25 12:25:45,212 [INFO] modules.editor: Getting audio duration...
+[api ] 2026-06-25 12:25:45,465 [INFO] modules.editor: Voiceover duration: 60.9s
+[api ] 2026-06-25 12:25:45,466 [INFO] modules.editor: Preparing background montage...
+[api ] 2026-06-25 12:25:45,467 [INFO] modules.editor: Montage plan: 9 segments (no repeats) � 0 videos + 9 images, target ~60.9s
+[api ] 2026-06-25 12:25:45,470 [INFO] modules.editor: Running image segment (zoom_in, fx=0.7) from pollinations_a177deef.jpg 9.9s: ffmpeg -y -hide_banner -loglevel warning -loop...
+[api ] INFO:     127.0.0.1:62981 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:59117 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:53062 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:64327 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:61754 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:64010 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:63040 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:50436 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:55133 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:51580 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:60851 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:53805 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:27:02,676 [INFO] modules.editor: Final video: output\videos\20260625_120902\final_video.mp4
+[api ] 2026-06-25 12:27:02,683 [INFO] agent: [SKIP] Dry run � skipping YouTube upload
+[api ] 2026-06-25 12:27:02,683 [INFO] agent: Video ready at: output\videos\20260625_120902\final_video.mp4
+[api ] 2026-06-25 12:27:02,683 [INFO] agent: Pipeline complete! Run: 20260625_120902
+[api ] INFO:     127.0.0.1:53241 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:49838 - "GET /api/runs/20260625_121223/video HTTP/1.1" 404 Not Found
+[api ] INFO:     127.0.0.1:58541 - "GET /api/runs HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:52496 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:49672 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:57364 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:27:30,600 [INFO] modules.editor: Running image segment (pan_right, fx=0.7) from pollinations_9f670e62.jpg 8.5s: ffmpeg -y -hide_banner -loglevel warning -loop...
+[api ] INFO:     127.0.0.1:55209 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:52101 - "GET /api/state HTTP/1.1" 200 OK
+[web ]  GET / 200 in 416ms (next.js: 32ms, application-code: 384ms)
+[web ] [browser] A tree hydrated but some attributes of the server rendered HTML didn't match the client properties. This won't be patched up. This can happen if a SSR-ed Client Component used:
+[web ]
+[web ] - A server/client branch `if (typeof window !== 'undefined')`.
+[web ] - Variable input such as `Date.now()` or `Math.random()` which changes each time it's called.
+[web ] - Date formatting in a user's locale which doesn't match the server.
+[web ] - External changing data without sending a snapshot of it along with the HTML.
+[web ] - Invalid HTML tag nesting.
+[web ]
+[web ] It can also happen if the client has a browser extension installed which messes with the HTML before React loaded.
+[web ]
+[web ] https://react.dev/link/hydration-mismatch
+[web ]
+[web ]   ...
+[web ]     <HotReload globalError={[...]} webSocket={WebSocket} staticIndicatorState={{pathname:null, ...}}>
+[web ]       <AppDevOverlayErrorBoundary globalError={[...]}>
+[web ]         <ReplaySsrOnlyErrors>
+[web ]         <DevRootHTTPAccessFallbackBoundary>
+[web ]           <HTTPAccessFallbackBoundary notFound={<NotAllowedRootHTTPFallbackError>}>
+[web ]             <HTTPAccessFallbackErrorBoundary pathname="/" notFound={<NotAllowedRootHTTPFallbackError>} ...>
+[web ]               <RedirectBoundary>
+[web ]                 <RedirectErrorBoundary router={{...}}>
+[web ]                   <Head>
+[web ]                   <__next_root_layout_boundary__>
+[web ]                     <SegmentViewNode type="layout" pagePath="layout.tsx">
+[web ]                       <SegmentTrieNode>
+[web ]                       <link>
+[web ]                       <script>
+[web ]                       <script>
+[web ]                       <script>
+[web ]                       <RootLayout>
+[web ]                         <html lang="en">
+[api ] INFO:     127.0.0.1:60627 - "GET /api/settings HTTP/1.1" 200 OK
+[web ]                           <body
+[web ] -                           __processed_8d4907be-e203-420f-b9cf-4b10652eb498__="true"
+[web ] -                           bis_register="W3sibWFzdGVyIjp0cnVlLCJleHRlbnNpb25JZCI6ImVwcGlvY2VtaG1ubGJoanBsY2drb2ZjaWll..."
+[api ] INFO:     127.0.0.1:60629 - "GET /api/state HTTP/1.1" 200 OK
+[web ]                           >
+[web ]                   ...
+[web ]
+[web ]     at <unknown> (file://C:/Users/BEST BUY COMPUTERS/Downloads/Personal/yt_agent/web/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_096_9a-._.js:3439:25)
+[web ]     at runWithFiberInDEV (file://C:/Users/BEST BUY COMPUTERS/Downloads/Personal/yt_agent/web/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_096_9a-._.js:965:74)
+[web ]     at emitPendingHydrationWarnings (file://C:/Users/BEST BUY COMPUTERS/Downloads/Personal/yt_agent/web/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_096_9a-._.js:3438:13)
+[web ]     at completeWork (file://C:/Users/BEST BUY COMPUTERS/Downloads/Personal/yt_agent/web/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_096_9a-._.js:6885:102)
+[web ]     at runWithFiberInDEV (file://C:/Users/BEST BUY COMPUTERS/Downloads/Personal/yt_agent/web/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_096_9a-._.js:965:131)
+[web ]     at completeUnitOfWork (file://C:/Users/BEST BUY COMPUTERS/Downloads/Personal/yt_agent/web/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_096_9a-._.js:9622:23)
+[web ]     at performUnitOfWork (file://C:/Users/BEST BUY COMPUTERS/Downloads/Personal/yt_agent/web/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_096_9a-._.js:9557:28)
+[web ]     at workLoopConcurrentByScheduler (file://C:/Users/BEST BUY COMPUTERS/Downloads/Personal/yt_agent/web/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_096_9a-._.js:9551:58)
+[web ]     at renderRootConcurrent (file://C:/Users/BEST BUY COMPUTERS/Downloads/Personal/yt_agent/web/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_096_9a-._.js:9534:71)
+[web ]     at performWorkOnRoot (file://C:/Users/BEST BUY COMPUTERS/Downloads/Personal/yt_agent/web/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_096_9a-._.js:9061:150)
+[web ]     at performWorkOnRootViaSchedulerTask (file://C:/Users/BEST BUY COMPUTERS/Downloads/Personal/yt_agent/web/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_096_9a-._.js:10255:9)
+[web ]     at MessagePort.performWorkUntilDeadline (file://C:/Users/BEST BUY COMPUTERS/Downloads/Personal/yt_agent/web/.next/dev/static/chunks/node_modules_next_dist_compiled_1amofcm._.js:2647:64) (file://C:/Users/BEST BUY COMPUTERS/Downloads/Personal/yt_agent/web/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_096_9a-._.js:3439:25)
+[api ] INFO:     127.0.0.1:60631 - "GET /api/runs/20260625_121223/video HTTP/1.1" 404 Not Found
+[api ] 2026-06-25 12:27:42,655 [INFO] modules.config: Preflight ok | channel=horror tone=chilling privacy=public tts=edge
+[api ] INFO:     127.0.0.1:60633 - "GET /api/preflight HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:60635 - "GET /api/runs HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:60637 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:54186 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:53758 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:61702 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:53044 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:53770 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:62982 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:56357 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:56359 - "GET /api/state HTTP/1.1" 200 OK
+[api ] 2026-06-25 12:28:25,289 [INFO] modules.editor: Running image segment (zoom_out, fx=0.7) from pollinations_02c51855.jpg 8.3s: ffmpeg -y -hide_banner -loglevel warning -loop...
+[api ] INFO:     127.0.0.1:53375 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:53935 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:57876 - "GET /api/state HTTP/1.1" 200 OK
+[api ] INFO:     127.0.0.1:56393 - "GET /api/state HTTP/1.1" 200 OK

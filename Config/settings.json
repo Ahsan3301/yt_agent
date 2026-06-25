@@ -1,0 +1,90 @@
+{
+  "content": {
+    "channel": "horror",
+    "tone": "chilling",
+    "target_word_min": 60,
+    "target_word_max": 100,
+    "manual_premise": "",
+    "videos_per_run": 1
+  },
+  "voice": {
+    "engine": "edge",
+    "edge_voice_horror": "en-US-BrianMultilingualNeural",
+    "edge_voice_wisdom": "en-US-AndrewMultilingualNeural",
+    "edge_rate_horror": "-5%",
+    "edge_pitch_horror": "-2Hz",
+    "edge_rate_wisdom": "+0%",
+    "edge_pitch_wisdom": "+0Hz",
+    "kokoro_voice_horror": "am_michael",
+    "kokoro_voice_wisdom": "am_adam",
+    "kokoro_speed_horror": 0.9,
+    "kokoro_speed_wisdom": 0.95
+  },
+  "video": {
+    "min_segment_seconds": 2,
+    "max_segment_seconds": 7,
+    "use_video_clips": false,
+    "allow_images": true,
+    "music_base_volume": 0.55,
+    "music_duck_ratio": 4,
+    "music_duck_threshold": 0.15,
+    "caption_highlight_color_bgr": "00FFFF",
+    "caption_font_size": 72,
+    "caption_highlight_size": 80,
+    "ai_image_count": 20,
+    "ai_image_style": "",
+    "effects_intensity": 0.7,
+    "output_crf": 23,
+    "output_preset": "fast",
+    "output_audio_bitrate": "192k",
+    "ai_image_attempts_per_shot": 3,
+    "vision_judge_enabled": true,
+    "vision_judge_threshold": 4,
+    "vision_judge_candidates_multiplier": 4,
+    "content_restrictions": false
+  },
+  "providers": {
+    "shutterstock": false,
+    "pexels": false,
+    "coverr": false,
+    "pixabay": false,
+    "openverse_image": false,
+    "pollinations": true
+  },
+  "upload": {
+    "privacy": "public",
+    "made_for_kids": false,
+    "category_horror": "24",
+    "category_wisdom": "27"
+  },
+  "keywords": {
+    "horror": [
+      "abandoned gothic mansion at night",
+      "decrepit asylum corridor flickering light",
+      "foggy graveyard moonlight wrought iron",
+      "candlelit dark hallway shadows",
+      "abandoned victorian doll on chair",
+      "old cathedral interior fog",
+      "shadowy figure end of long hallway",
+      "rusted hospital morgue empty",
+      "occult symbols carved wood",
+      "ouija board candlelight dust",
+      "withered tree branches in fog",
+      "moonlit cemetery iron gates",
+      "decaying wallpaper peeling old room",
+      "dim attic dust motes light beam",
+      "abandoned cabin in dark woods"
+    ],
+    "wisdom": [
+      "sunrise nature",
+      "city timelapse",
+      "ocean waves",
+      "mountain peak",
+      "people walking"
+    ]
+  },
+  "music_keywords": {
+    "horror": "dark ambient horror",
+    "wisdom": "inspirational background music"
+  }
+}

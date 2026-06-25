@@ -1,0 +1,218 @@
+// Thin fetch wrapper for the YT Agent backend.
+//
+// Backend resolution (in priority order):
+//   1. process.env.NEXT_PUBLIC_BACKEND_URL — if set, always use it (dev / single-instance).
+//   2. process.env.NEXT_PUBLIC_REGISTRY_URL — fetch registry.json from Hostinger,
+//      pick the first `available` entry (or the one with the smallest queue if
+//      all are busy). Cached for REGISTRY_TTL_MS.
+//   3. Fallback: /api/* on the same origin (Next.js dev proxy).
+
+const REGISTRY_TTL_MS = 20_000;
+
+type RegistryEntry = {
+  instance_id: string;
+  url: string;
+  status: "available" | "busy";
+  queue_depth: number;
+  last_seen: number;
+};
+
+let _cached: { at: number; url: string } | null = null;
+
+async function resolveBackend(): Promise<string> {
+  // Hard override wins.
+  const fixed = process.env.NEXT_PUBLIC_BACKEND_URL;
+  if (fixed) return fixed.replace(/\/$/, "");
+
+  // Use cached registry pick.
+  if (_cached && Date.now() - _cached.at < REGISTRY_TTL_MS) return _cached.url;
+
+  const registry = process.env.NEXT_PUBLIC_REGISTRY_URL;
+  if (registry) {
+    try {
+      const r = await fetch(registry, { cache: "no-store" });
+      if (r.ok) {
+        const entries = (await r.json()) as RegistryEntry[];
+        const fresh = entries
+          .filter((e) => e && e.url && Date.now() / 1000 - (e.last_seen || 0) < 120)
+          .sort((a, b) => {
+            // available before busy; then least loaded
+            const aa = a.status === "available" ? 0 : 1;
+            const bb = b.status === "available" ? 0 : 1;
+            if (aa !== bb) return aa - bb;
+            return (a.queue_depth || 0) - (b.queue_depth || 0);
+          });
+        if (fresh.length > 0) {
+          const url = fresh[0].url.replace(/\/$/, "");
+          _cached = { at: Date.now(), url };
+          return url;
+        }
+      }
+    } catch {
+      // fall through to relative
+    }
+  }
+  // Last resort: same-origin /api/* (Next dev proxy or self-host).
+  return "";
+}
+
+async function call<T>(path: string, init?: RequestInit): Promise<T> {
+  const base = await resolveBackend();
+  const url = base ? `${base}${path}` : path;
+  const r = await fetch(url, {
+    ...init,
+    cache: "no-store",
+    headers: {
+      "Content-Type": "application/json",
+      ...(init?.headers || {}),
+    },
+  });
+  if (!r.ok) {
+    const text = await r.text().catch(() => "");
+    throw new Error(`HTTP ${r.status}: ${text || r.statusText}`);
+  }
+  return r.json() as Promise<T>;
+}
+
+// ── Settings ──────────────────────────────────────────────
+export type Settings = {
+  content: {
+    channel: "horror" | "wisdom";
+    tone: string;
+    target_word_min: number;
+    target_word_max: number;
+    manual_premise: string;
+    videos_per_run: number;
+  };
+  voice: Record<string, any>;
+  video: Record<string, any>;
+  upload: Record<string, any>;
+  keywords: Record<string, string[]>;
+  music_keywords: Record<string, string>;
+  providers: Record<string, boolean>;
+};
+export const getSettings = () => call<Settings>("/api/settings");
+export const putSettings = (s: Settings) =>
+  call<{ ok: true }>("/api/settings", { method: "PUT", body: JSON.stringify(s) });
+
+// ── Keys ──────────────────────────────────────────────────
+export type KeyStatus = { set: boolean; masked: string };
+export const getKeys = () => call<Record<string, KeyStatus>>("/api/keys");
+export const putKeys = (updates: Record<string, string | null>) =>
+  call<{ ok: true }>("/api/keys", { method: "PUT", body: JSON.stringify({ updates }) });
+
+// ── Jobs queue ────────────────────────────────────────────
+export type Job = {
+  id: string;
+  status: "queued" | "running" | "complete" | "failed" | "cancelled";
+  channel: string;
+  dry_run: boolean;
+  queued_at: number;
+  started_at: number | null;
+  finished_at: number | null;
+  percent: number;
+  current_step: string | null;
+  current_step_label: string | null;
+  video_url: string | null;     // backend-relative download
+  public_url: string | null;    // remote/Hostinger URL once uploaded
+  error: string | null;
+  run_id: string | null;
+};
+export const submitJob = (channel: string, dry_run: boolean) =>
+  call<Job>("/api/jobs", { method: "POST", body: JSON.stringify({ channel, dry_run }) });
+export const listJobs = () => call<Job[]>("/api/jobs");
+export const getJob = (id: string) => call<Job>(`/api/jobs/${id}`);
+export const cancelJob = (id: string) =>
+  call<{ ok: true }>(`/api/jobs/${id}`, { method: "DELETE" });
+
+export type QueueStatus = {
+  busy: boolean;
+  queue_depth: number;
+  instance_id: string;
+  public_url: string;
+  status: "available" | "busy";
+  storage_configured: boolean;
+};
+export const getQueueStatus = () => call<QueueStatus>("/api/queue");
+
+// ── Past runs (raw, on-backend) ───────────────────────────
+export type Run = {
+  run_id: string;
+  ok?: boolean;
+  channel?: string;
+  dry_run?: boolean;
+  started_at?: string;
+  finished_at?: string;
+  has_video?: boolean;
+  steps?: Record<string, { ok: boolean; seconds: number; skipped?: boolean; error?: string }>;
+  shots?: Array<{
+    start: number; end: number;
+    narration_excerpt: string;
+    visual_description: string;
+    search_query: string;
+    ai_prompt: string;
+  }>;
+  storyboard_fallback?: boolean;
+  video_id?: string;
+  video_url?: string;
+};
+export const listRuns = () => call<Run[]>("/api/runs");
+export const getRun = (id: string) => call<Run>(`/api/runs/${id}`);
+export const deleteRun = (id: string) =>
+  call<{ ok: true }>(`/api/runs/${id}`, { method: "DELETE" });
+
+export async function runVideoUrl(id: string): Promise<string> {
+  const base = await resolveBackend();
+  return `${base}/api/runs/${id}/video`;
+}
+
+// ── Misc ──────────────────────────────────────────────────
+export const getPreflight = () => call<{ ok: boolean; error?: string }>("/api/preflight");
+export const getEdgeVoices = () => call<string[]>("/api/edge-voices");
+
+// Backward-compat type for older components.
+export type RunState = {
+  status: "idle" | "running" | "complete" | "failed";
+  run_id?: string;
+  channel?: string;
+  dry_run?: boolean;
+  started_at?: number;
+  updated_at?: number;
+  percent?: number;
+  current_step?: string;
+  current_step_label?: string;
+  video_path?: string | null;
+  video_url?: string | null;
+  error?: string;
+};
+
+// Backward-compat aliases — old code path expected these:
+export const startRun = submitJob;
+export const cancelRun = () => Promise.resolve({ ok: true });
+export const getState = async () => {
+  // Convert the latest job's state into the old RunState shape so existing
+  // components keep working with minimal changes.
+  try {
+    const jobs = await listJobs();
+    const active = jobs.find((j) => j.status === "running" || j.status === "queued");
+    const latest = active || jobs[0];
+    if (!latest) return { status: "idle" as const };
+    return {
+      status: latest.status as any,
+      run_id: latest.run_id || latest.id,
+      channel: latest.channel,
+      dry_run: latest.dry_run,
+      started_at: latest.started_at || undefined,
+      updated_at: Date.now() / 1000,
+      percent: latest.percent,
+      current_step: latest.current_step || undefined,
+      current_step_label: latest.current_step_label || undefined,
+      video_path: latest.video_url || undefined,
+      video_url: latest.public_url || undefined,
+      error: latest.error || undefined,
+    };
+  } catch {
+    return { status: "idle" as const };
+  }
+};
+export const resetState = () => Promise.resolve({ ok: true });

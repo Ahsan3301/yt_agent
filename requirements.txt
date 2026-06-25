@@ -1,0 +1,31 @@
+# Web stack
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pydantic>=2.6
+
+# Core
+requests>=2.31
+python-dotenv>=1.0
+truststore>=0.9        # corporate / self-signed CA support on Windows
+
+# Pipeline — TTS, research, footage
+edge-tts>=6.1.9
+pytrends>=4.9.2
+feedparser>=6.0.11
+
+# Video assembly
+Pillow>=10.0           # thumbnail.py uses PIL
+
+# YouTube upload (Google OAuth2 + API v3)
+google-api-python-client>=2.100
+google-auth-httplib2>=0.1.1
+google-auth-oauthlib>=1.1
+
+# Scheduling (used by main.py --schedule mode)
+schedule>=1.2
+
+# Optional — local Kokoro TTS (requires PyTorch).
+# Skip if you only use edge-tts; install on demand:
+#   pip install kokoro soundfile
+# kokoro>=0.4
+# soundfile>=0.12

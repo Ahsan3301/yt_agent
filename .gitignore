@@ -1,0 +1,50 @@
+# ── Secrets / config ─────────────────────────────────────────
+.env
+.env.*
+!.env.example
+config/client_secret.json
+Config/client_secret.json
+config/youtube_token.json
+Config/youtube_token.json
+
+# ── Pipeline runtime artifacts ──────────────────────────────
+output/
+logs/
+data/run_state.json
+data/used_clips.json
+data/used_premises.json
+
+# ── Python ───────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+env/
+
+# ── Next.js / Node ───────────────────────────────────────────
+web/node_modules/
+web/.next/
+web/out/
+web/dist/
+web/.turbo/
+web/next-env.d.ts.bak
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── Editors / OS ─────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Misc ─────────────────────────────────────────────────────
+*.log
+tmp/

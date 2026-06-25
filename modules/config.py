@@ -1,0 +1,263 @@
+"""
+config.py — Centralized settings + preflight checks.
+
+Two storage layers:
+  - .env  — secrets only (API keys, client_secret path). Never written by GUI.
+  - config/settings.json — all tunable knobs (channel, tone, voice, video,
+    upload, keyword pools). Written by the GUI; read by every module via
+    settings().
+
+settings.json is created with sensible defaults on first read. Modules call
+settings() at call-time (NOT import-time) so the GUI's changes take effect
+immediately on the next pipeline run, without needing a process restart.
+"""
+import os
+import json
+import shutil
+import logging
+from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
+log = logging.getLogger(__name__)
+
+SETTINGS_PATH = Path("config/settings.json")
+
+
+def env(name, default=None):
+    v = os.getenv(name, default)
+    return v if v not in ("", None) else default
+
+
+# ── Defaults ─────────────────────────────────────────────────
+# Every knob the GUI can edit lives here. Modules read via settings().get(...)
+# with a fallback to these defaults if the key is missing.
+DEFAULT_SETTINGS = {
+    "content": {
+        "channel": env("CHANNEL_TYPE", "horror"),  # "horror" | "wisdom"
+        # chilling = dread-first horror; the default that fits a horror channel.
+        # Set to "atmospheric" / "extreme" / "dramatic" via the GUI for variety.
+        "tone": "chilling",
+        "target_word_min": 160,
+        "target_word_max": 200,
+        "manual_premise": "",                      # if set, overrides auto-generated premise
+        "videos_per_run": int(env("VIDEOS_PER_RUN", "1")),
+    },
+    "voice": {
+        "engine": env("TTS_ENGINE", "edge").lower(),  # "edge" | "kokoro"
+        "edge_voice_horror": "en-US-BrianMultilingualNeural",
+        "edge_voice_wisdom": "en-US-AndrewMultilingualNeural",
+        "edge_rate_horror": "-5%",
+        "edge_pitch_horror": "-2Hz",
+        "edge_rate_wisdom": "+0%",
+        "edge_pitch_wisdom": "+0Hz",
+        "kokoro_voice_horror": "am_michael",
+        "kokoro_voice_wisdom": "am_adam",
+        "kokoro_speed_horror": 0.9,
+        "kokoro_speed_wisdom": 0.95,
+    },
+    "video": {
+        "min_segment_seconds": 2.0,
+        "max_segment_seconds": 7.0,
+        # Master switches for source media types. With video clips off, the
+        # pipeline runs as an "animated stills" montage — only image sources
+        # are fetched and the cinematic motion effects do the heavy lifting.
+        "use_video_clips": True,
+        "allow_images": True,
+        "music_base_volume": 0.55,
+        "music_duck_ratio": 4.0,
+        "music_duck_threshold": 0.15,
+        "caption_highlight_color_bgr": "00FFFF",   # yellow (ASS BGR)
+        "caption_font_size": 72,
+        "caption_highlight_size": 90,
+        # AI image generation (Pollinations text-to-image, free no-key).
+        # 0 = disabled. Each image takes ~5-30s; budget accordingly.
+        "ai_image_count": 0,
+        "ai_image_style": "",   # empty = channel-appropriate default in footage.py
+        # Cinematic image effects applied to ALL still-image segments.
+        # intensity 0 = no effects, 1 = strong (vignette + grain + grade + bigger zoom).
+        "effects_intensity": 0.7,
+        # Vision-gated Shutterstock licensing:
+        # Before burning quota on a Shutterstock license, send the watermarked
+        # preview to a NIM vision model and only license images that score
+        # >= vision_judge_threshold. Saves quota on poor matches.
+        # Output encoder settings. CRF is the quality knob — lower = bigger
+        # file + higher quality. For YouTube Shorts of stock-photo montage:
+        #   18-20 = visually lossless, file ~50-80 MB for 60s    (overkill)
+        #   23    = "high quality" (YouTube's recommendation)    (default)
+        #   26    = noticeably compressed but still fine
+        #   28+   = visible blockiness on motion
+        # Preset trades encode time for compression: fast/medium/slow.
+        # "medium" gives ~25% smaller files than "fast" at the same CRF.
+        "output_crf": 23,
+        "output_preset": "medium",
+        "output_audio_bitrate": "96k",
+        # Per-shot AI image generation: how many polished prompts (with
+        # rotating camera angles) we try before falling back to the best
+        # below-threshold result.
+        "ai_image_attempts_per_shot": 3,
+        "vision_judge_enabled": True,
+        # Threshold is intentionally low — the 11b vision model is more
+        # reliable at RANKING than absolute scoring. We over-fetch
+        # candidates and let the model surface the best of the batch; the
+        # threshold filters only truly off-genre images.
+        "vision_judge_threshold": 4,
+        "vision_judge_candidates_multiplier": 4,  # search 4x what we need
+        # Content restrictions for footage providers.
+        # When False (default for horror channel), the local adult-term
+        # denylist is bypassed and server-side safe filters are loosened
+        # so gothic-horror imagery (decay, occult, dark anatomy) isn't
+        # over-filtered. Hardcore porn is still blocked at the provider
+        # level even with this off — providers have their own permanent floor.
+        "content_restrictions": False,
+    },
+    # Per-provider on/off toggles. Disabled providers are completely skipped
+    # by get_footage, so you can lean into the one or two that work best for
+    # your style without dropping their API key.
+    "providers": {
+        "shutterstock":    True,   # premium image source, 500/month free tier
+        "pexels":          True,
+        "coverr":          True,
+        "pixabay":         True,
+        "openverse_image": True,
+        "pollinations":    False,  # AI image gen — opt-in (slow, sometimes off-target)
+    },
+    "upload": {
+        "privacy": env("YOUTUBE_PRIVACY", "public").lower(),  # public|unlisted|private
+        "made_for_kids": False,
+        "category_horror": "24",  # Entertainment
+        "category_wisdom": "27",  # Education
+    },
+    "keywords": {
+        # Gothic-horror fallback pool — used only when the LLM's
+        # story-specific keywords don't yield enough material. Each phrase is
+        # deliberately cinematic, dread-evoking, and search-engine-friendly
+        # on stock libraries.
+        "horror": [
+            "abandoned gothic mansion at night",
+            "decrepit asylum corridor flickering light",
+            "foggy graveyard moonlight wrought iron",
+            "candlelit dark hallway shadows",
+            "abandoned victorian doll on chair",
+            "old cathedral interior fog",
+            "shadowy figure end of long hallway",
+            "rusted hospital morgue empty",
+            "occult symbols carved wood",
+            "ouija board candlelight dust",
+            "withered tree branches in fog",
+            "moonlit cemetery iron gates",
+            "decaying wallpaper peeling old room",
+            "dim attic dust motes light beam",
+            "abandoned cabin in dark woods",
+        ],
+        "wisdom": [
+            "sunrise nature", "city timelapse", "ocean waves",
+            "mountain peak", "people walking",
+        ],
+    },
+    "music_keywords": {
+        "horror": "dark ambient horror",
+        "wisdom": "inspirational background music",
+    },
+}
+
+
+def _deep_merge(base, overrides):
+    """Merge nested dict overrides into base (overrides wins). Returns new dict."""
+    out = dict(base)
+    for k, v in (overrides or {}).items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
+def load_settings():
+    """Read settings.json (creating it from defaults if missing). Returns dict."""
+    SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if not SETTINGS_PATH.exists():
+        save_settings(DEFAULT_SETTINGS)
+        return dict(DEFAULT_SETTINGS)
+    try:
+        with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
+            user = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        log.warning(f"settings.json unreadable ({e}); using defaults")
+        return dict(DEFAULT_SETTINGS)
+    # Merge over defaults so any newly-added keys appear without breaking
+    # existing config files.
+    return _deep_merge(DEFAULT_SETTINGS, user)
+
+
+def save_settings(data):
+    """Atomic write of settings.json."""
+    SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = SETTINGS_PATH.with_suffix(".json.tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, SETTINGS_PATH)
+
+
+def settings():
+    """Convenience: load + return the current settings dict."""
+    return load_settings()
+
+
+# ── Back-compat module-level constants (read once at import) ─────────
+# These remain so older code paths still work, but new code should call
+# settings() at call-time for live updates from the GUI.
+_S = load_settings()
+CHANNEL_TYPE   = _S["content"]["channel"]
+VIDEOS_PER_RUN = _S["content"]["videos_per_run"]
+TTS_ENGINE     = _S["voice"]["engine"]
+PRIVACY        = _S["upload"]["privacy"]
+if PRIVACY not in ("public", "unlisted", "private"):
+    log.warning(f"privacy={PRIVACY!r} invalid; falling back to 'private'")
+    PRIVACY = "private"
+
+
+# ── API keys (read lazily by modules; we just collect for preflight) ──
+_REQUIRED_FOR_PIPELINE = ["GROQ_API_KEY"]
+_REQUIRED_FOR_FOOTAGE  = ["PEXELS_API_KEY", "PIXABAY_API_KEY"]
+
+
+class PreflightError(RuntimeError):
+    pass
+
+
+def preflight(skip_upload=False):
+    """
+    Verify the run can succeed before we start spending time/quota.
+    Raises PreflightError with a clear message if anything is missing.
+    """
+    problems = []
+
+    for name in _REQUIRED_FOR_PIPELINE:
+        if not env(name):
+            problems.append(f"missing env var: {name}")
+
+    if not any(env(n) for n in _REQUIRED_FOR_FOOTAGE):
+        problems.append(
+            "no footage API key set — need at least one of "
+            + ", ".join(_REQUIRED_FOR_FOOTAGE)
+        )
+
+    for binary in ("ffmpeg", "ffprobe"):
+        if shutil.which(binary) is None:
+            problems.append(f"{binary} not found on PATH")
+
+    if not skip_upload:
+        secrets = env("YOUTUBE_CLIENT_SECRETS_FILE", "config/client_secret.json")
+        if not os.path.exists(secrets):
+            problems.append(f"YouTube client_secret.json not found at {secrets}")
+
+    if problems:
+        raise PreflightError("Preflight failed:\n  - " + "\n  - ".join(problems))
+
+    s = load_settings()
+    log.info(
+        f"Preflight ok | channel={s['content']['channel']} "
+        f"tone={s['content']['tone']} privacy={s['upload']['privacy']} "
+        f"tts={s['voice']['engine']}"
+    )
