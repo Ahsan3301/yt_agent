@@ -117,7 +117,7 @@ export const putSettings = (s: Settings) =>
   call<{ ok: true }>("/api/settings", { method: "PUT", body: JSON.stringify(s) });
 
 // ── Keys ──────────────────────────────────────────────────
-export type KeyStatus = { set: boolean; masked: string };
+export type KeyStatus = { set: boolean; masked: string; managed?: boolean };
 export const getKeys = () => call<Record<string, KeyStatus>>("/api/keys");
 export const putKeys = (updates: Record<string, string | null>) =>
   call<{ ok: true }>("/api/keys", { method: "PUT", body: JSON.stringify({ updates }) });

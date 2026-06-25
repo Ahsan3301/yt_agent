@@ -139,6 +139,73 @@ def upload_json(remote_filename: str, payload: dict | list) -> str:
     return f"{PUBLIC_BASE_URL}/{remote_filename}"
 
 
+# ── Central keys store ───────────────────────────────────────
+# Path on the FTP server where all API keys live as a JSON dict. Hidden
+# under .private/ (Hostinger / Apache hides dotfile directories by default),
+# so even though it's under FTP_BASE_DIR it's not HTTP-accessible.
+KEYS_REMOTE_DIR  = _env("FTP_KEYS_DIR",  f"{FTP_BASE_DIR.rstrip('/')}/.private")
+KEYS_REMOTE_FILE = _env("FTP_KEYS_FILE", "keys.json")
+
+
+def download_keys() -> dict:
+    """
+    Fetch the shared keys.json from Hostinger. Returns {} on any failure
+    (file missing, FTP down, etc.) — caller treats absent keys as the
+    bootstrap state.
+    """
+    import json as _json
+    if not is_configured():
+        return {}
+    buf = io.BytesIO()
+    try:
+        ftp = _connect()
+    except Exception as e:
+        log.warning(f"download_keys: FTP connect failed: {e}")
+        return {}
+    try:
+        try:
+            ftp.cwd(KEYS_REMOTE_DIR)
+        except error_perm:
+            return {}    # dir doesn't exist yet
+        try:
+            ftp.retrbinary(f"RETR {KEYS_REMOTE_FILE}", buf.write, blocksize=64 * 1024)
+        except error_perm:
+            return {}    # file doesn't exist yet
+    finally:
+        try: ftp.quit()
+        except Exception: pass
+
+    raw = buf.getvalue()
+    if not raw:
+        return {}
+    try:
+        data = _json.loads(raw.decode("utf-8"))
+        if isinstance(data, dict):
+            return data
+    except Exception as e:
+        log.warning(f"download_keys: parse failed: {e}")
+    return {}
+
+
+def upload_keys(keys: dict) -> bool:
+    """Push the keys dict to Hostinger as keys.json."""
+    import json as _json
+    if not is_configured():
+        raise RuntimeError("FTP storage not configured")
+    data = _json.dumps(keys, indent=2).encode("utf-8")
+    buf = io.BytesIO(data)
+    ftp = _connect()
+    try:
+        _mkdir_p(ftp, KEYS_REMOTE_DIR)
+        ftp.cwd(KEYS_REMOTE_DIR)
+        ftp.storbinary(f"STOR {KEYS_REMOTE_FILE}", buf, blocksize=32 * 1024)
+    finally:
+        try: ftp.quit()
+        except Exception: pass
+    log.info(f"upload_keys: pushed {len(keys)} key(s) to {KEYS_REMOTE_DIR}/{KEYS_REMOTE_FILE}")
+    return True
+
+
 def delete_remote(remote_filename: str):
     """Delete a file under FTP_BASE_DIR. Silent on missing."""
     if not is_configured():

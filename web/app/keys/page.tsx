@@ -64,11 +64,16 @@ export default function KeysPage() {
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <div className="font-medium">{label}</div>
-                  <div className="text-xs text-neutral-500 flex items-center gap-2 mt-0.5">
+                  <div className="text-xs text-neutral-500 flex items-center gap-2 mt-0.5 flex-wrap">
                     <code>{name}</code>
                     <a href={url} target="_blank" className="text-accent hover:underline inline-flex items-center gap-1">
                       get key <ExternalLink className="h-3 w-3" />
                     </a>
+                    {k?.managed && (
+                      <span className="pill pill-info" title="Synced via Hostinger to all backends">
+                        shared
+                      </span>
+                    )}
                   </div>
                 </div>
                 {isSet

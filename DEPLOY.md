@@ -128,17 +128,19 @@ slower than Colab T4. A 60s short renders in ~6-10 min. Everything else
    - Hardware: **CPU basic — Free**
    - Visibility: Private (recommended)
 
-2. **Set secrets** (Settings → *Variables and secrets*):
+2. **Set secrets** (Settings → *Variables and secrets*) — **only the bootstrap minimum**:
 
    | Secret                       | Value                                    |
    |------------------------------|------------------------------------------|
-   | `NVIDIA_NIM_API_KEY`        | your NIM key                              |
-   | `SHUTTERSTOCK_API_TOKEN`    | user token                                |
-   | `PEXELS_API_KEY`            |                                          |
-   | `PIXABAY_API_KEY`           |                                          |
-   | `COVERR_API_KEY`            | optional                                  |
-   | `FTP_HOST` `FTP_USER` `FTP_PASS` `PUBLIC_BASE_URL` | Hostinger storage     |
-   | `PUBLIC_BACKEND_URL`        | `https://YOUR_USER-YOUR_SPACE.hf.space`   |
+   | `FTP_HOST`                   | `ftp.yourdomain.com`                      |
+   | `FTP_USER`                   | your Hostinger FTP user                   |
+   | `FTP_PASS`                   | your Hostinger FTP password               |
+   | `PUBLIC_BASE_URL`            | `https://yourdomain.com/yt-agent`         |
+   | `PUBLIC_BACKEND_URL`         | `https://YOUR_USER-YOUR_SPACE.hf.space`   |
+
+   That's it. **All API keys (NIM, Shutterstock, Pexels, …) come from the
+   dashboard's API Keys page** — Vercel writes them to `keys.json` on
+   Hostinger, this Space pulls them on startup. One source of truth.
 
    Other env vars (already baked into the Dockerfile as defaults):
    `INSTANCE_TIER=cpu`, `IDLE_TIMEOUT_SECONDS=0` (never auto-shutdown).

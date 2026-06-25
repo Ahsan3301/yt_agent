@@ -36,10 +36,7 @@ The frontend resolver sorts: **GPU-available → GPU-busy → CPU-available
 This `huggingface/` directory IS the Space repo. To deploy:
 
 1. Create a new Docker Space on HuggingFace (any name).
-2. Set the Space's secrets (Settings → Variables and secrets). At minimum:
-   - `NVIDIA_NIM_API_KEY`
-   - `SHUTTERSTOCK_API_TOKEN`
-   - `PEXELS_API_KEY` · `PIXABAY_API_KEY`
+2. Set the Space's secrets (Settings → Variables and secrets) — **only the bootstrap minimum, the rest pulls from Hostinger automatically**:
    - `FTP_HOST` · `FTP_USER` · `FTP_PASS` · `PUBLIC_BASE_URL`
    - `PUBLIC_BACKEND_URL` = `https://YOUR_USER-YOUR_SPACE.hf.space`
 3. Push *only this directory's contents plus the project's

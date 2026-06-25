@@ -46,7 +46,7 @@ log = logging.getLogger("backend")
 
 from modules.config import load_settings, save_settings, preflight, PreflightError  # noqa: E402
 from modules import run_state  # noqa: E402
-from backend import jobs, registry, storage, idle_watchdog  # noqa: E402
+from backend import jobs, registry, storage, idle_watchdog, keys_sync  # noqa: E402
 
 RUNS_DIR = ROOT / "output" / "videos"
 ENV_PATH = ROOT / ".env"
@@ -93,6 +93,13 @@ async def _touch_idle_watchdog(request, call_next):
 
 @app.on_event("startup")
 def _on_startup():
+    # Pull the shared API keys from Hostinger BEFORE anything else so
+    # downstream modules see the right env vars when they're imported
+    # lazily on first request.
+    try:
+        keys_sync.pull_into_env()
+    except Exception as e:
+        log.warning(f"keys_sync.pull_into_env failed: {e}")
     # Heartbeat: publish this backend's URL to the Hostinger registry.
     try:
         registry.start()
@@ -154,16 +161,35 @@ def _mask(v: str) -> str:
 
 @app.get("/api/keys")
 def get_keys():
-    out = {}
+    """
+    Returns the merged view of each managed key:
+      - the central store on Hostinger (authoritative for managed keys),
+      - falling back to local env vars for bootstrap-only ones (FTP_*, etc.).
+    Frontend renders these as set/unset chips with masked values.
+    """
+    if not storage.is_configured():
+        # Central store isn't available on this backend; degrade gracefully
+        # to local-env display so the user can still see what's set.
+        out = {}
+        for k in API_KEY_FIELDS:
+            v = os.getenv(k, "")
+            out[k] = {"set": bool(v), "masked": _mask(v), "managed": False}
+        return out
+
+    central = keys_sync.central_status()
+    # Bootstrap-only keys (not in MANAGED_KEYS) still come from env.
     for k in API_KEY_FIELDS:
+        if k in central:
+            continue
         v = os.getenv(k, "")
-        out[k] = {"set": bool(v), "masked": _mask(v)}
-    # Also report OAuth file presence.
-    out["YOUTUBE_CLIENT_SECRETS_FILE"] = {
+        central[k] = {"set": bool(v), "masked": _mask(v), "managed": False}
+    # OAuth file presence is local-only.
+    central["YOUTUBE_CLIENT_SECRETS_FILE"] = {
         "set": (ROOT / os.getenv("YOUTUBE_CLIENT_SECRETS_FILE", "config/client_secret.json")).exists(),
         "masked": os.getenv("YOUTUBE_CLIENT_SECRETS_FILE", "config/client_secret.json"),
+        "managed": False,
     }
-    return out
+    return central
 
 
 class KeysPayload(BaseModel):
@@ -172,20 +198,48 @@ class KeysPayload(BaseModel):
 
 @app.put("/api/keys")
 def put_keys(payload: KeysPayload):
-    ENV_PATH.touch(exist_ok=True)
+    """
+    Persists the update.  Managed keys go to the shared Hostinger keys.json
+    so every other backend picks them up on its next pull. Unmanaged keys
+    (FTP_*, PUBLIC_*) update only the local .env (which usually shouldn't
+    happen via the dashboard, but we tolerate it for completeness).
+    """
+    managed_updates = {}
+    local_updates = {}
     for k, v in payload.updates.items():
-        if k not in API_KEY_FIELDS:
-            continue
-        if v:
-            set_key(str(ENV_PATH), k, v)
-            os.environ[k] = v
-        else:
-            try:
-                unset_key(str(ENV_PATH), k)
-            except Exception:
-                pass
-            os.environ.pop(k, None)
-    return {"ok": True}
+        if k in keys_sync.MANAGED_KEYS:
+            managed_updates[k] = v
+        elif k in API_KEY_FIELDS:
+            local_updates[k] = v
+
+    if managed_updates:
+        if not storage.is_configured():
+            raise HTTPException(503, "FTP storage not configured — cannot push to central store")
+        keys_sync.push_from_payload(managed_updates)
+
+    if local_updates:
+        ENV_PATH.touch(exist_ok=True)
+        for k, v in local_updates.items():
+            if v:
+                set_key(str(ENV_PATH), k, v)
+                os.environ[k] = v
+            else:
+                try:
+                    unset_key(str(ENV_PATH), k)
+                except Exception:
+                    pass
+                os.environ.pop(k, None)
+
+    return {"ok": True, "central_updated": len(managed_updates),
+            "local_updated": len(local_updates)}
+
+
+@app.post("/api/keys/reload")
+def reload_keys():
+    """Force this backend to re-pull keys.json from Hostinger. Useful after
+    another backend updated the central store."""
+    applied = keys_sync.pull_into_env()
+    return {"ok": True, "applied": list(applied.keys())}
 
 
 # ── Run state + control ───────────────────────────────────────
