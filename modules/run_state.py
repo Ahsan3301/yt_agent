@@ -90,6 +90,31 @@ def step_done(step_key):
         _atomic_write(cur)
 
 
+def tick(step_key, fraction):
+    """Interpolated progress within a long-running step.
+
+    `fraction` is 0.0..1.0 progress through this step. The percent fills
+    between the previous step's cumulative percent and this one's, so the
+    bar moves smoothly during footage/edit instead of sitting frozen.
+    """
+    cur = read()
+    if cur.get("status") != "running":
+        return
+    idx = STEP_INDEX.get(step_key)
+    if idx is None:
+        return
+    base = STEPS[idx - 1][2] if idx > 0 else 0
+    cap  = STEPS[idx][2]
+    f = max(0.0, min(1.0, float(fraction)))
+    cur["percent"] = int(round(base + (cap - base) * f))
+    cur["current_step"] = step_key
+    cur["current_step_label"] = next(
+        (label for k, label, _ in STEPS if k == step_key), step_key.title()
+    )
+    cur["updated_at"] = time.time()
+    _atomic_write(cur)
+
+
 def finish(ok, video_path=None, video_url=None, error=None):
     """Mark the run complete (or failed)."""
     cur = read()
@@ -103,6 +128,38 @@ def finish(ok, video_path=None, video_url=None, error=None):
     if error:
         cur["error"] = str(error)
     _atomic_write(cur)
+
+
+# ── Cancellation ──────────────────────────────────────────────
+# The job worker thread writes run_state from inside the pipeline. The
+# /api/jobs/<id> DELETE handler runs in a request thread. They both
+# touch the same JSON file (atomic write), and the pipeline checks the
+# flag at safe interruption points.
+
+class Cancelled(RuntimeError):
+    """Raised by check_cancel() to unwind the pipeline cleanly."""
+
+
+def request_cancel():
+    """Set the cancel flag on the active run, if any."""
+    cur = read()
+    if cur.get("status") != "running":
+        return False
+    cur["cancel_requested"] = True
+    cur["updated_at"] = time.time()
+    _atomic_write(cur)
+    return True
+
+
+def cancellation_requested() -> bool:
+    return bool(read().get("cancel_requested"))
+
+
+def check_cancel():
+    """Raise Cancelled if the user requested cancellation. Call from
+    between-stage seams and inside any long inner loop."""
+    if cancellation_requested():
+        raise Cancelled("run cancelled by user")
 
 
 def reset():

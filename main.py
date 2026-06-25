@@ -63,13 +63,18 @@ from modules.uploader     import upload_video
 
 def _step(summary, name, fn):
     """Time a pipeline step, record it in summary, and emit progress to run_state."""
+    run_state.check_cancel()
     run_state.step_started(name)
     t0 = time.time()
     try:
         result = fn()
         summary["steps"][name] = {"ok": result is not None and result is not False, "seconds": round(time.time() - t0, 2)}
         run_state.step_done(name)
+        run_state.check_cancel()
         return result
+    except run_state.Cancelled:
+        summary["steps"][name] = {"ok": False, "seconds": round(time.time() - t0, 2), "error": "cancelled"}
+        raise
     except Exception as e:
         summary["steps"][name] = {"ok": False, "seconds": round(time.time() - t0, 2), "error": repr(e)}
         raise
@@ -213,6 +218,11 @@ def run_pipeline(channel_type=None, dry_run=False):
         log.info(f"Pipeline complete! Run: {run_id}")
         return _finish(summary, work_dir, True)
 
+    except run_state.Cancelled as e:
+        log.warning(f"Pipeline cancelled: {e}")
+        summary["error"] = "cancelled by user"
+        summary["cancelled"] = True
+        return _finish(summary, work_dir, False)
     except Exception as e:
         log.exception(f"Pipeline crashed: {e}")
         summary["error"] = repr(e)

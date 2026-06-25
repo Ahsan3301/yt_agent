@@ -107,18 +107,41 @@ def list_all(limit: int = 50) -> list[dict[str, Any]]:
 
 
 def cancel(job_id: str) -> bool:
-    """Mark a job cancelled. If it's already running, the bg thread can't be
-    killed cleanly — but the next step will see the cancel flag and abort,
-    and the job's UI state is freed immediately."""
+    """Cancel a job. Three paths:
+
+      * Queued (not started): drop status to 'cancelled' immediately.
+      * Running: signal the pipeline via run_state.request_cancel() AND
+        terminate the active ffmpeg subprocess so the encode stops
+        within a second. The worker thread sees Cancelled at the next
+        step seam and exits cleanly.
+      * Terminal already: no-op, return False.
+    """
     with _lock:
         job = _jobs.get(job_id)
         if not job or job["status"] in ("complete", "failed", "cancelled"):
             return False
+        is_running = (job["status"] == "running")
         job["status"] = "cancelled"
         job["finished_at"] = time.time()
         job["error"] = "cancelled by user"
         _persist(job)
-        return True
+
+    if is_running:
+        # 1) Set the cancel flag in run_state so the pipeline's check_cancel()
+        #    seams raise Cancelled at the next safe boundary.
+        try:
+            from modules import run_state
+            run_state.request_cancel()
+        except Exception as e:
+            log.warning(f"cancel: request_cancel failed: {e}")
+        # 2) Kill the currently-running ffmpeg so we don't wait for the
+        #    encode to finish before the seam check fires.
+        try:
+            from modules import editor
+            editor.terminate_active()
+        except Exception as e:
+            log.warning(f"cancel: terminate_active failed: {e}")
+    return True
 
 
 def is_busy() -> bool:

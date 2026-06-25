@@ -243,7 +243,40 @@ export type RunState = {
 
 // Backward-compat aliases — old code path expected these:
 export const startRun = submitJob;
-export const cancelRun = () => Promise.resolve({ ok: true });
+
+/**
+ * Cancel the currently running (or queued) job, whichever is most recent.
+ * Returns true if a job was found and cancelled, false otherwise.
+ */
+export async function cancelRun(): Promise<{ ok: boolean }> {
+  try {
+    const jobs = await listJobs();
+    const target = jobs.find(
+      (j) => j.status === "running" || j.status === "queued",
+    );
+    if (!target) return { ok: false };
+    await cancelJob(target.id);
+    return { ok: true };
+  } catch {
+    return { ok: false };
+  }
+}
+
+// ── Live logs ──────────────────────────────────────────────
+export type LogEntry = {
+  seq: number;
+  time: number;       // epoch seconds
+  level: string;      // "INFO" | "WARNING" | "ERROR" | "DEBUG" | ...
+  name: string;       // logger name
+  msg: string;
+};
+export type LogPage = { entries: LogEntry[]; head_seq: number };
+
+export const fetchLogs = (since: number, limit = 500) =>
+  call<LogPage>(`/api/logs?since=${since}&limit=${limit}`);
+
+export const clearLogs = () =>
+  call<{ ok: true }>("/api/logs", { method: "DELETE" });
 export const getState = async () => {
   // Convert the latest job's state into the old RunState shape so existing
   // components keep working with minimal changes.

@@ -11,6 +11,7 @@ import {
   listRuns, type Settings, type RunState, type Run,
 } from "@/lib/api";
 import VideoPlayer from "@/components/VideoPlayer";
+import LogsPanel from "@/components/LogsPanel";
 
 const STEP_ORDER = [
   ["research",  "Researching topic"],
@@ -216,6 +217,9 @@ export default function Dashboard() {
           )}
         </div>
       )}
+
+      {/* Live backend logs — always mounted; polls faster while a job runs */}
+      <LogsPanel active={isRunning} />
 
       {/* Latest finished run */}
       {!isRunning && latest && (

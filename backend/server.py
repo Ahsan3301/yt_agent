@@ -93,6 +93,14 @@ async def _touch_idle_watchdog(request, call_next):
 
 @app.on_event("startup")
 def _on_startup():
+    # Attach the in-memory ring buffer that backs /api/logs so the
+    # dashboard can stream live progress text. Do this BEFORE the other
+    # startup hooks so their log lines also get captured.
+    try:
+        from backend import logbuf
+        logbuf.attach()
+    except Exception as e:
+        log.warning(f"logbuf.attach failed: {e}")
     # Pull the shared API keys from Hostinger BEFORE anything else so
     # downstream modules see the right env vars when they're imported
     # lazily on first request.
@@ -635,6 +643,30 @@ def queue_status():
         "idle_timeout_seconds": timeout,
         "auto_shutdown_in": max(0, timeout - idle_for) if timeout > 0 else None,
     }
+
+
+# ── Live logs (ring buffer for the dashboard) ───────────────
+@app.get("/api/logs")
+def get_logs(since: int = 0, limit: int = 500):
+    """Return log entries with seq > since. The dashboard polls this
+    every second while a job runs (longer interval otherwise) and uses
+    the returned head_seq as the next `since` value."""
+    try:
+        from backend import logbuf
+        return logbuf.read(since=since, limit=limit)
+    except Exception as e:
+        log.warning(f"/api/logs failed: {e}")
+        return {"entries": [], "head_seq": 0}
+
+
+@app.delete("/api/logs")
+def clear_logs():
+    try:
+        from backend import logbuf
+        logbuf.clear()
+    except Exception:
+        pass
+    return {"ok": True}
 
 
 # ── Voice catalog (for the settings UI) ──────────────────────

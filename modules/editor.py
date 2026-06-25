@@ -95,6 +95,29 @@ def _vcodec_args(crf: str = "23", preset_cpu: str = "fast") -> list[str]:
     return ["-c:v", "libx264", "-preset", preset_cpu, "-crf", str(crf)]
 
 
+# Track the currently-running ffmpeg Popen so jobs.cancel() can kill it
+# instead of waiting for a multi-minute encode to finish.
+_active_proc: subprocess.Popen | None = None
+_active_lock = __import__("threading").Lock()
+
+
+def terminate_active():
+    """Best-effort kill the running ffmpeg, if any. Safe to call from
+    another thread."""
+    global _active_proc
+    with _active_lock:
+        p = _active_proc
+    if p is None:
+        return False
+    try:
+        p.terminate()
+        try: p.wait(timeout=2)
+        except Exception: p.kill()
+        return True
+    except Exception:
+        return False
+
+
 def run_ffmpeg(args, desc="ffmpeg", cwd=None):
     """Run an ffmpeg command, raise on failure.
 
@@ -109,21 +132,52 @@ def run_ffmpeg(args, desc="ffmpeg", cwd=None):
     is selected so we capture real diagnostics if ffmpeg dies. Previously
     `-loglevel error` suppressed everything and produced empty-stderr crashes
     that were impossible to debug.
+
+    Cancellation: before launching, we check run_state for a cancel
+    request; if set, we raise Cancelled without running. The Popen is
+    tracked globally so terminate_active() can kill it mid-encode.
     """
+    # Lazy import to avoid a startup-time cycle with modules.config.
+    from modules import run_state
+    run_state.check_cancel()
+
     cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "warning"] + args
     log.info(f"Running {desc}: {' '.join(cmd[:6])}...")
-    result = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd, encoding="utf-8", errors="replace")
-    if result.returncode != 0:
-        # Capture EVERYTHING we have so we can debug empty-stderr failures.
-        stderr_tail = (result.stderr or "")[-1500:].strip() or "(empty)"
-        stdout_tail = (result.stdout or "")[-500:].strip()
-        log.error(f"ffmpeg [{desc}] failed (exit {result.returncode})")
+
+    global _active_proc
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        cwd=cwd, text=True, encoding="utf-8", errors="replace",
+    )
+    with _active_lock:
+        _active_proc = proc
+    try:
+        stdout, stderr = proc.communicate()
+    finally:
+        with _active_lock:
+            if _active_proc is proc:
+                _active_proc = None
+
+    if proc.returncode != 0:
+        # If we were cancelled mid-encode, surface that as Cancelled
+        # rather than a generic ffmpeg error.
+        if run_state.cancellation_requested():
+            raise run_state.Cancelled("ffmpeg terminated by user cancel")
+        stderr_tail = (stderr or "")[-1500:].strip() or "(empty)"
+        stdout_tail = (stdout or "")[-500:].strip()
+        log.error(f"ffmpeg [{desc}] failed (exit {proc.returncode})")
         log.error(f"  cmd: {' '.join(cmd)}")
         log.error(f"  stderr: {stderr_tail}")
         if stdout_tail:
             log.error(f"  stdout: {stdout_tail}")
         raise RuntimeError(f"ffmpeg [{desc}] failed: {stderr_tail[-300:]}")
-    # On success the verbose mode may still print harmless warnings; surface them as DEBUG.
+    # Stash captured output on a Result-like for the success path below.
+    class _R:
+        pass
+    result = _R()
+    result.returncode = proc.returncode
+    result.stdout = stdout
+    result.stderr = stderr
     if result.stderr and result.stderr.strip():
         log.debug(f"ffmpeg [{desc}] stderr: {result.stderr.strip()[-300:]}")
     return True
@@ -576,14 +630,21 @@ def prepare_clips(sources, target_duration, work_dir, channel="horror"):
     log.info(f"Montage plan: {len(segments)} segments (no repeats) — "
              f"{vid_count} videos + {img_count} images, target ~{target_duration:.1f}s")
 
+    # Edit owns 60%..92% of the bar (32% wide). Per-segment encoding is
+    # ~70% of that work and the rest is concat + final mux. So scale the
+    # per-segment tick from 0.0 to 0.7.
+    from modules import run_state
     segment_files = []
+    n = max(1, len(segments))
     for i, (src, start, dur) in enumerate(segments):
+        run_state.check_cancel()
         out = os.path.join(work_dir, f"seg_{i:02d}.mp4")
         if src["type"] == "video":
             _render_video_segment(src, start, dur, out)
         else:
             _render_image_segment(src, dur, out, channel=channel)
         segment_files.append(out)
+        run_state.tick("edit", 0.7 * (i + 1) / n)
 
     concat_list = os.path.join(work_dir, "concat.txt")
     with open(concat_list, "w") as f:

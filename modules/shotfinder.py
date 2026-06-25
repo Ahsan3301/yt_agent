@@ -379,18 +379,26 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror"):
 
 def fetch_shots(shots, output_dir, channel="horror"):
     """For each shot, fetch one image (with vision validation). Returns the
-    list of source dicts in shot order. Missing shots are simply skipped."""
+    list of source dicts in shot order. Missing shots are simply skipped.
+
+    Reports per-shot progress to run_state so the dashboard bar moves
+    smoothly during this long step (the footage stage owns 30%..60% of
+    the bar). Checks for user cancellation between shots."""
     from pathlib import Path
+    from modules import run_state
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     reset_pollinations_breaker()
     used_ids = set(F._load_used_clips())
     sources = []
+    total = max(1, len(shots))
     for i, shot in enumerate(shots, 1):
-        log.info(f"Shot {i}/{len(shots)}")
+        run_state.check_cancel()
+        log.info(f"Shot {i}/{total}")
         src = find_image_for_shot(shot, output_dir, used_ids, channel=channel)
         if src:
             src["start"] = float(shot.get("start", 0.0))
             src["end"]   = float(shot.get("end", 0.0))
             sources.append(src)
+        run_state.tick("footage", i / total)
     log.info(f"Storyboard fetch: {len(sources)}/{len(shots)} shots filled")
     return sources
