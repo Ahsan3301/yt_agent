@@ -83,6 +83,80 @@ def _close(transport, sftp):
     except Exception: pass
 
 
+# ── Persistent connection (used by the heartbeat loop) ────────
+# Opening a fresh SSH connection every 30s triggers Hostinger's anti-abuse
+# throttling. Keep one transport + sftp pair alive across heartbeats; only
+# reconnect when the existing session breaks.
+import threading
+_persistent_lock = threading.Lock()
+_persistent_transport = None
+_persistent_sftp = None
+
+
+def _get_persistent():
+    """Return a (transport, sftp) pair that's reused across calls.
+
+    Lazily opens on first call. Validates with a cheap `stat(".")` so we
+    notice a dead session and reconnect, rather than letting upload fail.
+    """
+    global _persistent_transport, _persistent_sftp
+    with _persistent_lock:
+        if _persistent_transport is not None and _persistent_transport.is_active():
+            try:
+                _persistent_sftp.stat(".")
+                return _persistent_transport, _persistent_sftp
+            except Exception:
+                log.warning("persistent sftp went stale — reconnecting")
+        # (Re)open.
+        try:
+            if _persistent_sftp is not None:
+                try: _persistent_sftp.close()
+                except Exception: pass
+            if _persistent_transport is not None:
+                try: _persistent_transport.close()
+                except Exception: pass
+        finally:
+            _persistent_transport = None
+            _persistent_sftp = None
+
+        t, s = _connect()
+        _persistent_transport, _persistent_sftp = t, s
+        return t, s
+
+
+def upload_json_persistent(remote_filename: str, payload) -> str:
+    """Like upload_json but reuses one SSH session across calls. Use this
+    from the heartbeat loop to avoid SSH rate-limiting."""
+    if not is_configured():
+        raise RuntimeError("SFTP storage not configured")
+    import json as _json
+    data = _json.dumps(payload, indent=2, ensure_ascii=False).encode("utf-8")
+    remote_path = f"{SFTP_BASE_DIR}/{remote_filename}"
+
+    # Try with the existing session; on any failure, drop it and retry once.
+    for attempt in (1, 2):
+        try:
+            _, sftp = _get_persistent()
+            _mkdir_p(sftp, SFTP_BASE_DIR)
+            with sftp.open(remote_path, "wb") as f:
+                f.write(data)
+            return f"{PUBLIC_BASE_URL}/{remote_filename}"
+        except Exception as e:
+            log.warning(f"upload_json_persistent attempt {attempt} failed: {e}")
+            with _persistent_lock:
+                global _persistent_transport, _persistent_sftp
+                try:
+                    if _persistent_sftp: _persistent_sftp.close()
+                except Exception: pass
+                try:
+                    if _persistent_transport: _persistent_transport.close()
+                except Exception: pass
+                _persistent_transport = None
+                _persistent_sftp = None
+            if attempt == 2:
+                raise
+
+
 def _mkdir_p(sftp, path: str):
     """Idempotent recursive mkdir."""
     parts = [p for p in path.split("/") if p]

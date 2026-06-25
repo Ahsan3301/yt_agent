@@ -61,7 +61,10 @@ async function resolveBackend(): Promise<string> {
       if (r.ok) {
         const entries = (await r.json()) as RegistryEntry[];
         const fresh = entries
-          .filter((e) => e && e.url && Date.now() / 1000 - (e.last_seen || 0) < 120)
+          // 180s window — one heartbeat is 30s, so this tolerates ~5 missed
+          // cycles before a backend gets dropped (Hostinger SFTP can stall
+          // briefly under load).
+          .filter((e) => e && e.url && Date.now() / 1000 - (e.last_seen || 0) < 180)
           .sort(rankBackend);
         if (fresh.length > 0) {
           const url = fresh[0].url.replace(/\/$/, "");
@@ -213,7 +216,7 @@ export async function fetchLiveBackends(): Promise<RegistryEntry[]> {
     if (!r.ok) return [];
     const entries = (await r.json()) as RegistryEntry[];
     return entries.filter((e) =>
-      e && e.url && Date.now() / 1000 - (e.last_seen || 0) < 120,
+      e && e.url && Date.now() / 1000 - (e.last_seen || 0) < 180,
     );
   } catch {
     return [];

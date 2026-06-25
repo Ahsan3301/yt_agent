@@ -108,7 +108,10 @@ def _merge_self(entries: list[dict], from_jobs_queue_depth: int = 0) -> list[dic
 
 
 def push_now(queue_depth: int = 0):
-    """Publish a heartbeat immediately."""
+    """Publish a heartbeat immediately. Uses a persistent SFTP session so
+    we don't open a new SSH connection every cycle (Hostinger throttles
+    that). Falls back to a fresh-connection upload if the persistent path
+    is unavailable."""
     if not storage.is_configured():
         return
     if not public_url():
@@ -116,7 +119,11 @@ def push_now(queue_depth: int = 0):
     entries = _read_remote()
     new = _merge_self(entries, from_jobs_queue_depth=queue_depth)
     try:
-        url = storage.upload_json(REGISTRY_FILENAME, new)
+        try:
+            url = storage.upload_json_persistent(REGISTRY_FILENAME, new)
+        except AttributeError:
+            # back-compat for older storage modules during rolling deploy
+            url = storage.upload_json(REGISTRY_FILENAME, new)
         log.debug(f"registry heartbeat ok → {url} ({_status}, depth={queue_depth})")
     except Exception as e:
         log.warning(f"registry heartbeat upload failed: {e}")
