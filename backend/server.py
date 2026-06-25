@@ -387,10 +387,15 @@ def cancel_job(job_id: str):
 
 @app.get("/api/debug/heartbeat")
 def debug_heartbeat():
-    """Forces a synchronous registry push and surfaces any error.
-    Used to diagnose silent FTP/upload failures when the background
-    heartbeat thread isn't producing visible logs."""
-    import traceback
+    """Comprehensive diagnostic. Tests:
+      1. DNS resolution (IPv4 vs IPv6)
+      2. TCP connect to each resolved address
+      3. Whether outbound HTTPS works at all (sanity check)
+      4. FTP connection forced to IPv4 (in case IPv6 has no route)
+      5. The actual registry push
+    """
+    import socket, traceback, ssl, urllib.request
+
     out = {
         "storage_configured": storage.is_configured(),
         "public_url": registry.public_url(),
@@ -405,33 +410,76 @@ def debug_heartbeat():
         "public_base_url": os.getenv("PUBLIC_BASE_URL", ""),
         "registry_filename": registry.REGISTRY_FILENAME,
     }
-    try:
-        # Try a raw connection first (isolates auth/host errors).
-        ftp = storage._connect()
-        out["ftp_connect_ok"] = True
-        try:
-            pwd = ftp.pwd()
-            out["ftp_pwd"] = pwd
-            out["ftp_listing_root"] = ftp.nlst()
-        except Exception as e:
-            out["ftp_pwd_error"] = repr(e)
-        finally:
-            try: ftp.quit()
-            except Exception: pass
-    except Exception as e:
-        out["ftp_connect_ok"] = False
-        out["ftp_connect_error"] = repr(e)
-        out["traceback"] = traceback.format_exc()
-        return out
 
-    # Now try the real heartbeat push.
+    host = os.getenv("FTP_HOST", "")
+    port = int(os.getenv("FTP_PORT", "21") or 21)
+
+    # 1) DNS — show ALL addresses, separated by family.
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        out["dns_resolved"] = [
+            {"family": "IPv4" if af == socket.AF_INET else "IPv6" if af == socket.AF_INET6 else str(af),
+             "address": sa[0]}
+            for af, _, _, _, sa in infos
+        ]
+    except Exception as e:
+        out["dns_error"] = repr(e)
+
+    # 2) Raw TCP connect to each resolved address (5s timeout each).
+    out["tcp_per_address"] = []
+    try:
+        for info in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM):
+            af, _, _, _, sa = info
+            family = "IPv4" if af == socket.AF_INET else "IPv6"
+            try:
+                s = socket.socket(af, socket.SOCK_STREAM)
+                s.settimeout(5)
+                s.connect(sa)
+                s.close()
+                out["tcp_per_address"].append({"family": family, "address": sa[0], "ok": True})
+            except Exception as e:
+                out["tcp_per_address"].append({"family": family, "address": sa[0], "ok": False, "error": repr(e)})
+    except Exception as e:
+        out["tcp_per_address_error"] = repr(e)
+
+    # 3) Sanity: does outbound HTTPS work at all?
+    try:
+        with urllib.request.urlopen("https://www.cloudflare.com/cdn-cgi/trace", timeout=5) as r:
+            out["https_sanity"] = {"ok": True, "status": r.status}
+    except Exception as e:
+        out["https_sanity"] = {"ok": False, "error": repr(e)}
+
+    # 4) Force-IPv4 FTP connect (most likely fix for ENETUNREACH on dual-stack DNS)
+    try:
+        ipv4_addrs = [sa[0] for af, _, _, _, sa in
+                      socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+                      if af == socket.AF_INET]
+        if not ipv4_addrs:
+            out["ftp_ipv4_attempt"] = {"ok": False, "error": "no IPv4 address from DNS"}
+        else:
+            from ftplib import FTP
+            ftp = FTP()
+            ftp.connect(ipv4_addrs[0], port, timeout=15)
+            ftp.login(os.getenv("FTP_USER", ""), os.getenv("FTP_PASS", ""))
+            pwd = ftp.pwd()
+            listing = ftp.nlst()
+            ftp.quit()
+            out["ftp_ipv4_attempt"] = {
+                "ok": True, "address": ipv4_addrs[0],
+                "pwd": pwd, "root_listing": listing[:20],
+            }
+    except Exception as e:
+        out["ftp_ipv4_attempt"] = {"ok": False, "error": repr(e),
+                                    "traceback": traceback.format_exc()}
+
+    # 5) The real heartbeat push (uses storage._connect which still tries TLS first)
     try:
         registry.push_now(queue_depth=jobs.queue_depth())
         out["push_now_ok"] = True
     except Exception as e:
         out["push_now_ok"] = False
         out["push_now_error"] = repr(e)
-        out["traceback"] = traceback.format_exc()
+
     return out
 
 

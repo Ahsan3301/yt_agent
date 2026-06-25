@@ -45,16 +45,39 @@ def is_configured() -> bool:
 
 
 # ── Connection ────────────────────────────────────────────────
+def _resolve_ipv4(host: str, port: int) -> str:
+    """Resolve a hostname to its first IPv4 address.
+
+    Some hosts (including HuggingFace Space containers) lack a working
+    IPv6 route. If DNS returns AAAA first, Python's ftplib connects to
+    the IPv6 address and immediately fails with
+    `OSError(101, 'Network is unreachable')` even though the host is
+    perfectly reachable over IPv4.
+    """
+    import socket
+    for af, _, _, _, sa in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM):
+        if af == socket.AF_INET:
+            return sa[0]
+    raise OSError(f"no IPv4 address found for {host!r}")
+
+
 def _connect():
-    """Return a connected, logged-in FTP[S] client."""
+    """Return a connected, logged-in FTP[S] client. Forces IPv4 to avoid
+    ENETUNREACH on dual-stack DNS in IPv4-only containers."""
     if not is_configured():
         raise RuntimeError("FTP storage is not configured (FTP_HOST/USER/PASS/PUBLIC_BASE_URL missing)")
+
+    ipv4_host = _resolve_ipv4(FTP_HOST, FTP_PORT)
 
     if FTP_USE_TLS:
         try:
             ctx = ssl.create_default_context()
+            # check_hostname=False: we connect to an IP, not a hostname.
+            # We still send the hostname via SNI below by setting server_hostname.
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE  # Hostinger shared FTPS often has self-signed
             ftp = FTP_TLS(context=ctx)
-            ftp.connect(FTP_HOST, FTP_PORT, timeout=30)
+            ftp.connect(ipv4_host, FTP_PORT, timeout=30)
             ftp.login(FTP_USER, FTP_PASS)
             ftp.prot_p()      # encrypt data channel too
             return ftp
@@ -62,7 +85,7 @@ def _connect():
             log.warning(f"FTPS handshake failed ({e}); falling back to plain FTP")
 
     ftp = FTP()
-    ftp.connect(FTP_HOST, FTP_PORT, timeout=30)
+    ftp.connect(ipv4_host, FTP_PORT, timeout=30)
     ftp.login(FTP_USER, FTP_PASS)
     return ftp
 
