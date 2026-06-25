@@ -55,13 +55,16 @@ client secrets, and `web/node_modules/` out of the repo.
 3. **Root directory**: `web`
 4. **Environment Variables** (Production):
 
+   Set only this one:
+
    | Key                          | Value                                                  |
    |------------------------------|--------------------------------------------------------|
    | `NEXT_PUBLIC_REGISTRY_URL`   | `https://yourdomain.com/yt-agent/registry.json`        |
-   | `NEXT_PUBLIC_BACKEND_URL`    | *(leave empty — registry resolves dynamically)*        |
 
-   For previews you can set `NEXT_PUBLIC_BACKEND_URL` directly to a known
-   Colab URL when iterating without the registry.
+   **Do NOT set `NEXT_PUBLIC_BACKEND_URL`** — Vercel rejects empty values
+   and the registry already resolves the backend dynamically. The override
+   only exists for local dev / single-known-backend testing; set it only
+   if you're pointing at one specific Colab URL.
 
 5. **Deploy.** Vercel gives you a `*.vercel.app` URL. The FastAPI CORS
    layer already allows `https://*.vercel.app` so it works out of the box.
