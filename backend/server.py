@@ -480,6 +480,61 @@ def debug_heartbeat():
         out["push_now_ok"] = False
         out["push_now_error"] = repr(e)
 
+    # 6) Port-22 reachability — proves whether HF allows outbound SSH at all.
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(5)
+        s.connect(("github.com", 22))
+        s.close()
+        out["port22_sanity_github"] = {"ok": True}
+    except Exception as e:
+        out["port22_sanity_github"] = {"ok": False, "error": repr(e)}
+
+    # 7) SFTP to Hostinger — the real test.
+    sftp_user = os.getenv("SFTP_USER") or os.getenv("FTP_USER", "")
+    sftp_pass = os.getenv("SFTP_PASS") or os.getenv("FTP_PASS", "")
+    sftp_host = os.getenv("SFTP_HOST") or os.getenv("FTP_HOST", "")
+    sftp_port = int(os.getenv("SFTP_PORT", "22") or 22)
+    out["sftp_target"] = {"host": sftp_host, "port": sftp_port, "user_set": bool(sftp_user)}
+
+    try:
+        import paramiko
+    except ImportError as e:
+        out["sftp_attempt"] = {"ok": False, "error": f"paramiko not installed: {e!r}"}
+        return out
+
+    try:
+        # Probe port 22 to Hostinger first (separate signal from auth).
+        ipv4 = None
+        for af, _, _, _, sa in socket.getaddrinfo(sftp_host, sftp_port, type=socket.SOCK_STREAM):
+            if af == socket.AF_INET:
+                ipv4 = sa[0]; break
+        if not ipv4:
+            raise OSError(f"no IPv4 address for {sftp_host!r}")
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(5)
+        s.connect((ipv4, sftp_port))
+        s.close()
+        out["sftp_port_open"] = {"ok": True, "address": ipv4}
+    except Exception as e:
+        out["sftp_port_open"] = {"ok": False, "error": repr(e)}
+        out["sftp_attempt"] = {"ok": False, "error": "port 22 unreachable — skipped SFTP login"}
+        return out
+
+    try:
+        transport = paramiko.Transport((ipv4, sftp_port))
+        transport.banner_timeout = 10
+        transport.connect(username=sftp_user, password=sftp_pass)
+        sftp = paramiko.SFTPClient.from_transport(transport)
+        pwd = sftp.getcwd() or "/"
+        listing = sftp.listdir(pwd)
+        sftp.close(); transport.close()
+        out["sftp_attempt"] = {"ok": True, "host_ipv4": ipv4, "port": sftp_port,
+                               "pwd": pwd, "listing_sample": listing[:20]}
+    except Exception as e:
+        out["sftp_attempt"] = {"ok": False, "error": repr(e),
+                                "traceback": traceback.format_exc()}
+
     return out
 
 
