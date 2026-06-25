@@ -487,6 +487,11 @@ def debug_heartbeat():
         "public_base_url": os.getenv("PUBLIC_BASE_URL", ""),
         "registry_filename": registry.REGISTRY_FILENAME,
     }
+    # Storage usage (primary R2 + secondary SFTP capability)
+    try:
+        out["storage_usage"] = storage.usage_summary()
+    except Exception as e:
+        out["storage_usage_error"] = repr(e)
 
     host = os.getenv("FTP_HOST", "")
     port = int(os.getenv("FTP_PORT", "21") or 21)

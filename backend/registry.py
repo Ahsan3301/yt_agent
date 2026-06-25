@@ -62,9 +62,10 @@ def set_status(status: str):
 
 
 def _read_remote() -> list[dict]:
-    """Fetch the current registry.json from Hostinger via HTTPS (not FTP —
-    plain GET is faster and works without writing credentials)."""
-    base = (os.getenv("PUBLIC_BASE_URL", "") or "").rstrip("/")
+    """Fetch the current registry.json via HTTPS — prefers R2's public
+    URL when configured (where writes go), falls back to the Hostinger
+    secondary URL for legacy deployments."""
+    base = ((os.getenv("R2_PUBLIC_URL") or os.getenv("PUBLIC_BASE_URL", "")) or "").rstrip("/")
     if not base:
         return []
     try:
