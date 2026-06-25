@@ -281,3 +281,135 @@ def delete_remote(remote_filename: str):
             pass
     finally:
         _close(transport, sftp)
+
+
+# ── Run history persistence ────────────────────────────────
+# Run summaries are mirrored to Hostinger so the History page survives
+# backend restarts (HF Space containers wipe /tmp + output/ on restart).
+#
+#   <base>/runs/<run_id>.json   — full per-run summary
+#   <base>/runs/index.json      — list of {run_id, finished_at, ok, ...}
+#
+# Reads go over plain HTTPS (faster, no SFTP round-trip needed).
+
+RUNS_REMOTE_DIR = "runs"
+RUNS_INDEX_FILE = "index.json"
+
+
+def upload_run_summary(run_id: str, summary: dict) -> str | None:
+    """Push a run's summary JSON to Hostinger. Returns the public URL of
+    the summary file (mostly informational). Best-effort; returns None
+    on failure rather than raising — the local copy is still the source
+    of truth for the rest of the pipeline."""
+    if not is_configured():
+        return None
+    import json as _json
+    data = _json.dumps(summary, indent=2, ensure_ascii=False).encode("utf-8")
+    remote_dir = f"{SFTP_BASE_DIR}/{RUNS_REMOTE_DIR}"
+    remote_path = f"{remote_dir}/{run_id}.json"
+    try:
+        _, sftp = _get_persistent()
+        _mkdir_p(sftp, remote_dir)
+        with sftp.open(remote_path, "wb") as f:
+            f.write(data)
+        return f"{PUBLIC_BASE_URL}/{RUNS_REMOTE_DIR}/{run_id}.json"
+    except Exception as e:
+        log.warning(f"upload_run_summary({run_id}) failed: {e}")
+        return None
+
+
+def _read_runs_index_remote() -> list[dict]:
+    """Fetch the runs index via HTTPS (no SFTP). Returns [] on any error."""
+    import requests as _req
+    if not PUBLIC_BASE_URL:
+        return []
+    url = f"{PUBLIC_BASE_URL}/{RUNS_REMOTE_DIR}/{RUNS_INDEX_FILE}"
+    try:
+        r = _req.get(url, timeout=10, headers={"Cache-Control": "no-cache"})
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        return data if isinstance(data, list) else []
+    except Exception as e:
+        log.debug(f"runs index read miss: {e}")
+        return []
+
+
+def update_runs_index(entry: dict, max_keep: int = 200) -> bool:
+    """Read remote index, upsert this entry (by run_id), trim to
+    `max_keep`, write back. Best-effort — concurrent writes from
+    multiple backends are rare; last-write-wins is acceptable here."""
+    if not is_configured():
+        return False
+    import json as _json
+    rid = entry.get("run_id")
+    if not rid:
+        return False
+    entries = _read_runs_index_remote()
+    # Drop old copy, prepend new.
+    entries = [e for e in entries if isinstance(e, dict) and e.get("run_id") != rid]
+    entries.insert(0, entry)
+    entries = entries[:max_keep]
+
+    data = _json.dumps(entries, indent=2, ensure_ascii=False).encode("utf-8")
+    remote_dir = f"{SFTP_BASE_DIR}/{RUNS_REMOTE_DIR}"
+    remote_path = f"{remote_dir}/{RUNS_INDEX_FILE}"
+    try:
+        _, sftp = _get_persistent()
+        _mkdir_p(sftp, remote_dir)
+        with sftp.open(remote_path, "wb") as f:
+            f.write(data)
+        return True
+    except Exception as e:
+        log.warning(f"update_runs_index failed: {e}")
+        return False
+
+
+def list_remote_runs() -> list[dict]:
+    """Public helper for the API layer. Returns the remote runs index
+    (HTTPS GET, no SFTP needed)."""
+    return _read_runs_index_remote()
+
+
+def remove_from_runs_index(run_id: str) -> bool:
+    """Drop one run from the remote index and write it back."""
+    if not is_configured():
+        return False
+    import json as _json
+    entries = [e for e in _read_runs_index_remote()
+               if isinstance(e, dict) and e.get("run_id") != run_id]
+    data = _json.dumps(entries, indent=2, ensure_ascii=False).encode("utf-8")
+    remote_dir = f"{SFTP_BASE_DIR}/{RUNS_REMOTE_DIR}"
+    remote_path = f"{remote_dir}/{RUNS_INDEX_FILE}"
+    try:
+        _, sftp = _get_persistent()
+        _mkdir_p(sftp, remote_dir)
+        with sftp.open(remote_path, "wb") as f:
+            f.write(data)
+        return True
+    except Exception as e:
+        log.warning(f"remove_from_runs_index({run_id}) failed: {e}")
+        return False
+
+
+def fetch_remote_run_summary(run_id: str) -> dict | None:
+    """Fetch a single run's full summary from Hostinger via HTTPS."""
+    import requests as _req
+    if not PUBLIC_BASE_URL:
+        return None
+    url = f"{PUBLIC_BASE_URL}/{RUNS_REMOTE_DIR}/{run_id}.json"
+    try:
+        r = _req.get(url, timeout=10, headers={"Cache-Control": "no-cache"})
+        if r.status_code != 200:
+            return None
+        d = r.json()
+        return d if isinstance(d, dict) else None
+    except Exception as e:
+        log.debug(f"remote run summary miss for {run_id}: {e}")
+        return None
+
+
+def public_video_url(run_id: str) -> str:
+    """Canonical Hostinger URL for a run's video — used when the local
+    copy is gone after a container restart."""
+    return f"{PUBLIC_BASE_URL}/videos/{run_id}.mp4"

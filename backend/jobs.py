@@ -239,6 +239,41 @@ def _run_one(job: dict[str, Any]):
                     public = storage.upload_video(local_path, job["run_id"])
                     job["public_url"] = public
                     log.info(f"job {job_id} uploaded to {public}")
+
+                    # Mirror the run summary + index so the History page
+                    # survives container restarts (ephemeral output/ dir).
+                    try:
+                        from pathlib import Path as _Path
+                        summary_path = _Path("output/videos") / job["run_id"] / "run_summary.json"
+                        summary = {}
+                        if summary_path.exists():
+                            import json as _json
+                            try:
+                                summary = _json.loads(summary_path.read_text(encoding="utf-8"))
+                            except Exception as _e:
+                                log.warning(f"summary read failed for {job['run_id']}: {_e}")
+                        # Augment with the canonical public URL so the
+                        # frontend can play without depending on the
+                        # local backend.
+                        summary["run_id"] = job["run_id"]
+                        summary["video_url"] = public
+                        summary["finished_at"] = time.time()
+                        summary["channel"] = job.get("channel")
+                        summary["dry_run"] = job.get("dry_run", False)
+                        summary["ok"] = True
+
+                        storage.upload_run_summary(job["run_id"], summary)
+                        storage.update_runs_index({
+                            "run_id":      job["run_id"],
+                            "channel":     summary.get("channel"),
+                            "dry_run":     summary.get("dry_run", False),
+                            "ok":          True,
+                            "finished_at": summary["finished_at"],
+                            "video_url":   public,
+                            "has_video":   True,
+                        })
+                    except Exception as _e:
+                        log.warning(f"job {job_id} run-summary mirror failed: {_e}")
             except Exception as e:
                 log.warning(f"job {job_id} upload skipped: {e}")
             job["status"] = "complete"

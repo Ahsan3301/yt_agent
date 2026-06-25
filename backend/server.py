@@ -301,7 +301,8 @@ def reset_state():
 
 
 # ── Run history ───────────────────────────────────────────────
-def _list_runs():
+def _local_runs() -> list[dict]:
+    """Read run summaries from this container's output/videos dir."""
     if not RUNS_DIR.exists():
         return []
     out = []
@@ -319,6 +320,46 @@ def _list_runs():
     return out
 
 
+def _list_runs():
+    """Merge local + Hostinger runs. Local wins on conflict (same run_id)
+    because it has the full summary with shots, timings, etc. Remote-only
+    entries get marked has_video=True so the UI can stream from Hostinger."""
+    local = _local_runs()
+    by_id = {r["run_id"]: r for r in local}
+
+    try:
+        from backend import storage
+        for entry in storage.list_remote_runs():
+            if not isinstance(entry, dict):
+                continue
+            rid = entry.get("run_id")
+            if not rid:
+                continue
+            if rid in by_id:
+                # Fill in video_url if local copy didn't have it.
+                if entry.get("video_url") and not by_id[rid].get("video_url"):
+                    by_id[rid]["video_url"] = entry["video_url"]
+                continue
+            # Remote-only — full local container is gone (post-restart). The
+            # video is still on Hostinger so the UI can play it.
+            by_id[rid] = {
+                "run_id":      rid,
+                "channel":     entry.get("channel"),
+                "dry_run":     entry.get("dry_run", False),
+                "ok":          entry.get("ok"),
+                "finished_at": entry.get("finished_at"),
+                "video_url":   entry.get("video_url"),
+                "has_video":   bool(entry.get("video_url")),
+            }
+    except Exception as e:
+        log.warning(f"remote runs index fetch failed: {e}")
+
+    # Sort by finished_at desc, then run_id desc as a fallback.
+    def _sort_key(r):
+        return (-(float(r.get("finished_at") or 0)), r.get("run_id", ""))
+    return sorted(by_id.values(), key=_sort_key)
+
+
 @app.get("/api/runs")
 def list_runs():
     return _list_runs()
@@ -327,32 +368,68 @@ def list_runs():
 @app.get("/api/runs/{run_id}")
 def get_run(run_id: str):
     d = RUNS_DIR / run_id
-    if not d.exists():
-        raise HTTPException(404, "run not found")
-    summary = d / "run_summary.json"
-    data: dict[str, Any] = {"run_id": run_id, "has_video": (d / "final_video.mp4").exists()}
-    if summary.exists():
-        try:
-            data.update(json.loads(summary.read_text(encoding="utf-8")))
-        except Exception:
-            pass
-    return data
+    if d.exists():
+        summary = d / "run_summary.json"
+        data: dict[str, Any] = {"run_id": run_id, "has_video": (d / "final_video.mp4").exists()}
+        if summary.exists():
+            try:
+                data.update(json.loads(summary.read_text(encoding="utf-8")))
+            except Exception:
+                pass
+        return data
+
+    # Local gone — try Hostinger fallback.
+    try:
+        from backend import storage
+        remote = storage.fetch_remote_run_summary(run_id)
+        if remote:
+            remote.setdefault("run_id", run_id)
+            remote.setdefault("has_video", bool(remote.get("video_url")))
+            return remote
+    except Exception as e:
+        log.warning(f"remote run fetch failed for {run_id}: {e}")
+    raise HTTPException(404, "run not found")
 
 
 @app.get("/api/runs/{run_id}/video")
 def get_run_video(run_id: str):
     p = RUNS_DIR / run_id / "final_video.mp4"
-    if not p.exists():
-        raise HTTPException(404, "video not found")
-    return FileResponse(str(p), media_type="video/mp4")
+    if p.exists():
+        return FileResponse(str(p), media_type="video/mp4")
+
+    # Local gone — redirect to the canonical Hostinger copy.
+    try:
+        from backend import storage
+        from fastapi.responses import RedirectResponse
+        if storage.PUBLIC_BASE_URL:
+            return RedirectResponse(storage.public_video_url(run_id), status_code=302)
+    except Exception:
+        pass
+    raise HTTPException(404, "video not found")
 
 
 @app.delete("/api/runs/{run_id}")
 def delete_run(run_id: str):
     d = RUNS_DIR / run_id
-    if not d.exists():
+    had_local = d.exists()
+    had_remote = False
+    if had_local:
+        shutil.rmtree(d, ignore_errors=True)
+
+    # Mirror the deletion to Hostinger: drop the summary, the video, and
+    # the index entry.
+    try:
+        from backend import storage
+        if storage.is_configured():
+            had_remote = bool(storage.fetch_remote_run_summary(run_id))
+            storage.delete_remote(f"{storage.RUNS_REMOTE_DIR}/{run_id}.json")
+            storage.delete_remote(f"videos/{run_id}.mp4")
+            storage.remove_from_runs_index(run_id)
+    except Exception as e:
+        log.warning(f"remote cleanup for {run_id} failed: {e}")
+
+    if not (had_local or had_remote):
         raise HTTPException(404, "run not found")
-    shutil.rmtree(d, ignore_errors=True)
     return {"ok": True}
 
 
