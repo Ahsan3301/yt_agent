@@ -645,6 +645,19 @@ def queue_status():
     }
 
 
+# ── Resource stats (Monitor page) ──────────────────────────
+@app.get("/api/stats")
+def get_stats():
+    """Snapshot of this backend's CPU/RAM/disk/GPU + active job. Polled
+    by the dashboard's Monitor page every 2 seconds per backend."""
+    try:
+        from backend import stats
+        return stats.collect()
+    except Exception as e:
+        log.warning(f"/api/stats failed: {e}")
+        return {"error": repr(e)}
+
+
 # ── Live logs (ring buffer for the dashboard) ───────────────
 @app.get("/api/logs")
 def get_logs(since: int = 0, limit: int = 500):

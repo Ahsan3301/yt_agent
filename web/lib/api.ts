@@ -277,6 +277,70 @@ export const fetchLogs = (since: number, limit = 500) =>
 
 export const clearLogs = () =>
   call<{ ok: true }>("/api/logs", { method: "DELETE" });
+
+// ── Resource stats (Monitor page) ──────────────────────────
+export type BackendStats = {
+  uptime_seconds: number;
+  instance_id?: string | null;
+  instance_tier?: string | null;
+  instance_label?: string | null;
+  public_url?: string | null;
+  now: number;
+  active_job_id?: string | null;
+  active_job?: {
+    id: string;
+    run_id?: string | null;
+    channel?: string;
+    percent?: number;
+    current_step?: string;
+    current_step_label?: string;
+    started_at?: number;
+  } | null;
+  queue_depth?: number;
+  busy?: boolean;
+  cpu_percent?: number;
+  cpu_count?: number;
+  mem_used_mb?: number;
+  mem_total_mb?: number;
+  mem_percent?: number;
+  disk_used_gb?: number;
+  disk_total_gb?: number;
+  disk_percent?: number;
+  load_avg?: number[];
+  gpu?: {
+    name: string;
+    util_percent: number;
+    mem_used_mb: number;
+    mem_total_mb: number;
+    mem_percent: number;
+    temp_c?: number | null;
+  } | null;
+  storage?: {
+    primary_configured?: boolean;
+    secondary_configured?: boolean;
+    r2_public_url?: string;
+    r2_max_gb?: number;
+    r2_video_bytes?: number;
+    r2_video_gb?: number;
+  };
+  error?: string;
+};
+
+/**
+ * Fetch /api/stats from a specific backend URL (NOT through the global
+ * resolveBackend, because the Monitor page polls all backends in
+ * parallel — each one needs its own absolute URL).
+ */
+export async function fetchStatsFor(backendUrl: string): Promise<BackendStats | null> {
+  try {
+    const url = backendUrl.replace(/\/$/, "") + "/api/stats";
+    const r = await fetch(url, { cache: "no-store" });
+    if (!r.ok) return null;
+    return (await r.json()) as BackendStats;
+  } catch {
+    return null;
+  }
+}
 export const getState = async () => {
   // Convert the latest job's state into the old RunState shape so existing
   // components keep working with minimal changes.
