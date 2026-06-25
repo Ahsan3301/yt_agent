@@ -29,6 +29,72 @@ OUTPUT_HEIGHT = 1920
 OUTPUT_FPS = 30
 
 
+# ── GPU encoder detection ────────────────────────────────────
+# Colab's T4 has NVENC (NVIDIA's hardware encoder). Using it instead of
+# libx264 cuts wall-clock for the encoding stages by 5-10×. We probe once
+# at import time so the per-segment ffmpeg calls don't pay the detection
+# cost. Force off via FFMPEG_FORCE_CPU=1 for debugging.
+def _detect_nvenc() -> bool:
+    if os.getenv("FFMPEG_FORCE_CPU", "").lower() in ("1", "true", "yes"):
+        return False
+    # 1. Does the ffmpeg binary support h264_nvenc?
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-encoders"],
+            capture_output=True, text=True, timeout=5
+        )
+        if "h264_nvenc" not in (r.stdout or ""):
+            return False
+    except Exception:
+        return False
+    # 2. Is there actually an NVIDIA GPU we can talk to?
+    try:
+        r = subprocess.run(
+            ["nvidia-smi", "-L"], capture_output=True, text=True, timeout=5
+        )
+        if r.returncode != 0 or "GPU" not in (r.stdout or ""):
+            return False
+    except Exception:
+        return False
+    # 3. Smoke test: can NVENC actually encode? Some systems have the
+    #    encoder compiled in but no working driver/library.
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error",
+             "-f", "lavfi", "-i", "color=c=black:s=64x64:d=0.1",
+             "-c:v", "h264_nvenc", "-f", "null", "-"],
+            capture_output=True, text=True, timeout=10,
+        )
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+_USE_NVENC = _detect_nvenc()
+log.info(f"video encoder: {'h264_nvenc (GPU)' if _USE_NVENC else 'libx264 (CPU)'}")
+
+
+def _vcodec_args(crf: str = "23", preset_cpu: str = "fast") -> list[str]:
+    """Return the -c:v ... block for a YouTube Shorts encode.
+
+    On GPU (NVENC): uses VBR with a constant-quality target. p4 is a
+    balanced preset; quality is comparable to libx264 -crf at the same
+    cq value, but typically 5-10× faster on a T4.
+    On CPU (libx264): the original args.
+    """
+    if _USE_NVENC:
+        # NVENC: p1=fastest, p7=slowest. p4 = balanced.
+        # -rc vbr -cq <n> mirrors CRF semantics.
+        return [
+            "-c:v", "h264_nvenc",
+            "-preset", "p4",
+            "-rc", "vbr",
+            "-cq", str(crf),
+            "-b:v", "0",      # let cq drive the bitrate
+        ]
+    return ["-c:v", "libx264", "-preset", preset_cpu, "-crf", str(crf)]
+
+
 def run_ffmpeg(args, desc="ffmpeg", cwd=None):
     """Run an ffmpeg command, raise on failure.
 
@@ -360,7 +426,7 @@ def _render_video_segment(src, start, dur, out_path):
             f"fps={OUTPUT_FPS}"
         ),
         "-an",
-        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+        *_vcodec_args(crf="23"),
         "-pix_fmt", "yuv420p",
         out_path,
     ], desc=f"video segment from {os.path.basename(src['path'])} +{start:.1f}s {dur:.1f}s")
@@ -482,7 +548,7 @@ def _render_image_segment(src, dur, out_path, channel="horror"):
         "-t", f"{dur:.2f}",
         "-vf", vf,
         "-an",
-        "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+        *_vcodec_args(crf="22"),
         "-pix_fmt", "yuv420p",
         out_path,
     ], desc=f"image segment ({motion}, fx={intensity:.1f}) from {os.path.basename(src['path'])} {dur:.1f}s")
@@ -533,7 +599,7 @@ def prepare_clips(sources, target_duration, work_dir, channel="horror"):
         "-f", "concat", "-safe", "0",
         "-i", os.path.abspath(concat_list),
         "-t", str(target_duration),
-        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+        *_vcodec_args(crf="23"),
         "-pix_fmt", "yuv420p",
         concat_out,
     ], desc="concat segments")
@@ -595,7 +661,7 @@ def assemble_video(voiceover_path, sources, music_path, narration_text, output_d
             "-filter_complex",
             f"[0:v]ass={caption_filename}[vout]",
             "-map", "[vout]", "-map", "1:a",
-            "-c:v", "libx264", "-preset", out_preset, "-crf", out_crf,
+            *_vcodec_args(crf=out_crf, preset_cpu=out_preset),
             "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-b:a", out_abr,
             "-t", str(duration),
@@ -625,7 +691,7 @@ def assemble_video(voiceover_path, sources, music_path, narration_text, output_d
                     f"[0:v]ass={caption_filename}[vout]"
                 ),
                 "-map", "[vout]", "-map", "[aout]",
-                "-c:v", "libx264", "-preset", out_preset, "-crf", out_crf,
+                *_vcodec_args(crf=out_crf, preset_cpu=out_preset),
                 "-pix_fmt", "yuv420p",
                 "-c:a", "aac", "-b:a", out_abr,
                 "-t", str(duration),
