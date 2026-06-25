@@ -108,6 +108,24 @@ def _on_startup():
         keys_sync.pull_into_env()
     except Exception as e:
         log.warning(f"keys_sync.pull_into_env failed: {e}")
+    # Hydrate settings.json from R2/SFTP so a fresh container boots
+    # with the user's last saved channel/voice/video tuning instead of
+    # the defaults. Best-effort; falls back to defaults if remote empty.
+    try:
+        from backend import settings_sync
+        hydrated = settings_sync.pull_into_local()
+        if hydrated:
+            # Refresh the cached module-level constants in modules.config
+            # so anything reading CHANNEL_TYPE / TTS_ENGINE / etc. sees
+            # the user's saved values instead of the on-disk defaults
+            # that were read at import time.
+            from modules import config as _config_mod
+            try:
+                _config_mod.reload()
+            except Exception as e:
+                log.warning(f"config.reload failed: {e}")
+    except Exception as e:
+        log.warning(f"settings_sync.pull_into_local failed: {e}")
     # Heartbeat: publish this backend's URL to the Hostinger registry.
     try:
         registry.start()

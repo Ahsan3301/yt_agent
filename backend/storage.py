@@ -470,6 +470,48 @@ def upload_keys(keys: dict) -> bool:
     return True
 
 
+# ── Settings (channel/voice/video tuning) ────────────────────
+# Mirror to remote so the dashboard's Settings page survives container
+# restarts (output/ + config/ are wiped each Colab/HF boot).
+SETTINGS_REMOTE_KEY = "settings.json"
+
+
+def download_settings() -> dict | None:
+    """Fetch the shared settings.json. Returns None if missing/empty —
+    caller falls back to local defaults."""
+    if not is_configured():
+        return None
+    raw = _r2_get_bytes(SETTINGS_REMOTE_KEY) if r2_configured() \
+          else _sftp_get_bytes_https(SETTINGS_REMOTE_KEY)
+    if not raw:
+        return None
+    try:
+        d = json.loads(raw.decode("utf-8"))
+        return d if isinstance(d, dict) else None
+    except Exception as e:
+        log.warning(f"download_settings parse failed: {e}")
+        return None
+
+
+def upload_settings(data: dict) -> bool:
+    """Push the settings dict to whichever tier is configured."""
+    if not is_configured():
+        return False
+    raw = json.dumps(data, indent=2, ensure_ascii=False).encode("utf-8")
+    try:
+        if r2_configured():
+            _r2_put_bytes(SETTINGS_REMOTE_KEY, raw, "application/json")
+            tier = "R2"
+        else:
+            _sftp_put_bytes(SETTINGS_REMOTE_KEY, raw)
+            tier = "SFTP"
+        log.info(f"upload_settings: mirrored to {tier}")
+        return True
+    except Exception as e:
+        log.warning(f"upload_settings failed: {e}")
+        return False
+
+
 # ── Migration: R2 → SFTP archive ───────────────────────────
 _GB = 1024 ** 3
 _migration_lock = threading.Lock()

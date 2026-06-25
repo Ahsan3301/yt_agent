@@ -191,12 +191,24 @@ def load_settings():
 
 
 def save_settings(data):
-    """Atomic write of settings.json."""
+    """Atomic write of settings.json, then mirror to remote storage so
+    the value survives container restarts on Colab/HF Space. The remote
+    push is best-effort and non-fatal; the local write is the source
+    of truth for the running process."""
     SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = SETTINGS_PATH.with_suffix(".json.tmp")
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
     os.replace(tmp, SETTINGS_PATH)
+
+    # Lazy import: backend.* depends on modules.config at import time,
+    # so we can't import it at module level (circular). Importing inside
+    # the function only triggers when save is actually called.
+    try:
+        from backend import settings_sync
+        settings_sync.push_from_local()
+    except Exception as e:
+        log.debug(f"save_settings: remote mirror skipped ({e})")
 
 
 def settings():
@@ -212,6 +224,22 @@ CHANNEL_TYPE   = _S["content"]["channel"]
 VIDEOS_PER_RUN = _S["content"]["videos_per_run"]
 TTS_ENGINE     = _S["voice"]["engine"]
 PRIVACY        = _S["upload"]["privacy"]
+
+
+def reload():
+    """Re-read settings.json and refresh the module-level constants.
+
+    The /api/settings handler calls this after settings_sync hydrates
+    the local file from R2/SFTP at startup — otherwise the constants
+    above stay at whatever was on disk at import time (defaults on a
+    fresh container)."""
+    global _S, CHANNEL_TYPE, VIDEOS_PER_RUN, TTS_ENGINE, PRIVACY
+    _S = load_settings()
+    CHANNEL_TYPE   = _S["content"]["channel"]
+    VIDEOS_PER_RUN = _S["content"]["videos_per_run"]
+    TTS_ENGINE     = _S["voice"]["engine"]
+    PRIVACY        = _S["upload"]["privacy"]
+    return _S
 if PRIVACY not in ("public", "unlisted", "private"):
     log.warning(f"privacy={PRIVACY!r} invalid; falling back to 'private'")
     PRIVACY = "private"
