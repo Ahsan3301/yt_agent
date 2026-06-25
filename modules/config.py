@@ -218,8 +218,15 @@ if PRIVACY not in ("public", "unlisted", "private"):
 
 
 # ── API keys (read lazily by modules; we just collect for preflight) ──
-_REQUIRED_FOR_PIPELINE = ["GROQ_API_KEY"]
-_REQUIRED_FOR_FOOTAGE  = ["PEXELS_API_KEY", "PIXABAY_API_KEY"]
+# LLM: NIM (Nemotron) is primary, Groq is fallback — either alone is enough.
+_LLM_ANY_OF = ["NVIDIA_NIM_API_KEY", "GROQ_API_KEY"]
+# Footage: Shutterstock / Pexels / Pixabay / Coverr are stock sources.
+# Pollinations AI image generation is the free fallback and needs no key,
+# so footage is *advisory*, not required — pipeline still runs without any.
+_FOOTAGE_ANY_OF = [
+    "SHUTTERSTOCK_API_TOKEN", "SHUTTERSTOCK_CLIENT_ID",
+    "PEXELS_API_KEY", "PIXABAY_API_KEY", "COVERR_API_KEY",
+]
 
 
 class PreflightError(RuntimeError):
@@ -232,15 +239,20 @@ def preflight(skip_upload=False):
     Raises PreflightError with a clear message if anything is missing.
     """
     problems = []
+    warnings = []
 
-    for name in _REQUIRED_FOR_PIPELINE:
-        if not env(name):
-            problems.append(f"missing env var: {name}")
-
-    if not any(env(n) for n in _REQUIRED_FOR_FOOTAGE):
+    if not any(env(n) for n in _LLM_ANY_OF):
         problems.append(
-            "no footage API key set — need at least one of "
-            + ", ".join(_REQUIRED_FOR_FOOTAGE)
+            "no LLM key set — need at least one of " + ", ".join(_LLM_ANY_OF)
+        )
+
+    if not any(env(n) for n in _FOOTAGE_ANY_OF):
+        # Pollinations AI image gen covers the visuals without a key, so
+        # this is a soft warning rather than a hard failure.
+        warnings.append(
+            "no stock footage key set — falling back to AI image generation "
+            "(Pollinations). For richer footage set one of: "
+            + ", ".join(_FOOTAGE_ANY_OF)
         )
 
     for binary in ("ffmpeg", "ffprobe"):
@@ -253,7 +265,13 @@ def preflight(skip_upload=False):
             problems.append(f"YouTube client_secret.json not found at {secrets}")
 
     if problems:
-        raise PreflightError("Preflight failed:\n  - " + "\n  - ".join(problems))
+        msg = "Preflight failed:\n  - " + "\n  - ".join(problems)
+        if warnings:
+            msg += "\n\nAdditionally:\n  - " + "\n  - ".join(warnings)
+        raise PreflightError(msg)
+    if warnings:
+        for w in warnings:
+            log.warning(f"preflight: {w}")
 
     s = load_settings()
     log.info(
