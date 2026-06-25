@@ -87,15 +87,33 @@ KEYS_REMOTE_KEY      = ".private/keys.json"   # underscore-prefix on R2 doesn't 
 REGISTRY_FILENAME    = "registry.json"
 
 
-def is_configured() -> bool:
-    """Primary configured? Secondary is optional."""
+def r2_configured() -> bool:
     return bool(R2_ACCOUNT_ID and R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY
                 and R2_BUCKET and R2_PUBLIC_URL)
 
 
-def secondary_is_configured() -> bool:
+def sftp_configured() -> bool:
     return bool(SFTP_HOST and SFTP_USER and SFTP_PASS and SFTP_BASE_DIR
                 and SECONDARY_PUBLIC_URL)
+
+
+def is_configured() -> bool:
+    """Either tier counts — R2 OR SFTP is enough to run. R2 is preferred
+    when both are present (used as primary; SFTP becomes overflow
+    archive)."""
+    return r2_configured() or sftp_configured()
+
+
+def secondary_is_configured() -> bool:
+    """Back-compat: only true when BOTH are present (R2 primary + SFTP
+    archive)."""
+    return r2_configured() and sftp_configured()
+
+
+def _public_base() -> str:
+    """The public URL to serve files from — R2 when configured, else
+    Hostinger. Used to construct video URLs and registry URLs."""
+    return R2_PUBLIC_URL if r2_configured() else SECONDARY_PUBLIC_URL
 
 
 # ── R2 client (boto3) ──────────────────────────────────────
@@ -240,32 +258,88 @@ def _sftp_put_file(local_path: str, remote_key: str) -> str:
     return f"{SECONDARY_PUBLIC_URL}/{remote_key}"
 
 
+def _sftp_put_bytes(remote_key: str, data: bytes) -> str:
+    """Write a small blob over the persistent SFTP session."""
+    remote_path = f"{SFTP_BASE_DIR}/{remote_key}"
+    remote_dir = remote_path.rsplit("/", 1)[0]
+    _, sftp = _sftp_get()
+    _sftp_mkdir_p(sftp, remote_dir)
+    with sftp.open(remote_path, "wb") as f:
+        f.write(data)
+    return f"{SECONDARY_PUBLIC_URL}/{remote_key}"
+
+
+def _sftp_get_bytes_https(remote_key: str) -> bytes | None:
+    """Read via plain HTTPS (faster than SFTP for read; same files)."""
+    import requests as _req
+    if not SECONDARY_PUBLIC_URL:
+        return None
+    url = f"{SECONDARY_PUBLIC_URL}/{remote_key}"
+    try:
+        r = _req.get(url, timeout=10, headers={"Cache-Control": "no-cache"})
+        if r.status_code != 200:
+            return None
+        return r.content
+    except Exception as e:
+        log.debug(f"sftp https read {url}: {e}")
+        return None
+
+
+def _sftp_delete(remote_key: str) -> bool:
+    """Delete a file over SFTP. Silent on missing."""
+    try:
+        _, sftp = _sftp_get()
+        try:
+            sftp.remove(f"{SFTP_BASE_DIR}/{remote_key}")
+            return True
+        except IOError:
+            return False
+    except Exception as e:
+        log.warning(f"sftp delete {remote_key}: {e}")
+        return False
+
+
 # ── Public API ─────────────────────────────────────────────
+#
+# All public writers dispatch to the configured tier:
+#   - R2 if R2_* env vars are present (primary; preferred)
+#   - else SFTP (legacy / fallback when R2 isn't set up)
+# Public readers prefer R2's HTTPS endpoint when R2 is configured;
+# otherwise the Hostinger public URL.
+
 def upload_video(local_path: str, run_id: str) -> str:
-    """Upload to R2. Returns the public URL. Triggers migration check."""
+    """Upload the rendered mp4. Returns the public URL."""
     if not is_configured():
-        raise RuntimeError("R2 storage not configured")
+        raise RuntimeError("storage not configured (need either R2_* or SFTP_*)")
     local = Path(local_path)
     if not local.exists():
         raise FileNotFoundError(local)
     key = f"{VIDEOS_PREFIX}/{run_id}.mp4"
     t0 = time.time()
-    url = _r2_put_file(key, str(local), "video/mp4")
+    if r2_configured():
+        url = _r2_put_file(key, str(local), "video/mp4")
+        tier = "R2"
+    else:
+        url = _sftp_put_file(str(local), key)
+        tier = "SFTP"
     size_mb = local.stat().st_size / (1024 * 1024)
-    log.info(f"R2 uploaded {size_mb:.1f} MB in {time.time()-t0:.1f}s → {url}")
-    try:
-        _maybe_migrate()
-    except Exception as e:
-        log.warning(f"migration check failed: {e}")
+    log.info(f"{tier} uploaded {size_mb:.1f} MB in {time.time()-t0:.1f}s → {url}")
+    if r2_configured():
+        try:
+            _maybe_migrate()
+        except Exception as e:
+            log.warning(f"migration check failed: {e}")
     return url
 
 
 def upload_json(remote_filename: str, payload) -> str:
-    """Used by registry.py heartbeat. Writes to R2."""
+    """Used by registry.py heartbeat. Writes to whichever tier is configured."""
     if not is_configured():
-        raise RuntimeError("R2 storage not configured")
+        raise RuntimeError("storage not configured")
     data = json.dumps(payload, indent=2, ensure_ascii=False).encode("utf-8")
-    return _r2_put_bytes(remote_filename, data, "application/json")
+    if r2_configured():
+        return _r2_put_bytes(remote_filename, data, "application/json")
+    return _sftp_put_bytes(remote_filename, data)
 
 
 # Aliased for back-compat with registry.py's persistent-fast path.
@@ -276,15 +350,19 @@ def upload_run_summary(run_id: str, summary: dict) -> str | None:
     if not is_configured():
         return None
     data = json.dumps(summary, indent=2, ensure_ascii=False).encode("utf-8")
+    key = f"{RUNS_REMOTE_DIR}/{run_id}.json"
     try:
-        return _r2_put_bytes(f"{RUNS_REMOTE_DIR}/{run_id}.json", data, "application/json")
+        if r2_configured():
+            return _r2_put_bytes(key, data, "application/json")
+        return _sftp_put_bytes(key, data)
     except Exception as e:
         log.warning(f"upload_run_summary({run_id}) failed: {e}")
         return None
 
 
 def _read_runs_index() -> list[dict]:
-    raw = _r2_get_bytes(f"{RUNS_REMOTE_DIR}/{RUNS_INDEX_FILE}")
+    key = f"{RUNS_REMOTE_DIR}/{RUNS_INDEX_FILE}"
+    raw = _r2_get_bytes(key) if r2_configured() else _sftp_get_bytes_https(key)
     if not raw:
         return []
     try:
@@ -296,8 +374,12 @@ def _read_runs_index() -> list[dict]:
 
 def _write_runs_index(entries: list[dict]) -> bool:
     data = json.dumps(entries, indent=2, ensure_ascii=False).encode("utf-8")
+    key = f"{RUNS_REMOTE_DIR}/{RUNS_INDEX_FILE}"
     try:
-        _r2_put_bytes(f"{RUNS_REMOTE_DIR}/{RUNS_INDEX_FILE}", data, "application/json")
+        if r2_configured():
+            _r2_put_bytes(key, data, "application/json")
+        else:
+            _sftp_put_bytes(key, data)
         return True
     except Exception as e:
         log.warning(f"write_runs_index failed: {e}")
@@ -329,7 +411,8 @@ def list_remote_runs() -> list[dict]:
 
 
 def fetch_remote_run_summary(run_id: str) -> dict | None:
-    raw = _r2_get_bytes(f"{RUNS_REMOTE_DIR}/{run_id}.json")
+    key = f"{RUNS_REMOTE_DIR}/{run_id}.json"
+    raw = _r2_get_bytes(key) if r2_configured() else _sftp_get_bytes_https(key)
     if not raw:
         return None
     try:
@@ -340,24 +423,29 @@ def fetch_remote_run_summary(run_id: str) -> dict | None:
 
 
 def public_video_url(run_id: str) -> str:
-    """Honour the per-run video_url if known (migrated videos live on
-    Hostinger). Fall back to R2's canonical location."""
+    """Honour the per-run video_url if known (migrated videos may live
+    on the secondary). Fall back to the active tier's canonical
+    location."""
     for e in _read_runs_index():
         if e.get("run_id") == run_id and e.get("video_url"):
             return e["video_url"]
-    return f"{R2_PUBLIC_URL}/{VIDEOS_PREFIX}/{run_id}.mp4"
+    return f"{_public_base()}/{VIDEOS_PREFIX}/{run_id}.mp4"
 
 
 def delete_remote(remote_filename: str):
-    """Delete from R2 by key relative to bucket root."""
+    """Delete from the active tier by key relative to bucket/base."""
     if not is_configured():
         return
-    _r2_delete(remote_filename)
+    if r2_configured():
+        _r2_delete(remote_filename)
+    else:
+        _sftp_delete(remote_filename)
 
 
 # ── Keys ───────────────────────────────────────────────────
 def download_keys() -> dict:
-    raw = _r2_get_bytes(KEYS_REMOTE_KEY)
+    raw = _r2_get_bytes(KEYS_REMOTE_KEY) if r2_configured() \
+          else _sftp_get_bytes_https(KEYS_REMOTE_KEY)
     if not raw:
         return {}
     try:
@@ -370,10 +458,15 @@ def download_keys() -> dict:
 
 def upload_keys(keys: dict) -> bool:
     if not is_configured():
-        raise RuntimeError("R2 storage not configured")
+        raise RuntimeError("storage not configured")
     data = json.dumps(keys, indent=2).encode("utf-8")
-    _r2_put_bytes(KEYS_REMOTE_KEY, data, "application/json")
-    log.info(f"upload_keys: pushed {len(keys)} key(s) to R2")
+    if r2_configured():
+        _r2_put_bytes(KEYS_REMOTE_KEY, data, "application/json")
+        tier = "R2"
+    else:
+        _sftp_put_bytes(KEYS_REMOTE_KEY, data)
+        tier = "SFTP"
+    log.info(f"upload_keys: pushed {len(keys)} key(s) to {tier}")
     return True
 
 
@@ -466,15 +559,19 @@ def _migrate_one(r2_key: str, run_id: str, size: int) -> bool:
 
 # ── Diagnostics ────────────────────────────────────────────
 def usage_summary() -> dict:
-    """Used by the debug endpoint."""
+    """Used by the debug endpoint + Monitor page."""
     out = {
         "primary_configured":   is_configured(),
         "secondary_configured": secondary_is_configured(),
+        "r2_configured":        r2_configured(),
+        "sftp_configured":      sftp_configured(),
+        "active_tier":          "r2" if r2_configured() else ("sftp" if sftp_configured() else None),
         "r2_public_url":        R2_PUBLIC_URL,
         "secondary_public_url": SECONDARY_PUBLIC_URL,
+        "public_base":          _public_base(),
         "r2_max_gb":            R2_MAX_GB,
     }
-    if is_configured():
+    if r2_configured():
         try:
             used = _r2_total_bytes(VIDEOS_PREFIX + "/")
             out["r2_video_bytes"] = used
