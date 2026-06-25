@@ -1,27 +1,30 @@
 """
-storage.py — Push videos + registry to remote storage over FTP/FTPS.
+storage.py — Push videos + registry to Hostinger over SFTP.
 
-Designed for Hostinger Business (and any FTPS-capable host). Falls back
-to plain FTP if FTPS handshake fails. All credentials come from .env:
+Originally used FTPS but HuggingFace Spaces (and similar PaaS containers)
+block outbound port 21. Only ports 22/80/443 reach the open internet from
+inside the container. SSH/SFTP on port 22 works fine, so does Hostinger's
+shared-hosting SSH (high port 65002).
 
-    FTP_HOST          ftp.yourdomain.com
-    FTP_USER          your_user
-    FTP_PASS          your_password
-    FTP_PORT          21                  (default; 990 for implicit FTPS)
-    FTP_USE_TLS       1                   (1 = FTPS, 0 = plain FTP)
-    FTP_BASE_DIR      /public_html/yt-agent
-    PUBLIC_BASE_URL   https://yourdomain.com/yt-agent
+Connects via paramiko. Credentials come from env vars:
 
-Any *.json or *.mp4 written under FTP_BASE_DIR/videos/ becomes publicly
-fetchable at PUBLIC_BASE_URL/videos/<id>.mp4 once Hostinger serves it.
+    SFTP_HOST       82.180.138.116            (or ftp.yourdomain.com)
+    SFTP_USER       u459456047                (main user, NO ".ytagent")
+    SFTP_PASS       your_ssh_password
+    SFTP_PORT       65002                     (Hostinger's SSH port)
+    SFTP_BASE_DIR   /home/u459456047/domains/.../public_html/yt-agent
+    PUBLIC_BASE_URL https://yourdomain.com/yt-agent
+
+Anything written under SFTP_BASE_DIR is served by Apache at the matching
+URL under PUBLIC_BASE_URL — same files Apache always served, just written
+over SFTP instead of FTP.
 """
 import os
 import io
-import ssl
 import time
+import socket
 import logging
 from pathlib import Path
-from ftplib import FTP, FTP_TLS, error_perm
 
 log = logging.getLogger(__name__)
 
@@ -31,30 +34,26 @@ def _env(name, default=""):
     return v if v not in ("", None) else default
 
 
-FTP_HOST       = _env("FTP_HOST", "")
-FTP_USER       = _env("FTP_USER", "")
-FTP_PASS       = _env("FTP_PASS", "")
-FTP_PORT       = int(_env("FTP_PORT", "21") or 21)
-FTP_USE_TLS    = _env("FTP_USE_TLS", "1") not in ("0", "false", "False", "")
-FTP_BASE_DIR   = _env("FTP_BASE_DIR", "/public_html/yt-agent")
+# SFTP creds (with FTP_* fallback for back-compat with older deployments).
+SFTP_HOST       = _env("SFTP_HOST", _env("FTP_HOST", ""))
+SFTP_USER       = _env("SFTP_USER", _env("FTP_USER", ""))
+SFTP_PASS       = _env("SFTP_PASS", _env("FTP_PASS", ""))
+SFTP_PORT       = int(_env("SFTP_PORT", "65002") or 65002)
+SFTP_BASE_DIR   = _env("SFTP_BASE_DIR", _env("FTP_BASE_DIR", "")).rstrip("/")
 PUBLIC_BASE_URL = _env("PUBLIC_BASE_URL", "").rstrip("/")
+
+# Back-compat name used elsewhere in the codebase + in the debug endpoint.
+FTP_BASE_DIR = SFTP_BASE_DIR
 
 
 def is_configured() -> bool:
-    return bool(FTP_HOST and FTP_USER and FTP_PASS and PUBLIC_BASE_URL)
+    return bool(SFTP_HOST and SFTP_USER and SFTP_PASS and SFTP_BASE_DIR and PUBLIC_BASE_URL)
 
 
-# ── Connection ────────────────────────────────────────────────
+# ── Connection ──────────────────────────────────────────────
 def _resolve_ipv4(host: str, port: int) -> str:
-    """Resolve a hostname to its first IPv4 address.
-
-    Some hosts (including HuggingFace Space containers) lack a working
-    IPv6 route. If DNS returns AAAA first, Python's ftplib connects to
-    the IPv6 address and immediately fails with
-    `OSError(101, 'Network is unreachable')` even though the host is
-    perfectly reachable over IPv4.
-    """
-    import socket
+    """Force IPv4 — containers often lack an IPv6 route, and AAAA-first
+    DNS responses cause OSError(101, 'Network is unreachable')."""
     for af, _, _, _, sa in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM):
         if af == socket.AF_INET:
             return sa[0]
@@ -62,143 +61,112 @@ def _resolve_ipv4(host: str, port: int) -> str:
 
 
 def _connect():
-    """Return a connected, logged-in FTP[S] client. Forces IPv4 to avoid
-    ENETUNREACH on dual-stack DNS in IPv4-only containers."""
+    """Return (transport, sftp). Caller must close both."""
+    import paramiko
     if not is_configured():
-        raise RuntimeError("FTP storage is not configured (FTP_HOST/USER/PASS/PUBLIC_BASE_URL missing)")
-
-    ipv4_host = _resolve_ipv4(FTP_HOST, FTP_PORT)
-
-    if FTP_USE_TLS:
-        try:
-            ctx = ssl.create_default_context()
-            # check_hostname=False: we connect to an IP, not a hostname.
-            # We still send the hostname via SNI below by setting server_hostname.
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE  # Hostinger shared FTPS often has self-signed
-            ftp = FTP_TLS(context=ctx)
-            ftp.connect(ipv4_host, FTP_PORT, timeout=30)
-            ftp.login(FTP_USER, FTP_PASS)
-            ftp.prot_p()      # encrypt data channel too
-            return ftp
-        except Exception as e:
-            log.warning(f"FTPS handshake failed ({e}); falling back to plain FTP")
-
-    ftp = FTP()
-    ftp.connect(ipv4_host, FTP_PORT, timeout=30)
-    ftp.login(FTP_USER, FTP_PASS)
-    return ftp
+        raise RuntimeError(
+            "SFTP storage not configured "
+            "(need SFTP_HOST / SFTP_USER / SFTP_PASS / SFTP_BASE_DIR / PUBLIC_BASE_URL)"
+        )
+    ip = _resolve_ipv4(SFTP_HOST, SFTP_PORT)
+    transport = paramiko.Transport((ip, SFTP_PORT))
+    transport.banner_timeout = 15
+    transport.connect(username=SFTP_USER, password=SFTP_PASS)
+    sftp = paramiko.SFTPClient.from_transport(transport)
+    return transport, sftp
 
 
-def _mkdir_p(ftp, path: str):
-    """Create a directory tree (idempotent)."""
+def _close(transport, sftp):
+    try: sftp.close()
+    except Exception: pass
+    try: transport.close()
+    except Exception: pass
+
+
+def _mkdir_p(sftp, path: str):
+    """Idempotent recursive mkdir."""
     parts = [p for p in path.split("/") if p]
-    cur = "/"
+    cur = ""
     for p in parts:
-        cur = (cur.rstrip("/") + "/" + p)
+        cur = cur + "/" + p
         try:
-            ftp.mkd(cur)
-        except error_perm as e:
-            if "550" in str(e) or "exists" in str(e).lower():
-                pass  # directory already exists
-            else:
-                raise
+            sftp.mkdir(cur)
+        except IOError:
+            pass  # already exists or no perms — let the actual put() fail meaningfully
 
 
-# ── Public API ────────────────────────────────────────────────
+# ── Public API (signature-compatible with the old FTP version) ──
 def upload_video(local_path: str, run_id: str) -> str:
-    """Upload a video file. Returns the public URL.
-
-    The target path is:  {FTP_BASE_DIR}/videos/{run_id}.mp4
-    The public URL is:   {PUBLIC_BASE_URL}/videos/{run_id}.mp4
-    """
+    """Upload {run_id}.mp4 to <base>/videos/. Returns its public URL."""
     if not is_configured():
-        raise RuntimeError("FTP storage not configured")
-
+        raise RuntimeError("SFTP storage not configured")
     local = Path(local_path)
     if not local.exists():
         raise FileNotFoundError(local)
 
-    remote_dir = f"{FTP_BASE_DIR.rstrip('/')}/videos"
-    remote_name = f"{run_id}.mp4"
+    remote_dir = f"{SFTP_BASE_DIR}/videos"
+    remote_path = f"{remote_dir}/{run_id}.mp4"
 
     t0 = time.time()
-    ftp = _connect()
+    transport, sftp = _connect()
     try:
-        _mkdir_p(ftp, remote_dir)
-        ftp.cwd(remote_dir)
-        with open(local, "rb") as f:
-            ftp.storbinary(f"STOR {remote_name}", f, blocksize=1024 * 64)
+        _mkdir_p(sftp, remote_dir)
+        sftp.put(str(local), remote_path)
     finally:
-        try: ftp.quit()
-        except Exception: pass
+        _close(transport, sftp)
 
     size_mb = local.stat().st_size / (1024 * 1024)
-    public = f"{PUBLIC_BASE_URL}/videos/{remote_name}"
-    log.info(f"FTP uploaded {size_mb:.1f} MB in {time.time()-t0:.1f}s → {public}")
+    public = f"{PUBLIC_BASE_URL}/videos/{run_id}.mp4"
+    log.info(f"SFTP uploaded {size_mb:.1f} MB in {time.time()-t0:.1f}s → {public}")
     return public
 
 
-def upload_json(remote_filename: str, payload: dict | list) -> str:
-    """Upload a JSON file (registry, etc.). Returns public URL."""
+def upload_json(remote_filename: str, payload) -> str:
+    """Upload a JSON blob to <base>/<remote_filename>. Returns public URL."""
     if not is_configured():
-        raise RuntimeError("FTP storage not configured")
-
+        raise RuntimeError("SFTP storage not configured")
     import json as _json
     data = _json.dumps(payload, indent=2, ensure_ascii=False).encode("utf-8")
-    buf = io.BytesIO(data)
-    remote_dir = FTP_BASE_DIR.rstrip("/")
-    target = f"{remote_dir}/{remote_filename}"
+    remote_path = f"{SFTP_BASE_DIR}/{remote_filename}"
 
-    ftp = _connect()
+    transport, sftp = _connect()
     try:
-        _mkdir_p(ftp, remote_dir)
-        ftp.cwd(remote_dir)
-        ftp.storbinary(f"STOR {remote_filename}", buf, blocksize=1024 * 32)
+        _mkdir_p(sftp, SFTP_BASE_DIR)
+        with sftp.open(remote_path, "wb") as f:
+            f.write(data)
     finally:
-        try: ftp.quit()
-        except Exception: pass
-
+        _close(transport, sftp)
     return f"{PUBLIC_BASE_URL}/{remote_filename}"
 
 
-# ── Central keys store ───────────────────────────────────────
-# Path on the FTP server where all API keys live as a JSON dict. Hidden
-# under .private/ (Hostinger / Apache hides dotfile directories by default),
-# so even though it's under FTP_BASE_DIR it's not HTTP-accessible.
-KEYS_REMOTE_DIR  = _env("FTP_KEYS_DIR",  f"{FTP_BASE_DIR.rstrip('/')}/.private")
-KEYS_REMOTE_FILE = _env("FTP_KEYS_FILE", "keys.json")
+# ── Central keys store ──────────────────────────────────────
+# Hidden under .private/ — Apache hides dotfile directories by default,
+# so it's not HTTP-accessible even though it lives under the docroot.
+KEYS_REMOTE_DIR  = _env("SFTP_KEYS_DIR",
+                        _env("FTP_KEYS_DIR", f"{SFTP_BASE_DIR}/.private"))
+KEYS_REMOTE_FILE = _env("SFTP_KEYS_FILE",
+                        _env("FTP_KEYS_FILE", "keys.json"))
 
 
 def download_keys() -> dict:
-    """
-    Fetch the shared keys.json from Hostinger. Returns {} on any failure
-    (file missing, FTP down, etc.) — caller treats absent keys as the
-    bootstrap state.
-    """
+    """Fetch shared keys.json. Returns {} on any failure (bootstrap state)."""
     import json as _json
     if not is_configured():
         return {}
-    buf = io.BytesIO()
     try:
-        ftp = _connect()
+        transport, sftp = _connect()
     except Exception as e:
-        log.warning(f"download_keys: FTP connect failed: {e}")
+        log.warning(f"download_keys: SFTP connect failed: {e}")
         return {}
+    raw = b""
     try:
         try:
-            ftp.cwd(KEYS_REMOTE_DIR)
-        except error_perm:
-            return {}    # dir doesn't exist yet
-        try:
-            ftp.retrbinary(f"RETR {KEYS_REMOTE_FILE}", buf.write, blocksize=64 * 1024)
-        except error_perm:
-            return {}    # file doesn't exist yet
+            with sftp.open(f"{KEYS_REMOTE_DIR}/{KEYS_REMOTE_FILE}", "rb") as f:
+                raw = f.read()
+        except IOError:
+            return {}  # file missing — first-run bootstrap
     finally:
-        try: ftp.quit()
-        except Exception: pass
-
-    raw = buf.getvalue()
+        _close(transport, sftp)
     if not raw:
         return {}
     try:
@@ -211,35 +179,31 @@ def download_keys() -> dict:
 
 
 def upload_keys(keys: dict) -> bool:
-    """Push the keys dict to Hostinger as keys.json."""
+    """Write the keys dict to the shared store."""
     import json as _json
     if not is_configured():
-        raise RuntimeError("FTP storage not configured")
+        raise RuntimeError("SFTP storage not configured")
     data = _json.dumps(keys, indent=2).encode("utf-8")
-    buf = io.BytesIO(data)
-    ftp = _connect()
+    transport, sftp = _connect()
     try:
-        _mkdir_p(ftp, KEYS_REMOTE_DIR)
-        ftp.cwd(KEYS_REMOTE_DIR)
-        ftp.storbinary(f"STOR {KEYS_REMOTE_FILE}", buf, blocksize=32 * 1024)
+        _mkdir_p(sftp, KEYS_REMOTE_DIR)
+        with sftp.open(f"{KEYS_REMOTE_DIR}/{KEYS_REMOTE_FILE}", "wb") as f:
+            f.write(data)
     finally:
-        try: ftp.quit()
-        except Exception: pass
+        _close(transport, sftp)
     log.info(f"upload_keys: pushed {len(keys)} key(s) to {KEYS_REMOTE_DIR}/{KEYS_REMOTE_FILE}")
     return True
 
 
 def delete_remote(remote_filename: str):
-    """Delete a file under FTP_BASE_DIR. Silent on missing."""
+    """Delete a file under SFTP_BASE_DIR. Silent on missing."""
     if not is_configured():
         return
-    ftp = _connect()
+    transport, sftp = _connect()
     try:
-        ftp.cwd(FTP_BASE_DIR.rstrip("/"))
         try:
-            ftp.delete(remote_filename)
-        except error_perm:
+            sftp.remove(f"{SFTP_BASE_DIR}/{remote_filename}")
+        except IOError:
             pass
     finally:
-        try: ftp.quit()
-        except Exception: pass
+        _close(transport, sftp)
