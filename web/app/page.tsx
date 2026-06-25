@@ -11,7 +11,6 @@ import {
   listRuns, type Settings, type RunState, type Run,
 } from "@/lib/api";
 import VideoPlayer from "@/components/VideoPlayer";
-import LaunchBanner from "@/components/LaunchBanner";
 
 const STEP_ORDER = [
   ["research",  "Researching topic"],
@@ -99,9 +98,6 @@ export default function Dashboard() {
         </div>
         <StatusPill status={state.status} />
       </div>
-
-      {/* Auto-hides when a backend is online; otherwise shows the launch CTA */}
-      <LaunchBanner />
 
       {/* Preflight banner */}
       {preflight && !preflight.ok && (
