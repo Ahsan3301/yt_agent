@@ -385,6 +385,56 @@ def cancel_job(job_id: str):
     return {"ok": True}
 
 
+@app.get("/api/debug/heartbeat")
+def debug_heartbeat():
+    """Forces a synchronous registry push and surfaces any error.
+    Used to diagnose silent FTP/upload failures when the background
+    heartbeat thread isn't producing visible logs."""
+    import traceback
+    out = {
+        "storage_configured": storage.is_configured(),
+        "public_url": registry.public_url(),
+        "instance_id": registry.INSTANCE_ID,
+        "instance_tier": registry.INSTANCE_TIER,
+        "ftp_host": os.getenv("FTP_HOST", ""),
+        "ftp_user_set": bool(os.getenv("FTP_USER", "")),
+        "ftp_pass_set": bool(os.getenv("FTP_PASS", "")),
+        "ftp_port": os.getenv("FTP_PORT", "21"),
+        "ftp_use_tls": os.getenv("FTP_USE_TLS", "1"),
+        "ftp_base_dir": storage.FTP_BASE_DIR,
+        "public_base_url": os.getenv("PUBLIC_BASE_URL", ""),
+        "registry_filename": registry.REGISTRY_FILENAME,
+    }
+    try:
+        # Try a raw connection first (isolates auth/host errors).
+        ftp = storage._connect()
+        out["ftp_connect_ok"] = True
+        try:
+            pwd = ftp.pwd()
+            out["ftp_pwd"] = pwd
+            out["ftp_listing_root"] = ftp.nlst()
+        except Exception as e:
+            out["ftp_pwd_error"] = repr(e)
+        finally:
+            try: ftp.quit()
+            except Exception: pass
+    except Exception as e:
+        out["ftp_connect_ok"] = False
+        out["ftp_connect_error"] = repr(e)
+        out["traceback"] = traceback.format_exc()
+        return out
+
+    # Now try the real heartbeat push.
+    try:
+        registry.push_now(queue_depth=jobs.queue_depth())
+        out["push_now_ok"] = True
+    except Exception as e:
+        out["push_now_ok"] = False
+        out["push_now_error"] = repr(e)
+        out["traceback"] = traceback.format_exc()
+    return out
+
+
 @app.get("/api/queue")
 def queue_status():
     idle_for = int(idle_watchdog.idle_seconds())
