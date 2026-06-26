@@ -14,7 +14,7 @@ const NAV = [
   { href: "/monitor",  label: "Monitor",   icon: Activity        },
   { href: "/settings", label: "Settings",  icon: Settings        },
   { href: "/history",  label: "History",   icon: History         },
-  { href: "/keys",     label: "API Keys",  icon: KeyRound        },
+  { href: "/keys",     label: "Connections", icon: KeyRound      },
 ];
 
 export default function Sidebar() {
