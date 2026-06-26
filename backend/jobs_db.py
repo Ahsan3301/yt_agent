@@ -100,34 +100,45 @@ def list_for_backend(instance_id: str, limit: int = 50) -> list[dict]:
 
 
 def claim_queued(instance_id: str, instance_url: str) -> dict | None:
-    """Atomically claim ONE queued job (backend_instance_id == None).
+    """Atomically claim ONE queued job whose backend_instance_id is null.
+
+    Query strategy avoids composite-index requirement: filter on a
+    single field (status=='queued') and do the null-check + sort
+    client-side. Firestore reads a few extra docs per call but at our
+    scale (handful of in-flight jobs) it's nothing — and it means a
+    fresh deploy doesn't need anyone to click 'Create Index' in the
+    Firebase console.
 
     Uses a Firestore transaction so two backends polling at the same
     time don't both grab the same job — only one transaction wins; the
-    other sees the field already populated and returns None.
-
-    Returns the claimed job's full document (with backend_instance_id
-    set to instance_id), or None if no claimable queued job exists.
+    other sees backend_instance_id already populated and returns None.
     """
     if not db.is_configured() or not instance_id:
         return None
     try:
         from firebase_admin import firestore as _fs
         c = db.client()
-        q = (c.collection(COLLECTION)
-              .where("status", "==", "queued")
-              .where("backend_instance_id", "==", None)
-              .order_by("queued_at", direction=_fs.Query.ASCENDING)
-              .limit(1))
+        # Single equality filter — no composite index required.
+        q = c.collection(COLLECTION).where("status", "==", "queued").limit(20)
 
-        snap_list = list(q.stream())
-        if not snap_list:
+        candidates = []
+        for snap in q.stream():
+            d = snap.to_dict() or {}
+            if d.get("backend_instance_id"):
+                continue
+            d["__snap_id"] = snap.id
+            d.setdefault("queued_at", 0)
+            candidates.append(d)
+        if not candidates:
             return None
-        target = snap_list[0]
+
+        # Oldest first — fair scheduling.
+        candidates.sort(key=lambda x: float(x.get("queued_at") or 0))
+        target_id = candidates[0]["__snap_id"]
 
         @_fs.transactional
         def _txn(txn):
-            ref = c.collection(COLLECTION).document(target.id)
+            ref = c.collection(COLLECTION).document(target_id)
             cur = ref.get(transaction=txn).to_dict() or {}
             if cur.get("backend_instance_id"):
                 return None  # raced — someone else claimed it
@@ -137,7 +148,7 @@ def claim_queued(instance_id: str, instance_url: str) -> dict | None:
             cur["started_at"] = cur.get("started_at") or _ts_now()
             cur["updated_at"] = db.server_timestamp()
             txn.set(ref, cur, merge=True)
-            cur["id"] = target.id
+            cur["id"] = target_id
             return cur
 
         txn = c.transaction()
