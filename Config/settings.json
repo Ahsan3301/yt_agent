@@ -1,14 +1,14 @@
 {
   "content": {
-    "channel": "horror",
+    "channel": "wisdom",
     "tone": "chilling",
-    "target_word_min": 60,
-    "target_word_max": 100,
+    "target_word_min": 160,
+    "target_word_max": 200,
     "manual_premise": "",
     "videos_per_run": 1
   },
   "voice": {
-    "engine": "edge",
+    "engine": "kokoro",
     "edge_voice_horror": "en-US-BrianMultilingualNeural",
     "edge_voice_wisdom": "en-US-AndrewMultilingualNeural",
     "edge_rate_horror": "-5%",
@@ -21,22 +21,22 @@
     "kokoro_speed_wisdom": 0.95
   },
   "video": {
-    "min_segment_seconds": 2,
-    "max_segment_seconds": 7,
-    "use_video_clips": false,
+    "min_segment_seconds": 2.0,
+    "max_segment_seconds": 7.0,
+    "use_video_clips": true,
     "allow_images": true,
     "music_base_volume": 0.55,
-    "music_duck_ratio": 4,
+    "music_duck_ratio": 4.0,
     "music_duck_threshold": 0.15,
     "caption_highlight_color_bgr": "00FFFF",
     "caption_font_size": 72,
-    "caption_highlight_size": 80,
-    "ai_image_count": 20,
+    "caption_highlight_size": 90,
+    "ai_image_count": 0,
     "ai_image_style": "",
     "effects_intensity": 0.7,
     "output_crf": 23,
-    "output_preset": "fast",
-    "output_audio_bitrate": "192k",
+    "output_preset": "medium",
+    "output_audio_bitrate": "96k",
     "ai_image_attempts_per_shot": 3,
     "vision_judge_enabled": true,
     "vision_judge_threshold": 4,
@@ -44,12 +44,12 @@
     "content_restrictions": false
   },
   "providers": {
-    "shutterstock": false,
-    "pexels": false,
-    "coverr": false,
-    "pixabay": false,
-    "openverse_image": false,
-    "pollinations": true
+    "shutterstock": true,
+    "pexels": true,
+    "coverr": true,
+    "pixabay": true,
+    "openverse_image": true,
+    "pollinations": false
   },
   "upload": {
     "privacy": "public",
