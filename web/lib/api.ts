@@ -81,7 +81,6 @@ async function resolveBackend(): Promise<string> {
         const url = fresh[0].url.replace(/\/$/, "");
         _cached = { at: Date.now(), url };
         return url;
-        }
       }
     } catch {
       // fall through to relative
