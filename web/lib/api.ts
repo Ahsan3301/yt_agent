@@ -261,7 +261,18 @@ export async function runVideoUrl(id: string): Promise<string> {
 
 // ── Misc ──────────────────────────────────────────────────
 export const getPreflight = () => call<{ ok: boolean; error?: string }>("/api/preflight");
-export const getEdgeVoices = () => call<string[]>("/api/edge-voices");
+
+/** Edge voice catalogue — direct to worker (static list from the
+ * backend, no orchestration value in proxying through Vercel). */
+export async function getEdgeVoices(): Promise<string[]> {
+  const base = await pickActiveWorkerUrl();
+  if (!base) return [];
+  try {
+    const r = await fetch(`${base}/api/edge-voices`, { cache: "no-store" });
+    if (!r.ok) return [];
+    return (await r.json()) as string[];
+  } catch { return []; }
+}
 
 /**
  * Inspect the registry directly. Returns the list of live backends (after
@@ -336,11 +347,31 @@ export type LogEntry = {
 };
 export type LogPage = { entries: LogEntry[]; head_seq: number };
 
-export const fetchLogs = (since: number, limit = 500) =>
-  call<LogPage>(`/api/logs?since=${since}&limit=${limit}`);
+/**
+ * Logs are an in-process ring buffer on each worker. The Vercel gateway
+ * doesn't proxy them (would 5×-multiply the polling cost). Direct fetch
+ * to whichever worker is currently picked.
+ */
+export async function fetchLogs(since: number, limit = 500): Promise<LogPage> {
+  const base = await pickActiveWorkerUrl();
+  if (!base) return { entries: [], head_seq: 0 };
+  const r = await fetch(
+    `${base}/api/logs?since=${since}&limit=${limit}`,
+    { cache: "no-store" },
+  );
+  if (!r.ok) return { entries: [], head_seq: 0 };
+  return r.json() as Promise<LogPage>;
+}
 
-export const clearLogs = () =>
-  call<{ ok: true }>("/api/logs", { method: "DELETE" });
+export async function clearLogs(): Promise<{ ok: boolean }> {
+  const base = await pickActiveWorkerUrl();
+  if (!base) return { ok: false };
+  const r = await fetch(`${base}/api/logs`, {
+    method: "DELETE",
+    cache: "no-store",
+  });
+  return { ok: r.ok };
+}
 
 // ── Resource stats (Monitor page) ──────────────────────────
 export type BackendStats = {
