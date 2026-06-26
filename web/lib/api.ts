@@ -54,22 +54,33 @@ async function resolveBackend(): Promise<string> {
   // Use cached registry pick.
   if (_cached && Date.now() - _cached.at < REGISTRY_TTL_MS) return _cached.url;
 
-  const registry = process.env.NEXT_PUBLIC_REGISTRY_URL;
-  if (registry) {
+  const primary  = process.env.NEXT_PUBLIC_REGISTRY_URL;
+  const fallback = process.env.NEXT_PUBLIC_REGISTRY_FALLBACK_URL;
+  const urls = [primary, fallback].filter((u): u is string => !!u);
+  if (urls.length > 0) {
     try {
-      const r = await fetch(registry, { cache: "no-store" });
-      if (r.ok) {
-        const entries = (await r.json()) as RegistryEntry[];
-        const fresh = entries
-          // 180s window — one heartbeat is 30s, so this tolerates ~5 missed
-          // cycles before a backend gets dropped (Hostinger SFTP can stall
-          // briefly under load).
-          .filter((e) => e && e.url && Date.now() / 1000 - (e.last_seen || 0) < 180)
-          .sort(rankBackend);
-        if (fresh.length > 0) {
-          const url = fresh[0].url.replace(/\/$/, "");
-          _cached = { at: Date.now(), url };
-          return url;
+      const lists = await Promise.all(urls.map(async (u) => {
+        try {
+          const r = await fetch(u, { cache: "no-store" });
+          if (!r.ok) return [] as RegistryEntry[];
+          return (await r.json()) as RegistryEntry[];
+        } catch { return [] as RegistryEntry[]; }
+      }));
+      const byId = new Map<string, RegistryEntry>();
+      for (const list of lists) {
+        for (const e of list) {
+          const id = e.instance_id || e.url;
+          const prev = byId.get(id);
+          if (!prev || (e.last_seen || 0) > (prev.last_seen || 0)) byId.set(id, e);
+        }
+      }
+      const fresh = Array.from(byId.values())
+        .filter((e) => e && e.url && Date.now() / 1000 - (e.last_seen || 0) < 180)
+        .sort(rankBackend);
+      if (fresh.length > 0) {
+        const url = fresh[0].url.replace(/\/$/, "");
+        _cached = { at: Date.now(), url };
+        return url;
         }
       }
     } catch {
@@ -200,6 +211,19 @@ export const getEdgeVoices = () => call<string[]>("/api/edge-voices");
  * or empty. Bypasses the backend resolver — used by the launch banner to
  * decide whether to show "click to start".
  */
+async function _readRegistry(url: string): Promise<RegistryEntry[]> {
+  try {
+    const r = await fetch(url, { cache: "no-store" });
+    if (!r.ok) return [];
+    const entries = (await r.json()) as RegistryEntry[];
+    return entries.filter((e) =>
+      e && e.url && Date.now() / 1000 - (e.last_seen || 0) < 180,
+    );
+  } catch {
+    return [];
+  }
+}
+
 export async function fetchLiveBackends(): Promise<RegistryEntry[]> {
   const fixed = process.env.NEXT_PUBLIC_BACKEND_URL;
   if (fixed) {
@@ -209,18 +233,29 @@ export async function fetchLiveBackends(): Promise<RegistryEntry[]> {
       queue_depth: 0, last_seen: Date.now() / 1000,
     }];
   }
-  const registry = process.env.NEXT_PUBLIC_REGISTRY_URL;
-  if (!registry) return [];
-  try {
-    const r = await fetch(registry, { cache: "no-store" });
-    if (!r.ok) return [];
-    const entries = (await r.json()) as RegistryEntry[];
-    return entries.filter((e) =>
-      e && e.url && Date.now() / 1000 - (e.last_seen || 0) < 180,
-    );
-  } catch {
-    return [];
+
+  // Read BOTH registries (R2 + optional Hostinger fallback) and merge
+  // — this is what lets a Colab-with-R2 and an HF-with-SFTP-only see
+  // each other in the same dashboard. NEXT_PUBLIC_REGISTRY_FALLBACK_URL
+  // is optional; if set, its entries are merged with the primary's.
+  const primary  = process.env.NEXT_PUBLIC_REGISTRY_URL;
+  const fallback = process.env.NEXT_PUBLIC_REGISTRY_FALLBACK_URL;
+  const urls = [primary, fallback].filter((u): u is string => !!u);
+  if (urls.length === 0) return [];
+
+  const lists = await Promise.all(urls.map(_readRegistry));
+  // Dedupe by instance_id, keep the entry with the freshest last_seen.
+  const byId = new Map<string, RegistryEntry>();
+  for (const list of lists) {
+    for (const e of list) {
+      const id = e.instance_id || e.url;
+      const prev = byId.get(id);
+      if (!prev || (e.last_seen || 0) > (prev.last_seen || 0)) {
+        byId.set(id, e);
+      }
+    }
   }
+  return Array.from(byId.values());
 }
 
 export const COLAB_URL = process.env.NEXT_PUBLIC_COLAB_URL || "";
@@ -315,6 +350,10 @@ export type BackendStats = {
     mem_percent: number;
     temp_c?: number | null;
   } | null;
+  encoder?: {
+    name: string;   // "h264_nvenc" | "libx264" | "unknown"
+    kind: string;   // "gpu" | "cpu" | "unknown"
+  };
   storage?: {
     primary_configured?: boolean;
     secondary_configured?: boolean;

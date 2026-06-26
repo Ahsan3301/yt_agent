@@ -143,6 +143,18 @@ def collect() -> dict:
 
     out["gpu"] = _gpu_cached()
 
+    # Tell the dashboard which encoder will be used for the next render
+    # so the Monitor card can show a CPU/GPU pill.
+    try:
+        from modules import editor
+        out["encoder"] = {
+            "name": "h264_nvenc" if editor._USE_NVENC else "libx264",
+            "kind": "gpu" if editor._USE_NVENC else "cpu",
+        }
+    except Exception as e:
+        log.debug(f"encoder probe: {e}")
+        out["encoder"] = {"name": "unknown", "kind": "unknown"}
+
     # Storage tier hints.
     try:
         from backend import storage

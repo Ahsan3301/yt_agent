@@ -663,6 +663,72 @@ def queue_status():
     }
 
 
+# ── Encoder diagnostic ────────────────────────────────────
+@app.get("/api/encoder")
+def get_encoder():
+    """Probe NVENC at request time and explain the result.
+
+    Returns the encoder that will actually be used for the next render
+    PLUS each step of the detection chain (ffmpeg-has-nvenc, nvidia-smi,
+    real smoke encode) so the user can see exactly where it fails on a
+    box that the auto-detect says is CPU-only despite having a GPU.
+    """
+    import shutil as _shutil
+    import subprocess as _sp
+    from modules import editor
+    out = {
+        "selected": "h264_nvenc" if editor._USE_NVENC else "libx264",
+        "kind":     "gpu" if editor._USE_NVENC else "cpu",
+        "force_cpu_env": bool(os.getenv("FFMPEG_FORCE_CPU", "").lower() in ("1", "true", "yes")),
+        "checks":   {},
+    }
+    # 1) ffmpeg presence + encoder list
+    if _shutil.which("ffmpeg"):
+        try:
+            r = _sp.run(["ffmpeg", "-hide_banner", "-encoders"],
+                        capture_output=True, text=True, timeout=5)
+            out["checks"]["ffmpeg_has_nvenc"] = "h264_nvenc" in (r.stdout or "")
+        except Exception as e:
+            out["checks"]["ffmpeg_has_nvenc"] = False
+            out["checks"]["ffmpeg_error"] = repr(e)
+    else:
+        out["checks"]["ffmpeg_has_nvenc"] = False
+        out["checks"]["ffmpeg_missing"] = True
+
+    # 2) nvidia-smi reachable + see a GPU
+    if _shutil.which("nvidia-smi"):
+        try:
+            r = _sp.run(["nvidia-smi", "-L"], capture_output=True, text=True, timeout=5)
+            out["checks"]["nvidia_smi_ok"] = r.returncode == 0 and "GPU" in (r.stdout or "")
+            out["checks"]["nvidia_smi_output"] = (r.stdout or "").strip()
+        except Exception as e:
+            out["checks"]["nvidia_smi_ok"] = False
+            out["checks"]["nvidia_smi_error"] = repr(e)
+    else:
+        out["checks"]["nvidia_smi_ok"] = False
+        out["checks"]["nvidia_smi_missing"] = True
+
+    # 3) live NVENC smoke test (this is what _detect_nvenc actually
+    #    runs at startup — re-running here surfaces transient failures)
+    if out["checks"].get("ffmpeg_has_nvenc") and out["checks"].get("nvidia_smi_ok"):
+        try:
+            r = _sp.run(
+                ["ffmpeg", "-hide_banner", "-loglevel", "error",
+                 "-f", "lavfi", "-i", "color=c=black:s=64x64:d=0.1",
+                 "-c:v", "h264_nvenc", "-f", "null", "-"],
+                capture_output=True, text=True, timeout=10,
+            )
+            out["checks"]["smoke_encode_ok"] = r.returncode == 0
+            if r.returncode != 0:
+                out["checks"]["smoke_encode_stderr"] = (r.stderr or "")[-500:]
+        except Exception as e:
+            out["checks"]["smoke_encode_ok"] = False
+            out["checks"]["smoke_encode_error"] = repr(e)
+    else:
+        out["checks"]["smoke_encode_ok"] = False
+    return out
+
+
 # ── Resource stats (Monitor page) ──────────────────────────
 @app.get("/api/stats")
 def get_stats():

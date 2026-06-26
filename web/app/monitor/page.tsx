@@ -174,6 +174,17 @@ function BackendCard({ bs }: { bs: BackendState }) {
             <span className={clsx("pill", entry.tier === "gpu" ? "pill-success" : "pill-info")}>
               {entry.tier?.toUpperCase()}
             </span>
+            {stats?.encoder && (
+              <span
+                className={clsx(
+                  "pill",
+                  stats.encoder.kind === "gpu" ? "pill-success" : "pill-warn",
+                )}
+                title={`renders will use ${stats.encoder.name}`}
+              >
+                renders: {stats.encoder.kind === "gpu" ? "GPU ✓" : stats.encoder.kind === "cpu" ? "CPU" : "?"}
+              </span>
+            )}
           </div>
           <div className="text-xs text-neutral-500 font-mono truncate">
             {entry.url}
