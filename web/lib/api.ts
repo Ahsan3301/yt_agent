@@ -122,34 +122,13 @@ async function _readBackendsFromRegistryFiles(): Promise<RegistryEntry[]> {
     .filter((e) => e && e.url && Date.now() / 1000 - (e.last_seen || 0) < FRESHNESS_SECONDS);
 }
 
-async function resolveBackend(): Promise<string> {
-  // Hard override wins.
-  const fixed = process.env.NEXT_PUBLIC_BACKEND_URL;
-  if (fixed) return fixed.replace(/\/$/, "");
-
-  // Use cached registry pick.
-  if (_cached && Date.now() - _cached.at < REGISTRY_TTL_MS) return _cached.url;
-
-  try {
-    const entries = isFirestoreConfigured()
-      ? await _readBackendsFromFirestore()
-      : await _readBackendsFromRegistryFiles();
-    const fresh = entries.sort(rankBackend);
-    if (fresh.length > 0) {
-      const url = fresh[0].url.replace(/\/$/, "");
-      _cached = { at: Date.now(), url };
-      return url;
-    }
-  } catch {
-    // fall through to relative
-  }
-  return "";
-}
-
+/**
+ * Call the Vercel API gateway (same-origin). Replaces direct
+ * worker fetches for everything except per-instance polling
+ * (stats, logs, video stream) — see fetchStatsFor, runVideoUrl.
+ */
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
-  const base = await resolveBackend();
-  const url = base ? `${base}${path}` : path;
-  const r = await fetch(url, {
+  const r = await fetch(path, {
     ...init,
     cache: "no-store",
     headers: {
@@ -162,6 +141,30 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(`HTTP ${r.status}: ${text || r.statusText}`);
   }
   return r.json() as Promise<T>;
+}
+
+/**
+ * Find the best worker URL for per-instance polling endpoints
+ * (LogsPanel, runVideoUrl fallback). Most callers should hit the
+ * Vercel gateway (`/api/*`) instead — only use this when you
+ * specifically need direct backend access.
+ */
+export async function pickActiveWorkerUrl(): Promise<string> {
+  const fixed = process.env.NEXT_PUBLIC_BACKEND_URL;
+  if (fixed) return fixed.replace(/\/$/, "");
+  if (_cached && Date.now() - _cached.at < REGISTRY_TTL_MS) return _cached.url;
+  try {
+    const entries = isFirestoreConfigured()
+      ? await _readBackendsFromFirestore()
+      : await _readBackendsFromRegistryFiles();
+    const fresh = entries.sort(rankBackend);
+    if (fresh.length > 0) {
+      const url = fresh[0].url.replace(/\/$/, "");
+      _cached = { at: Date.now(), url };
+      return url;
+    }
+  } catch { /* fall through */ }
+  return "";
 }
 
 // ── Settings ──────────────────────────────────────────────
@@ -252,8 +255,8 @@ export const deleteRun = (id: string) =>
   call<{ ok: true }>(`/api/runs/${id}`, { method: "DELETE" });
 
 export async function runVideoUrl(id: string): Promise<string> {
-  const base = await resolveBackend();
-  return `${base}/api/runs/${id}/video`;
+  const base = await pickActiveWorkerUrl();
+  return base ? `${base}/api/runs/${id}/video` : `/api/runs/${id}/video`;
 }
 
 // ── Misc ──────────────────────────────────────────────────

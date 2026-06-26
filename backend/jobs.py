@@ -34,16 +34,29 @@ _worker_started = False
 
 
 def _persist(job: dict[str, Any]):
-    """Atomic write of one job record."""
+    """Atomic write of one job record. Mirrors to Firestore so the
+    Vercel API gateway can find this job regardless of which backend
+    is asked."""
     p = JOBS_DIR / f"{job['id']}.json"
     tmp = p.with_suffix(".json.tmp")
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(job, f, indent=2)
     os.replace(tmp, p)
+    # Best-effort Firestore mirror — never fail the local persist on
+    # remote failures.
+    try:
+        from backend import jobs_db, registry
+        record = dict(job)
+        record.setdefault("backend_instance_id", registry.INSTANCE_ID)
+        record.setdefault("backend_url", registry.public_url() or None)
+        jobs_db.upsert_job(record)
+    except Exception as e:
+        log.debug(f"_persist: Firestore mirror skipped ({e})")
 
 
 def _load_persisted():
-    """Hydrate in-memory state on startup from disk."""
+    """Hydrate in-memory state on startup from disk + Firestore."""
+    # Local files first.
     for p in sorted(JOBS_DIR.glob("*.json")):
         try:
             with open(p, "r", encoding="utf-8") as f:
@@ -60,6 +73,25 @@ def _load_persisted():
             _jobs[jid] = job
         except Exception as e:
             log.warning(f"could not load job from {p}: {e}")
+
+    # Firestore mirror: anything that says it's running on THIS
+    # instance (from before the restart) gets the same stale-marker
+    # treatment so the dashboard's status flips to failed instead of
+    # hanging forever on "running".
+    try:
+        from backend import jobs_db, registry
+        for remote in jobs_db.list_for_backend(registry.INSTANCE_ID):
+            jid = remote.get("id")
+            if not jid or jid in _jobs:
+                continue
+            if remote.get("status") == "running":
+                remote["status"] = "failed"
+                remote["error"] = "backend restarted while running"
+                remote["finished_at"] = remote.get("finished_at") or time.time()
+            _jobs[jid] = remote
+            _persist(remote)
+    except Exception as e:
+        log.debug(f"jobs hydrate from Firestore skipped: {e}")
 
 
 # ── Public API ───────────────────────────────────────────────
@@ -91,6 +123,41 @@ def submit(payload: dict[str, Any]) -> dict[str, Any]:
     log.info(f"job queued | id={jid} channel={job['channel']} dry={job['dry_run']} "
              f"(queue depth={_pending.qsize()})")
     return job
+
+
+def adopt_remote(remote_job: dict[str, Any]) -> bool:
+    """Pick up a job that was queued via the Vercel gateway and just
+    claimed by registry.py's heartbeat loop. Identical to submit() but
+    skips the Firestore upsert (we just won the transaction that set
+    backend_instance_id; another upsert would race nothing useful)."""
+    jid = remote_job.get("id")
+    if not jid:
+        return False
+    job = {
+        "id": jid,
+        "status": "queued",
+        "channel": remote_job.get("channel", "horror"),
+        "dry_run": bool(remote_job.get("dry_run", True)),
+        "queued_at": remote_job.get("queued_at") or time.time(),
+        "started_at": None,
+        "finished_at": None,
+        "percent": 0,
+        "current_step": None,
+        "current_step_label": None,
+        "video_url": None,
+        "public_url": None,
+        "error": None,
+        "run_id": None,
+    }
+    with _lock:
+        if jid in _jobs:
+            return False
+        _jobs[jid] = job
+        _persist(job)
+        _pending.put(jid)
+    _ensure_worker()
+    log.info(f"job claimed from Firestore queue | id={jid} channel={job['channel']}")
+    return True
 
 
 def get(job_id: str) -> Optional[dict[str, Any]]:

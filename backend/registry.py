@@ -111,7 +111,7 @@ def start():
     _startup_epoch = time.time()
 
     def _loop():
-        from backend import jobs
+        from backend import jobs, jobs_db
         while _running:
             try:
                 depth = jobs.queue_depth()
@@ -119,6 +119,14 @@ def start():
                 if new_status != _status:
                     set_status(new_status)
                 push_now(queue_depth=depth)
+                # Queue-claim: if we're idle, look for a job that was
+                # submitted via Vercel while no worker was alive (or
+                # while we were busy). One job per cycle keeps load
+                # predictable.
+                if not jobs.is_busy() and public_url():
+                    claimed = jobs_db.claim_queued(INSTANCE_ID, public_url())
+                    if claimed:
+                        jobs.adopt_remote(claimed)
             except Exception as e:
                 log.warning(f"heartbeat loop error: {e}")
             time.sleep(HEARTBEAT_INTERVAL)
