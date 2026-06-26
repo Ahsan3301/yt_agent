@@ -136,6 +136,10 @@ def _r2_delete(key: str) -> bool:
 
 
 def _r2_list(prefix: str = "") -> list[dict]:
+    """List objects under prefix. Quiet on failure — callers handle the
+    empty-list case gracefully (cached size, migration skipped, etc.).
+    Errors here often come from boto3/truststore SSL conflicts that we
+    can't fix without deep dependency surgery."""
     out = []
     try:
         paginator = _r2c().get_paginator("list_objects_v2")
@@ -147,12 +151,37 @@ def _r2_list(prefix: str = "") -> list[dict]:
                     "last_modified": obj["LastModified"].timestamp(),
                 })
     except Exception as e:
-        log.warning(f"r2 list {prefix}: {e}")
+        # Debug-level — _r2_total_bytes caches the failure and we don't
+        # want to spam the logs panel every 2s when /api/stats polls.
+        log.debug(f"r2 list {prefix}: {e!r}")
     return out
 
 
+_r2_size_cache: dict[str, tuple[float, int]] = {}      # prefix → (at_epoch, bytes)
+_R2_SIZE_TTL = 60.0   # seconds — /api/stats polls every 2s, no need to re-list R2 that often
+
+
 def _r2_total_bytes(prefix: str = "") -> int:
-    return sum(o["size"] for o in _r2_list(prefix))
+    """Return cumulative bytes under `prefix`. Cached for _R2_SIZE_TTL
+    seconds because /api/stats polls this every 2 seconds and listing R2
+    is both wasteful AND has a known interaction with truststore that
+    causes RecursionError in some configurations."""
+    now = time.time()
+    cached = _r2_size_cache.get(prefix)
+    if cached and (now - cached[0]) < _R2_SIZE_TTL:
+        return cached[1]
+    try:
+        total = sum(o["size"] for o in _r2_list(prefix))
+        _r2_size_cache[prefix] = (now, total)
+        return total
+    except Exception as e:
+        # Botocore + truststore can raise RecursionError, SSL errors,
+        # or transient network blips. Return the last good value if we
+        # have one, else 0 — never propagate to the /api/stats handler.
+        log.debug(f"_r2_total_bytes({prefix!r}) failed, using last known: {e!r}")
+        if cached:
+            return cached[1]
+        return 0
 
 
 def _r2_download_to(key: str, local_path: str) -> bool:
