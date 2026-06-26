@@ -61,7 +61,7 @@ def _detect_nvenc() -> bool:
     try:
         r = subprocess.run(
             ["ffmpeg", "-hide_banner", "-loglevel", "error",
-             "-f", "lavfi", "-i", "color=c=black:s=64x64:d=0.1",
+             "-f", "lavfi", "-i", "color=c=black:s=320x240:d=0.1",
              "-c:v", "h264_nvenc", "-f", "null", "-"],
             capture_output=True, text=True, timeout=10,
         )
