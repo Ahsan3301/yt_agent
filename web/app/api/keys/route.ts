@@ -15,6 +15,7 @@ const MANAGED_KEYS = [
   "PEXELS_API_KEY",
   "PIXABAY_API_KEY",
   "COVERR_API_KEY",
+  "HF_TOKEN",
 ];
 
 function _mask(v: string): string {

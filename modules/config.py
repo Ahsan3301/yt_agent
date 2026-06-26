@@ -120,7 +120,8 @@ DEFAULT_SETTINGS = {
         "coverr":          True,
         "pixabay":         True,
         "openverse_image": True,
-        "pollinations":    False,  # AI image gen — opt-in (slow, sometimes off-target)
+        "pollinations":    True,   # free AI image gen — primary fallback (no key needed)
+        "huggingface":     True,   # free AI image gen — robust second fallback (needs HF_TOKEN)
     },
     "upload": {
         "privacy": env("YOUTUBE_PRIVACY", "public").lower(),  # public|unlisted|private

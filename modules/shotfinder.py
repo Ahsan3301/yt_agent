@@ -211,6 +211,121 @@ def reset_pollinations_breaker():
     _POLL_OPEN_UNTIL = 0.0
 
 
+# ── HuggingFace Inference API (free fallback when Pollinations is rate-limited) ─
+# Same breaker pattern as Pollinations. HF returns image bytes directly.
+# Default model is SDXL base 1.0 — fast and gives decent horror/cinematic.
+_HF_CONSECUTIVE_FAILS = 0
+_HF_OPEN_UNTIL = 0.0
+_HF_BACKOFF_THRESHOLD = 3
+_HF_OPEN_FOR_SECONDS = 120
+
+_HF_MODEL = os.getenv("HF_IMAGE_MODEL",
+                     "stabilityai/stable-diffusion-xl-base-1.0")
+
+
+def _hf_breaker_skip():
+    return time.time() < _HF_OPEN_UNTIL
+
+
+def _hf_breaker_record(success: bool, http_status: int | None = None):
+    global _HF_CONSECUTIVE_FAILS, _HF_OPEN_UNTIL
+    if success:
+        if _HF_CONSECUTIVE_FAILS:
+            log.info("HuggingFace: circuit breaker reset after successful call")
+        _HF_CONSECUTIVE_FAILS = 0
+        return
+    # Any failure (5xx, 429, network) counts. Trip the breaker on N
+    # consecutive fails so we don't hammer a sick service.
+    _HF_CONSECUTIVE_FAILS += 1
+    if _HF_CONSECUTIVE_FAILS >= _HF_BACKOFF_THRESHOLD:
+        _HF_OPEN_UNTIL = time.time() + _HF_OPEN_FOR_SECONDS
+        log.warning(
+            f"HuggingFace: circuit breaker OPEN — {_HF_CONSECUTIVE_FAILS} "
+            f"consecutive failures (status={http_status}); skipping for "
+            f"{_HF_OPEN_FOR_SECONDS}s"
+        )
+
+
+def reset_hf_breaker():
+    global _HF_CONSECUTIVE_FAILS, _HF_OPEN_UNTIL
+    _HF_CONSECUTIVE_FAILS = 0
+    _HF_OPEN_UNTIL = 0.0
+
+
+def _huggingface_generate(prompt, output_dir, trial):
+    """Generate one image via HF Inference API. Returns (path, seed) on
+    success, (None, seed) on failure. Honours its own circuit breaker.
+
+    Needs HF_TOKEN env var. Token is free at
+    https://huggingface.co/settings/tokens (Read scope is enough)."""
+    token = os.getenv("HF_TOKEN", "").strip()
+    seed = int(hashlib.md5(f"{prompt}|{trial}|hf".encode()).hexdigest()[:8], 16)
+    if not token:
+        return None, seed
+    if _hf_breaker_skip():
+        wait = int(_HF_OPEN_UNTIL - time.time())
+        log.info(f"HuggingFace: breaker OPEN (skipping; reopens in {wait}s)")
+        return None, seed
+
+    dest = os.path.join(output_dir, f"huggingface_{seed:08x}.jpg")
+    url = f"https://api-inference.huggingface.co/models/{_HF_MODEL}"
+    try:
+        r = requests.post(
+            url,
+            headers={
+                "Authorization": f"Bearer {token}",
+                # Wait for model to warm up rather than 503 immediately —
+                # HF caches models in memory after a few requests.
+                "x-wait-for-model": "true",
+                # Get a fresh image, not a cached one for the same prompt.
+                "x-use-cache": "false",
+            },
+            json={
+                "inputs": prompt,
+                "parameters": {
+                    # SDXL natively wants 1024x1024; we resize later. 9:16
+                    # generation is supported but quality drops at extreme
+                    # aspects, so stay square and crop in the editor.
+                    "width": 1024,
+                    "height": 1024,
+                    "guidance_scale": 7.5,
+                    "num_inference_steps": 25,
+                    "seed": seed,
+                },
+                "options": {"wait_for_model": True},
+            },
+            timeout=120,
+        )
+        if r.status_code == 429:
+            _hf_breaker_record(success=False, http_status=429)
+            log.warning("HuggingFace 429 — rate limited")
+            return None, seed
+        if r.status_code == 503:
+            # Model still loading — short wait + breaker bump
+            _hf_breaker_record(success=False, http_status=503)
+            log.info("HuggingFace 503 — model loading, will retry next shot")
+            return None, seed
+        r.raise_for_status()
+        # HF returns raw image bytes (jpeg or png).
+        with open(dest, "wb") as f:
+            f.write(r.content)
+        if not os.path.exists(dest) or os.path.getsize(dest) < 4096:
+            _hf_breaker_record(success=False)
+            log.warning("HuggingFace returned <4 KB file — treating as failure")
+            return None, seed
+        _hf_breaker_record(success=True)
+        return dest, seed
+    except requests.HTTPError as e:
+        status = e.response.status_code if e.response is not None else None
+        _hf_breaker_record(success=False, http_status=status)
+        log.warning(f"HuggingFace gen failed (HTTP {status}): {e}")
+        return None, seed
+    except Exception as e:
+        _hf_breaker_record(success=False)
+        log.warning(f"HuggingFace gen failed: {e}")
+        return None, seed
+
+
 def _score_local_image(path, visual, premise):
     """Vision-score a LOCAL image file by passing it as a data URL."""
     try:
@@ -347,6 +462,41 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror"):
                 return {"type": "image", "path": path,
                         "origin": "pollinations", "score": -1}
 
+    # ── 3b. HuggingFace Inference API — second free AI fallback ──
+    # Same per-shot prompt-crafting logic as Pollinations; just a
+    # different image-gen backend so we don't lose the whole shot when
+    # Pollinations is rate-limited or returning low-quality images.
+    if providers.get("huggingface", True) and os.getenv("HF_TOKEN", "").strip():
+        ai_attempts = int(vid_cfg.get("ai_image_attempts_per_shot", 3))
+        for trial in range(ai_attempts):
+            crafted = craft_image_prompt(
+                narration_excerpt=premise,
+                visual_description=visual,
+                channel=channel,
+                attempt=trial + 100,  # different attempt seed than Pollinations
+            )
+            prompt_to_use = crafted or ai_prompt
+            log.info(f"  HF prompt (try {trial+1}): {(crafted or ai_prompt)[:90]}...")
+            path, seed = _huggingface_generate(prompt_to_use, output_dir, trial)
+            if not path:
+                continue
+            if judge_on:
+                s = _score_local_image(path, visual, premise)
+                log.info(f"  HuggingFace AI: {s}/10 (seed {seed})")
+                if s >= threshold:
+                    used_ids.add(f"huggingface:{seed}")
+                    F._remember_clip(f"huggingface:{seed}")
+                    return {"type": "image", "path": path,
+                            "origin": "huggingface", "score": s}
+                if s > 0:
+                    consider(s, {"type": "image", "path": path,
+                                 "origin": "huggingface", "score": s})
+            else:
+                used_ids.add(f"huggingface:{seed}")
+                F._remember_clip(f"huggingface:{seed}")
+                return {"type": "image", "path": path,
+                        "origin": "huggingface", "score": -1}
+
     # ── 4. Last-resort: license the best below-threshold candidate ──
     if best is not None:
         score, payload = best
@@ -388,6 +538,7 @@ def fetch_shots(shots, output_dir, channel="horror"):
     from modules import run_state
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     reset_pollinations_breaker()
+    reset_hf_breaker()
     used_ids = set(F._load_used_clips())
     sources = []
     total = max(1, len(shots))
