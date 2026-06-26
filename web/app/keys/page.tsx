@@ -349,6 +349,9 @@ export default function KeysPage() {
         </div>
       )}
 
+      {/* ── 1-click OAuth providers ── */}
+      <OneClickAuth keys={keys} onRefresh={refresh} />
+
       {/* Coverage bar */}
       <div className="card space-y-2">
         <div className="flex items-center justify-between text-sm">
@@ -583,6 +586,201 @@ function ImportancePill({ imp }: { imp: ImportanceKey }) {
     <span className={clsx("inline-flex items-center px-1.5 h-5 rounded text-[10px] border", m.cls)}>
       {m.text}
     </span>
+  );
+}
+
+// ── 1-click OAuth providers panel ────────────────────────────────
+function OneClickAuth({
+  keys,
+  onRefresh,
+}: {
+  keys: Record<string, KeyStatus>;
+  onRefresh: () => void;
+}) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [result, setResult] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const p = new URLSearchParams(window.location.search);
+    const gh = p.get("github");
+    const hf = p.get("huggingface");
+    if (gh === "connected") {
+      const synced = p.get("synced") || "";
+      const skipped = p.get("skipped") || "";
+      setResult(
+        `GitHub connected. Pushed secrets: ${synced || "(none)"}${
+          skipped ? ` · Skipped (not in Firestore yet): ${skipped}` : ""
+        }`,
+      );
+      onRefresh();
+    } else if (gh && gh !== "connected") {
+      setResult(`GitHub connect failed: ${p.get("reason") || gh}`);
+    } else if (hf === "connected") {
+      setResult("Hugging Face connected. HF_TOKEN set.");
+      onRefresh();
+    } else if (hf && hf !== "connected") {
+      setResult(`Hugging Face connect failed: ${p.get("reason") || hf}`);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const start = async (provider: "github" | "huggingface") => {
+    setBusy(provider);
+    try {
+      const r = await fetch(`/api/${provider}/auth`);
+      const d = await r.json();
+      if (d.url) {
+        window.location.href = d.url as string;
+      } else {
+        setResult(`${provider} auth not configured. ${JSON.stringify(d)}`);
+        setBusy(null);
+      }
+    } catch (e) {
+      setResult(`${provider} auth failed: ${String(e)}`);
+      setBusy(null);
+    }
+  };
+
+  const reSyncGithub = async () => {
+    setBusy("github-sync");
+    try {
+      const r = await fetch("/api/github/sync", { method: "POST" });
+      const d = await r.json();
+      if (d.ok) {
+        setResult(
+          `Re-synced to GitHub. Pushed: ${(d.synced || []).join(", ") || "(none)"}${
+            d.skipped?.length ? ` · Skipped: ${d.skipped.join(", ")}` : ""
+          }`,
+        );
+      } else {
+        setResult(`Re-sync failed: ${d.error || JSON.stringify(d)}`);
+      }
+    } catch (e) {
+      setResult(`Re-sync failed: ${String(e)}`);
+    }
+    setBusy(null);
+  };
+
+  const githubConnected = !!keys?.GITHUB_ACCESS_TOKEN?.set;
+  const hfConnected = !!keys?.HF_TOKEN?.set;
+
+  return (
+    <div className="card border-accent/30 bg-gradient-to-br from-accent/5 to-bg-1 space-y-3">
+      <div className="flex items-start gap-3">
+        <Sparkles className="h-5 w-5 text-accent mt-0.5" />
+        <div>
+          <div className="font-semibold">One-click connect</div>
+          <div className="text-xs text-neutral-400 max-w-2xl">
+            Sign in once and the right keys land in the right places. No copying
+            tokens between browser tabs.
+          </div>
+        </div>
+      </div>
+
+      {result && (
+        <div className={clsx(
+          "text-xs rounded-md p-2.5 border",
+          result.includes("failed") || result.includes("error")
+            ? "border-red-500/30 bg-red-500/5 text-red-200"
+            : "border-emerald-500/30 bg-emerald-500/5 text-emerald-200",
+        )}>
+          {result}
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {/* GitHub */}
+        <div className="rounded-md border border-line bg-bg-2 p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <GitBranch className="h-4 w-4 text-neutral-200" />
+              <span className="font-medium text-sm">GitHub</span>
+            </div>
+            {githubConnected ? (
+              <span className="pill pill-success">
+                <CheckCircle2 className="h-3 w-3" /> connected
+              </span>
+            ) : (
+              <span className="pill pill-muted text-[10px]">not connected</span>
+            )}
+          </div>
+          <div className="text-xs text-neutral-400">
+            Auto-pushes <code>HF_TOKEN</code> + <code>RENDER_TRIGGER_KEY</code>{" "}
+            to your repo&apos;s Actions secrets — no manual paste in GitHub
+            Settings.
+          </div>
+          <div className="flex gap-2 flex-wrap">
+            <button
+              onClick={() => start("github")}
+              disabled={busy === "github"}
+              className="btn btn-primary h-8 text-xs"
+            >
+              {busy === "github" ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <GitBranch className="h-3 w-3" />
+              )}
+              {githubConnected ? "Re-authenticate" : "Sign in with GitHub"}
+            </button>
+            {githubConnected && (
+              <button
+                onClick={reSyncGithub}
+                disabled={busy === "github-sync"}
+                className="btn btn-ghost h-8 text-xs"
+                title="Re-push current Firestore values to GitHub"
+              >
+                {busy === "github-sync" ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <Sparkles className="h-3 w-3" />
+                )}
+                Re-sync secrets
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Hugging Face */}
+        <div className="rounded-md border border-line bg-bg-2 p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Brain className="h-4 w-4 text-fuchsia-300" />
+              <span className="font-medium text-sm">Hugging Face</span>
+            </div>
+            {hfConnected ? (
+              <span className="pill pill-success">
+                <CheckCircle2 className="h-3 w-3" /> connected
+              </span>
+            ) : (
+              <span className="pill pill-muted text-[10px]">not connected</span>
+            )}
+          </div>
+          <div className="text-xs text-neutral-400">
+            Skip the &quot;create a new token&quot; tab. OAuth token is stored
+            directly as <code>HF_TOKEN</code> and works with the Inference API.
+          </div>
+          <button
+            onClick={() => start("huggingface")}
+            disabled={busy === "huggingface"}
+            className="btn btn-primary h-8 text-xs"
+          >
+            {busy === "huggingface" ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <Brain className="h-3 w-3" />
+            )}
+            {hfConnected ? "Re-authenticate" : "Sign in with Hugging Face"}
+          </button>
+        </div>
+      </div>
+
+      <div className="text-[11px] text-neutral-500 pt-2 border-t border-line">
+        Other providers (NIM, Groq, Pexels, etc.) don&apos;t support OAuth and
+        require manual token paste — they have <code>Get key</code> deep-links
+        in their section below.
+      </div>
+    </div>
   );
 }
 

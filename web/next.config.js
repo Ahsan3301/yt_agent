@@ -2,6 +2,9 @@
 const nextConfig = {
   reactStrictMode: true,
 
+  // firebase-admin uses native deps that need real Node resolution.
+  serverExternalPackages: ["firebase-admin"],
+
   // Allow dev-server access from Tailscale + LAN hostnames. Next 16 blocks
   // non-localhost dev origins by default (HMR + asset fetches). Add anything
   // you connect from here.
