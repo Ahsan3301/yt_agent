@@ -61,9 +61,32 @@ from modules.editor       import assemble_video
 from modules.uploader     import upload_video
 
 
-def _step(summary, name, fn):
-    """Time a pipeline step, record it in summary, and emit progress to run_state."""
+def _step(summary, name, fn, *, run_id: str = "", checkpoint_payload=None):
+    """Time a pipeline step, record it in summary, and emit progress to run_state.
+
+    Idempotency: if `run_id` is set AND the checkpoint says this stage
+    is already complete, return the stored artifact instead of running
+    `fn` again. The pipeline calling this is responsible for passing
+    the right `checkpoint_payload(result)` so future resumes can
+    reconstruct the stage's outputs.
+    """
     run_state.check_cancel()
+    # Resume short-circuit — only if the checkpoint has an artifact for
+    # this stage. (A stage completed via a fresh run shouldn't be
+    # short-circuited.)
+    if run_id:
+        try:
+            from modules import checkpoint as _cp
+            if _cp.completed(run_id, name):
+                stored = _cp.artifact(run_id, name)
+                if stored is not None:
+                    log.info(f"[STAGE:{name}] resuming from checkpoint (skipping)")
+                    summary["steps"][name] = {"ok": True, "seconds": 0, "resumed": True}
+                    run_state.step_done(name)
+                    return stored.get("result") if isinstance(stored, dict) else stored
+        except Exception as _e:
+            log.debug(f"checkpoint resume skipped: {_e}")
+
     run_state.step_started(name)
     t0 = time.time()
     try:
@@ -71,6 +94,14 @@ def _step(summary, name, fn):
         summary["steps"][name] = {"ok": result is not None and result is not False, "seconds": round(time.time() - t0, 2)}
         run_state.step_done(name)
         run_state.check_cancel()
+        # Persist the stage artifact for future resumes.
+        if run_id and result is not None and result is not False:
+            try:
+                from modules import checkpoint as _cp
+                payload = checkpoint_payload(result) if callable(checkpoint_payload) else {"result": result}
+                _cp.save(run_id, name, data=payload)
+            except Exception as _e:
+                log.debug(f"checkpoint save skipped: {_e}")
         return result
     except run_state.Cancelled:
         summary["steps"][name] = {"ok": False, "seconds": round(time.time() - t0, 2), "error": "cancelled"}
@@ -80,13 +111,21 @@ def _step(summary, name, fn):
         raise
 
 
-def run_pipeline(channel_type=None, dry_run=False):
+def run_pipeline(channel_type=None, dry_run=False, resume_run_id: str = ""):
     """
     Execute the full automation pipeline for one video.
+
     Returns True on success, False on failure.
+
+    `resume_run_id`: if set, reuse that run_id and skip stages whose
+    checkpoint says they're complete. Used by the job worker when a
+    previous render of this run died mid-pipeline (e.g. worker crashed
+    in edit stage; we resume from edit instead of redoing research).
     """
     channel_type = channel_type or config.CHANNEL_TYPE
-    run_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_id = resume_run_id or datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    if resume_run_id:
+        log.info(f"resume mode: run_id={run_id} — completed stages will be skipped")
     work_dir = os.path.join("output", "videos", run_id)
     Path(work_dir).mkdir(parents=True, exist_ok=True)
 
@@ -107,7 +146,7 @@ def run_pipeline(channel_type=None, dry_run=False):
     try:
         # ── STEP 1: Research ──────────────────────────────────────
         log.info("[1/6] Researching content...")
-        content = _step(summary, "research", lambda: research(channel_type))
+        content = _step(summary, "research", lambda: research(channel_type), run_id=run_id)
         if not content:
             log.error("Research failed. Aborting.")
             return _finish(summary, work_dir, False)
@@ -115,7 +154,7 @@ def run_pipeline(channel_type=None, dry_run=False):
 
         # ── STEP 2: Script ────────────────────────────────────────
         log.info("[2/6] Writing script with LLM...")
-        script = _step(summary, "script", lambda: write_script(content))
+        script = _step(summary, "script", lambda: write_script(content), run_id=run_id)
         if not script:
             log.error("Script generation failed. Aborting.")
             return _finish(summary, work_dir, False)
@@ -125,7 +164,7 @@ def run_pipeline(channel_type=None, dry_run=False):
         # ── STEP 3: Voiceover ─────────────────────────────────────
         log.info("[3/6] Generating voiceover...")
         audio_dir = os.path.join(work_dir, "audio")
-        audio_path = _step(summary, "voiceover", lambda: generate_voiceover(script["narration"], channel_type, audio_dir))
+        audio_path = _step(summary, "voiceover", lambda: generate_voiceover(script["narration"], channel_type, audio_dir), run_id=run_id)
         if not audio_path:
             log.error("Voiceover generation failed. Aborting.")
             return _finish(summary, work_dir, False)
@@ -152,7 +191,7 @@ def run_pipeline(channel_type=None, dry_run=False):
             summary["shots"] = shots
             sources = _step(summary, "footage", lambda: fetch_shots(
                 shots, clips_dir, channel=channel_type,
-            ))
+            ), run_id=run_id)
             # Music separately — same provider chain as before, just no images.
             from modules.footage import get_music, MUSIC_KEYWORDS
             from modules.config import load_settings as _ls
@@ -178,7 +217,7 @@ def run_pipeline(channel_type=None, dry_run=False):
                 sources_needed=sources_needed,
                 extra_keywords=story_keywords,
                 premise=content.get("raw_title") or "",
-            ))
+            ), run_id=run_id)
 
         if not footage["sources"]:
             log.error("No footage downloaded. Check API keys. Aborting.")
@@ -193,7 +232,7 @@ def run_pipeline(channel_type=None, dry_run=False):
             narration_text=script["narration"],
             output_dir=work_dir,
             channel=channel_type,
-        ))
+        ), run_id=run_id)
         if not final_video:
             log.error("Video assembly failed. Aborting.")
             return _finish(summary, work_dir, False)
@@ -206,7 +245,7 @@ def run_pipeline(channel_type=None, dry_run=False):
             summary["steps"]["upload"] = {"ok": True, "skipped": True, "seconds": 0}
         else:
             log.info("[6/6] Uploading to YouTube...")
-            video_id = _step(summary, "upload", lambda: upload_video(final_video, script, channel_type))
+            video_id = _step(summary, "upload", lambda: upload_video(final_video, script, channel_type), run_id=run_id)
             if video_id:
                 summary["video_id"] = video_id
                 summary["video_url"] = f"https://youtu.be/{video_id}"
