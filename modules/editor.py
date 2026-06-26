@@ -770,7 +770,16 @@ def assemble_video(voiceover_path, sources, music_path, narration_text, output_d
                 "-movflags", "+faststart",
                 final_path_abs,
             ], desc="final assembly with ducked music", cwd=work_dir_abs)
-        except RuntimeError as e:
+        except Exception as e:
+            # IMPORTANT: don't catch Cancelled here. It's a RuntimeError
+            # subclass, so the previous `except RuntimeError` swallowed
+            # user-initiated cancels and triggered the no-music fallback —
+            # making the dashboard look stuck because a NEW ffmpeg
+            # immediately started. Re-raise cancellation explicitly so
+            # the pipeline unwinds.
+            from modules import run_state as _rs
+            if isinstance(e, _rs.Cancelled):
+                raise
             # Some ffmpeg builds (e.g. CapCut's bundled binary) silently
             # break on the sidechaincompress filter graph. Rather than
             # losing the whole video over background music, fall back to
