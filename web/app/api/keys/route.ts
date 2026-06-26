@@ -16,6 +16,9 @@ const MANAGED_KEYS = [
   "PIXABAY_API_KEY",
   "COVERR_API_KEY",
   "HF_TOKEN",
+  "DISCORD_WEBHOOK_URL",
+  "YOUTUBE_REFRESH_TOKEN",
+  "RENDER_TRIGGER_KEY",
 ];
 
 function _mask(v: string): string {

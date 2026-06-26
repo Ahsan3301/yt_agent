@@ -376,6 +376,34 @@ def _run_one(job: dict[str, Any]):
             job["status"] = "failed"
             job["error"] = final_state.get("error") or "pipeline failed"
 
+        # Fire a Discord alert for terminal status. Best-effort —
+        # notifier swallows all errors so a broken webhook can't break
+        # the job worker.
+        try:
+            from backend import notifier
+            elapsed = int(time.time() - (job.get("started_at") or time.time()))
+            if job["status"] == "complete":
+                notifier.info(
+                    f"✅ Pipeline complete · {job.get('channel', 'unknown')}",
+                    body=f"Run `{job['run_id']}` finished in {elapsed}s",
+                    fields=[
+                        ("dry_run", str(job.get("dry_run", False)), True),
+                        ("public_url", job.get("public_url") or "—", False),
+                    ],
+                    url=job.get("public_url") or None,
+                )
+            else:
+                notifier.error(
+                    f"❌ Pipeline failed · {job.get('channel', 'unknown')}",
+                    body=f"Run `{job.get('run_id') or job['id']}` failed after {elapsed}s",
+                    fields=[
+                        ("error", str(job.get("error") or "unknown"), False),
+                        ("dry_run", str(job.get("dry_run", False)), True),
+                    ],
+                )
+        except Exception as _e:
+            log.debug(f"notifier hook failed: {_e}")
+
         job["finished_at"] = time.time()
         job["percent"] = 100 if ok else job.get("percent", 0)
         _persist(job)

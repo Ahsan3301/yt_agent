@@ -36,6 +36,9 @@ MANAGED_KEYS = [
     "PIXABAY_API_KEY",
     "COVERR_API_KEY",
     "HF_TOKEN",                  # HuggingFace Inference API — free SDXL fallback
+    "DISCORD_WEBHOOK_URL",       # alerting channel for renders + cleanup
+    "YOUTUBE_REFRESH_TOKEN",     # auto-publish to YouTube
+    "RENDER_TRIGGER_KEY",        # shared secret for GitHub Actions → Vercel
 ]
 
 

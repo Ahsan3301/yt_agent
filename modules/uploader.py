@@ -45,30 +45,88 @@ CATEGORY_IDS = {
 }
 
 
-def get_youtube_client():
-    creds = None
+def _load_creds_from_firestore() -> Credentials | None:
+    """Load YouTube OAuth credentials from Firestore. Returns None if
+    the stored token can't be parsed or Firestore isn't configured."""
+    try:
+        from backend import db
+        if not db.is_configured():
+            return None
+        snap = db.client().collection("api_keys").document("YOUTUBE_REFRESH_TOKEN").get()
+        if not snap.exists:
+            return None
+        d = snap.to_dict() or {}
+        raw = d.get("value")
+        if not raw:
+            return None
+        # The stored value is the full credentials JSON (token + refresh_token + client_id + ...).
+        import json as _json
+        info = _json.loads(raw) if isinstance(raw, str) else raw
+        return Credentials.from_authorized_user_info(info, SCOPES)
+    except Exception as e:
+        log.warning(f"uploader: Firestore creds load failed: {e}")
+        return None
 
-    if os.path.exists(TOKEN_FILE):
-        creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+
+def _save_creds_to_firestore(creds: Credentials) -> bool:
+    """Persist YouTube OAuth credentials to Firestore so all backends share them."""
+    try:
+        from backend import db
+        if not db.is_configured():
+            return False
+        db.client().collection("api_keys").document("YOUTUBE_REFRESH_TOKEN").set({
+            "value": creds.to_json(),
+            "updated_at": db.server_timestamp(),
+        })
+        return True
+    except Exception as e:
+        log.warning(f"uploader: Firestore creds save failed: {e}")
+        return False
+
+
+def get_youtube_client():
+    """Get a YouTube API client. Resolution order:
+        1. Firestore api_keys/YOUTUBE_REFRESH_TOKEN (production source of truth)
+        2. Local TOKEN_FILE (dev fallback)
+        3. Run the local-server OAuth flow (dev only — won't work on Colab/HF)
+    """
+    creds = _load_creds_from_firestore()
+    source = "firestore"
+
+    if not creds and os.path.exists(TOKEN_FILE):
+        try:
+            creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+            source = "local file"
+        except Exception as e:
+            log.warning(f"uploader: local token file unreadable: {e}")
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            log.info("Refreshing YouTube token...")
+            log.info(f"Refreshing YouTube token (from {source})...")
             creds.refresh(Request())
+            # Persist the refreshed token back to whichever store we
+            # loaded from (and Firestore if available — that's where
+            # other workers will look next time).
+            _save_creds_to_firestore(creds)
         else:
+            # Interactive OAuth — only works on a machine with a browser.
+            # On Colab/HF Space this is impossible; the user must complete
+            # OAuth once via the dashboard (web/app/api/youtube/auth + callback).
             if not os.path.exists(CLIENT_SECRETS):
                 raise FileNotFoundError(
-                    f"client_secret.json not found at {CLIENT_SECRETS}.\n"
-                    "Download it from Google Cloud Console → APIs & Services → Credentials."
+                    f"client_secret.json not found at {CLIENT_SECRETS}, and no "
+                    "refresh token in Firestore.\nVisit the dashboard's Settings "
+                    "page → 'Connect YouTube' to complete the one-time OAuth flow."
                 )
             log.info("Opening browser for YouTube OAuth2 login...")
             flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRETS, SCOPES)
             creds = flow.run_local_server(port=0)
-
-        Path(TOKEN_FILE).parent.mkdir(parents=True, exist_ok=True)
-        with open(TOKEN_FILE, "w") as f:
-            f.write(creds.to_json())
-        log.info(f"Token saved to {TOKEN_FILE}")
+            # New creds → save everywhere.
+            Path(TOKEN_FILE).parent.mkdir(parents=True, exist_ok=True)
+            with open(TOKEN_FILE, "w") as f:
+                f.write(creds.to_json())
+            _save_creds_to_firestore(creds)
+            log.info(f"Token saved to {TOKEN_FILE} and Firestore")
 
     return build("youtube", "v3", credentials=creds)
 
@@ -153,6 +211,18 @@ def upload_video(video_path, script_data, channel_type="horror"):
         return None
 
     log.info(f"Upload complete! https://youtu.be/{video_id}")
+
+    # Notify Discord (best-effort, never fails the upload).
+    try:
+        from backend import notifier
+        notifier.info(
+            f"📺 Published to YouTube · {channel_type}",
+            body=f"`{script_data.get('youtube_title', '(no title)')[:120]}`",
+            url=f"https://youtu.be/{video_id}",
+            fields=[("video_id", video_id, True), ("channel", channel_type, True)],
+        )
+    except Exception as _e:
+        log.debug(f"notifier on upload skipped: {_e}")
 
     # ── Thumbnail (best effort; never fails the upload) ──
     try:
