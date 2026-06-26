@@ -223,71 +223,29 @@ async function _readRegistry(url: string): Promise<RegistryEntry[]> {
   }
 }
 
-/**
- * Probe a single backend URL directly — bypasses any registry. Used
- * for manually-added backends so the dashboard doesn't depend on any
- * central registry file (R2, Hostinger, etc.) for discovery.
- */
-async function _probeBackend(
-  url: string,
-  fallbackLabel?: string,
-): Promise<RegistryEntry | null> {
-  try {
-    const r = await fetch(`${url.replace(/\/$/, "")}/api/queue`, { cache: "no-store" });
-    if (!r.ok) return null;
-    const q = await r.json();
-    return {
-      instance_id: q.instance_id || `manual-${url}`,
-      url: url.replace(/\/$/, ""),
-      status: q.status || "available",
-      queue_depth: q.queue_depth || 0,
-      last_seen: Date.now() / 1000,
-      tier: (q.instance_tier || "cpu") as "gpu" | "cpu",
-      label: fallbackLabel || q.instance_label || undefined,
-    };
-  } catch {
-    return null;
-  }
-}
-
 export async function fetchLiveBackends(): Promise<RegistryEntry[]> {
   const fixed = process.env.NEXT_PUBLIC_BACKEND_URL;
   if (fixed) {
-    // Fixed backend overrides everything — single-backend mode.
+    // Fixed backend overrides the registry — pretend it's always available.
     return [{
       instance_id: "fixed", url: fixed, status: "available",
       queue_depth: 0, last_seen: Date.now() / 1000,
     }];
   }
 
-  // Source A: optional R2 + Hostinger registry files (auto-discovery).
+  // Read BOTH registries (R2 + optional Hostinger fallback) and merge
+  // — this is what lets a Colab-with-R2 and an HF-with-SFTP-only see
+  // each other in the same dashboard. NEXT_PUBLIC_REGISTRY_FALLBACK_URL
+  // is optional; if set, its entries are merged with the primary's.
   const primary  = process.env.NEXT_PUBLIC_REGISTRY_URL;
   const fallback = process.env.NEXT_PUBLIC_REGISTRY_FALLBACK_URL;
   const urls = [primary, fallback].filter((u): u is string => !!u);
-  const registryLists = urls.length > 0
-    ? await Promise.all(urls.map(_readRegistry))
-    : [];
+  if (urls.length === 0) return [];
 
-  // Source B: manually-saved URLs from localStorage. Each is probed
-  // directly — no central registry, no rate limits, no CDN cache
-  // weirdness. This is the reliable path.
-  let manual: RegistryEntry[] = [];
-  try {
-    const { getManualBackends } = await import("@/lib/backends");
-    const saved = getManualBackends();
-    if (saved.length > 0) {
-      const probes = await Promise.all(
-        saved.map((b) => _probeBackend(b.url, b.label)),
-      );
-      manual = probes.filter((e): e is RegistryEntry => e !== null);
-    }
-  } catch {
-    // SSR / dynamic import edge — manual list just stays empty.
-  }
-
-  // Merge — dedupe by instance_id, keep the entry with the freshest last_seen.
+  const lists = await Promise.all(urls.map(_readRegistry));
+  // Dedupe by instance_id, keep the entry with the freshest last_seen.
   const byId = new Map<string, RegistryEntry>();
-  for (const list of [...registryLists, manual]) {
+  for (const list of lists) {
     for (const e of list) {
       const id = e.instance_id || e.url;
       const prev = byId.get(id);

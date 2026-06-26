@@ -12,14 +12,11 @@ import { useEffect, useRef, useState } from "react";
 import clsx from "clsx";
 import {
   Cpu, MemoryStick, HardDrive, Activity, Zap, Wifi, WifiOff,
-  Server, Loader2, Box, Clock, Plus, X,
+  Server, Loader2, Box, Clock,
 } from "lucide-react";
 import {
   fetchLiveBackends, fetchStatsFor, type RegistryEntry, type BackendStats,
 } from "@/lib/api";
-import {
-  getManualBackends, addManualBackend, removeManualBackend,
-} from "@/lib/backends";
 import Sparkline from "@/components/Sparkline";
 
 const POLL_MS = 2000;
@@ -40,37 +37,6 @@ type BackendState = {
 export default function MonitorPage() {
   const [backends, setBackends] = useState<Record<string, BackendState>>({});
   const [registryError, setRegistryError] = useState<string | null>(null);
-  const [adding, setAdding] = useState(false);
-  const [newUrl, setNewUrl] = useState("");
-  const [newLabel, setNewLabel] = useState("");
-  const [manualBumper, setManualBumper] = useState(0);  // forces a re-poll after add/remove
-
-  // Persisted list (reads from localStorage on every render — cheap).
-  const manualList = typeof window !== "undefined" ? getManualBackends() : [];
-
-  const onAdd = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newUrl.trim()) return;
-    addManualBackend(newUrl, newLabel);
-    setNewUrl("");
-    setNewLabel("");
-    setAdding(false);
-    setManualBumper((n) => n + 1);
-  };
-
-  const onRemove = (url: string) => {
-    removeManualBackend(url);
-    // Drop from in-memory map so the card disappears immediately
-    // instead of waiting for the next poll to filter it out.
-    setBackends((prev) => {
-      const next = { ...prev };
-      for (const id of Object.keys(next)) {
-        if (next[id].entry.url === url.replace(/\/$/, "")) delete next[id];
-      }
-      return next;
-    });
-    setManualBumper((n) => n + 1);
-  };
 
   // Persist history across renders so we don't lose the sparkline when
   // React rerenders for other reasons.
@@ -127,8 +93,7 @@ export default function MonitorPage() {
     poll();
 
     return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [manualBumper]);
+  }, []);
 
   const list = Object.values(backends).sort((a, b) => {
     // GPU available first, then CPU available, then busy, then down.
@@ -164,65 +129,6 @@ export default function MonitorPage() {
           Registry fetch error: <span className="text-amber-300">{registryError}</span>
         </div>
       )}
-
-      {/* Manual-backends panel — direct URL polling, no central registry */}
-      <div className="card">
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <div>
-            <div className="font-semibold">Manual backends</div>
-            <div className="text-xs text-neutral-500">
-              Saved in your browser. Each is polled directly via <code>/api/queue</code> — no registry, no rate limits.
-            </div>
-          </div>
-          {!adding && (
-            <button className="btn btn-primary" onClick={() => setAdding(true)}>
-              <Plus className="h-4 w-4" /> Add backend
-            </button>
-          )}
-        </div>
-
-        {adding && (
-          <form onSubmit={onAdd} className="mt-3 space-y-2">
-            <input
-              autoFocus
-              value={newUrl}
-              onChange={(e) => setNewUrl(e.target.value)}
-              placeholder="https://your-tunnel.trycloudflare.com   or   https://ahsan3301-yt-agent-backend.hf.space"
-              className="input w-full"
-            />
-            <div className="flex gap-2">
-              <input
-                value={newLabel}
-                onChange={(e) => setNewLabel(e.target.value)}
-                placeholder="label (optional, e.g. colab-gpu)"
-                className="input flex-1"
-              />
-              <button type="submit" className="btn btn-primary">Save</button>
-              <button type="button" className="btn btn-ghost" onClick={() => { setAdding(false); setNewUrl(""); setNewLabel(""); }}>Cancel</button>
-            </div>
-          </form>
-        )}
-
-        {manualList.length > 0 && (
-          <div className="mt-3 space-y-1">
-            {manualList.map((b) => (
-              <div key={b.url} className="flex items-center justify-between gap-2 px-2 py-1.5 rounded border border-line bg-bg-2 text-sm">
-                <div className="min-w-0 flex-1">
-                  {b.label && <span className="font-medium mr-2">{b.label}</span>}
-                  <code className="text-xs text-neutral-400 truncate">{b.url}</code>
-                </div>
-                <button
-                  onClick={() => onRemove(b.url)}
-                  className="btn btn-ghost h-7 px-2"
-                  title="Remove"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
 
       {list.length === 0 && (
         <div className="card text-center text-neutral-400">
