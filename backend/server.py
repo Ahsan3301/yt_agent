@@ -326,64 +326,13 @@ def reset_state():
     return {"ok": True}
 
 
-# ── Run history ───────────────────────────────────────────────
-def _local_runs() -> list[dict]:
-    """Read run summaries from this container's output/videos dir."""
-    if not RUNS_DIR.exists():
-        return []
-    out = []
-    for d in sorted(RUNS_DIR.iterdir(), key=lambda p: p.name, reverse=True):
-        if not d.is_dir():
-            continue
-        summary = d / "run_summary.json"
-        data: dict[str, Any] = {"run_id": d.name, "has_video": (d / "final_video.mp4").exists()}
-        if summary.exists():
-            try:
-                data.update(json.loads(summary.read_text(encoding="utf-8")))
-            except Exception:
-                pass
-        out.append(data)
-    return out
-
-
+# ── Run history (Firestore-backed) ───────────────────────────
 def _list_runs():
-    """Merge local + Hostinger runs. Local wins on conflict (same run_id)
-    because it has the full summary with shots, timings, etc. Remote-only
-    entries get marked has_video=True so the UI can stream from Hostinger."""
-    local = _local_runs()
-    by_id = {r["run_id"]: r for r in local}
-
-    try:
-        from backend import storage
-        for entry in storage.list_remote_runs():
-            if not isinstance(entry, dict):
-                continue
-            rid = entry.get("run_id")
-            if not rid:
-                continue
-            if rid in by_id:
-                # Fill in video_url if local copy didn't have it.
-                if entry.get("video_url") and not by_id[rid].get("video_url"):
-                    by_id[rid]["video_url"] = entry["video_url"]
-                continue
-            # Remote-only — full local container is gone (post-restart). The
-            # video is still on Hostinger so the UI can play it.
-            by_id[rid] = {
-                "run_id":      rid,
-                "channel":     entry.get("channel"),
-                "dry_run":     entry.get("dry_run", False),
-                "ok":          entry.get("ok"),
-                "finished_at": entry.get("finished_at"),
-                "video_url":   entry.get("video_url"),
-                "has_video":   bool(entry.get("video_url")),
-            }
-    except Exception as e:
-        log.warning(f"remote runs index fetch failed: {e}")
-
-    # Sort by finished_at desc, then run_id desc as a fallback.
-    def _sort_key(r):
-        return (-(float(r.get("finished_at") or 0)), r.get("run_id", ""))
-    return sorted(by_id.values(), key=_sort_key)
+    """Return the run history. Firestore's runs_index collection is the
+    source of truth; the local output/videos dir is just where in-flight
+    work lives, not authoritative."""
+    from backend import runs_db
+    return runs_db.list_index(limit=200)
 
 
 @app.get("/api/runs")
@@ -393,6 +342,16 @@ def list_runs():
 
 @app.get("/api/runs/{run_id}")
 def get_run(run_id: str):
+    """Full per-run summary. Prefers Firestore (survives container
+    restarts). Falls back to local output/videos/<id>/run_summary.json
+    for an in-flight job that hasn't been mirrored yet."""
+    from backend import runs_db
+    remote = runs_db.fetch_summary(run_id)
+    if remote:
+        remote.setdefault("run_id", run_id)
+        remote.setdefault("has_video", bool(remote.get("video_url")))
+        return remote
+    # In-flight fallback: read the local run_summary.json if it exists.
     d = RUNS_DIR / run_id
     if d.exists():
         summary = d / "run_summary.json"
@@ -403,17 +362,6 @@ def get_run(run_id: str):
             except Exception:
                 pass
         return data
-
-    # Local gone — try Hostinger fallback.
-    try:
-        from backend import storage
-        remote = storage.fetch_remote_run_summary(run_id)
-        if remote:
-            remote.setdefault("run_id", run_id)
-            remote.setdefault("has_video", bool(remote.get("video_url")))
-            return remote
-    except Exception as e:
-        log.warning(f"remote run fetch failed for {run_id}: {e}")
     raise HTTPException(404, "run not found")
 
 
@@ -423,12 +371,13 @@ def get_run_video(run_id: str):
     if p.exists():
         return FileResponse(str(p), media_type="video/mp4")
 
-    # Local gone — redirect to the canonical Hostinger copy.
+    # Local gone — redirect to whichever tier holds the canonical mp4.
     try:
         from backend import storage
         from fastapi.responses import RedirectResponse
-        if storage.PUBLIC_BASE_URL:
-            return RedirectResponse(storage.public_video_url(run_id), status_code=302)
+        url = storage.public_video_url(run_id)
+        if url:
+            return RedirectResponse(url, status_code=302)
     except Exception:
         pass
     raise HTTPException(404, "video not found")
@@ -436,23 +385,27 @@ def get_run_video(run_id: str):
 
 @app.delete("/api/runs/{run_id}")
 def delete_run(run_id: str):
-    d = RUNS_DIR / run_id
-    had_local = d.exists()
-    had_remote = False
-    if had_local:
-        shutil.rmtree(d, ignore_errors=True)
+    """Remove the run from Firestore + the video file + the local dir."""
+    from backend import runs_db, storage
+    # Was it on Firestore? (Used for the 404-vs-deleted distinction.)
+    had_remote = runs_db.fetch_summary(run_id) is not None
+    had_local = (RUNS_DIR / run_id).exists()
 
-    # Mirror the deletion to Hostinger: drop the summary, the video, and
-    # the index entry.
+    if had_local:
+        shutil.rmtree(RUNS_DIR / run_id, ignore_errors=True)
+
+    # Best-effort: drop the video file from R2 / Hostinger.
     try:
-        from backend import storage
         if storage.is_configured():
-            had_remote = bool(storage.fetch_remote_run_summary(run_id))
-            storage.delete_remote(f"{storage.RUNS_REMOTE_DIR}/{run_id}.json")
             storage.delete_remote(f"videos/{run_id}.mp4")
-            storage.remove_from_runs_index(run_id)
     except Exception as e:
-        log.warning(f"remote cleanup for {run_id} failed: {e}")
+        log.warning(f"delete_remote video for {run_id} failed: {e}")
+
+    # Drop the index + summary docs.
+    try:
+        runs_db.delete_run(run_id)
+    except Exception as e:
+        log.warning(f"runs_db.delete_run({run_id}) failed: {e}")
 
     if not (had_local or had_remote):
         raise HTTPException(404, "run not found")

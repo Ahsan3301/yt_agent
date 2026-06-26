@@ -2,12 +2,15 @@
 //
 // Backend resolution (in priority order):
 //   1. process.env.NEXT_PUBLIC_BACKEND_URL — if set, always use it (dev / single-instance).
-//   2. process.env.NEXT_PUBLIC_REGISTRY_URL — fetch registry.json from Hostinger,
-//      pick the first `available` entry (or the one with the smallest queue if
-//      all are busy). Cached for REGISTRY_TTL_MS.
-//   3. Fallback: /api/* on the same origin (Next.js dev proxy).
+//   2. Firestore `backends` collection — primary discovery path.
+//   3. Legacy NEXT_PUBLIC_REGISTRY_URL + FALLBACK_URL — only consulted if Firestore isn't configured.
+//   4. Fallback: /api/* on the same origin (Next.js dev proxy).
+
+import { getDb, isFirestoreConfigured } from "@/lib/firestore";
+import { collection, getDocs, query, Timestamp, where } from "firebase/firestore";
 
 const REGISTRY_TTL_MS = 20_000;
+const FRESHNESS_SECONDS = 180;
 
 export type RegistryEntry = {
   instance_id: string;
@@ -46,6 +49,79 @@ export function rankBackend(a: RegistryEntry, b: RegistryEntry): number {
   return (a.queue_depth || 0) - (b.queue_depth || 0);
 }
 
+/** Read all live backends from Firestore. Returns [] if Firestore
+ * isn't configured OR the read fails. */
+async function _readBackendsFromFirestore(): Promise<RegistryEntry[]> {
+  const db = getDb();
+  if (!db) return [];
+  try {
+    // Server timestamps are Firestore Timestamps. We compute the cutoff
+    // client-side and let the query filter; if the index isn't built yet,
+    // the where() may error — fall back to client-side filter.
+    const snap = await getDocs(collection(db, "backends"));
+    const cutoff = Date.now() / 1000 - FRESHNESS_SECONDS;
+    const out: RegistryEntry[] = [];
+    snap.forEach((doc) => {
+      const d = doc.data() as Record<string, unknown>;
+      const last = _toEpoch(d.last_seen);
+      if (last !== null && last < cutoff) return;
+      out.push({
+        instance_id: doc.id,
+        url:         String(d.url || ""),
+        status:      (d.status === "busy" ? "busy" : "available"),
+        queue_depth: Number(d.queue_depth ?? 0),
+        last_seen:   last ?? Date.now() / 1000,
+        started_at:  _toEpoch(d.started_at) ?? undefined,
+        tier:        d.tier === "cpu" ? "cpu" : "gpu",
+        label:       (d.label as string) ?? null,
+        version:     (d.version as string) ?? undefined,
+      });
+    });
+    return out.filter((e) => e.url);
+  } catch (e) {
+    console.warn("firestore backends read failed:", e);
+    return [];
+  }
+}
+
+function _toEpoch(v: unknown): number | null {
+  if (v == null) return null;
+  if (typeof v === "number") return v;
+  // Firestore Timestamp shape
+  if (typeof v === "object" && v !== null && "seconds" in v) {
+    const t = v as { seconds: number; nanoseconds?: number };
+    return t.seconds + (t.nanoseconds ?? 0) / 1e9;
+  }
+  if (v instanceof Timestamp) return v.toMillis() / 1000;
+  return null;
+}
+
+async function _readBackendsFromRegistryFiles(): Promise<RegistryEntry[]> {
+  // Legacy path: dual registry URLs. Kept for one release as fallback
+  // for users mid-migration.
+  const primary  = process.env.NEXT_PUBLIC_REGISTRY_URL;
+  const fallback = process.env.NEXT_PUBLIC_REGISTRY_FALLBACK_URL;
+  const urls = [primary, fallback].filter((u): u is string => !!u);
+  if (urls.length === 0) return [];
+  const lists = await Promise.all(urls.map(async (u) => {
+    try {
+      const r = await fetch(u, { cache: "no-store" });
+      if (!r.ok) return [] as RegistryEntry[];
+      return (await r.json()) as RegistryEntry[];
+    } catch { return [] as RegistryEntry[]; }
+  }));
+  const byId = new Map<string, RegistryEntry>();
+  for (const list of lists) {
+    for (const e of list) {
+      const id = e.instance_id || e.url;
+      const prev = byId.get(id);
+      if (!prev || (e.last_seen || 0) > (prev.last_seen || 0)) byId.set(id, e);
+    }
+  }
+  return Array.from(byId.values())
+    .filter((e) => e && e.url && Date.now() / 1000 - (e.last_seen || 0) < FRESHNESS_SECONDS);
+}
+
 async function resolveBackend(): Promise<string> {
   // Hard override wins.
   const fixed = process.env.NEXT_PUBLIC_BACKEND_URL;
@@ -54,39 +130,19 @@ async function resolveBackend(): Promise<string> {
   // Use cached registry pick.
   if (_cached && Date.now() - _cached.at < REGISTRY_TTL_MS) return _cached.url;
 
-  const primary  = process.env.NEXT_PUBLIC_REGISTRY_URL;
-  const fallback = process.env.NEXT_PUBLIC_REGISTRY_FALLBACK_URL;
-  const urls = [primary, fallback].filter((u): u is string => !!u);
-  if (urls.length > 0) {
-    try {
-      const lists = await Promise.all(urls.map(async (u) => {
-        try {
-          const r = await fetch(u, { cache: "no-store" });
-          if (!r.ok) return [] as RegistryEntry[];
-          return (await r.json()) as RegistryEntry[];
-        } catch { return [] as RegistryEntry[]; }
-      }));
-      const byId = new Map<string, RegistryEntry>();
-      for (const list of lists) {
-        for (const e of list) {
-          const id = e.instance_id || e.url;
-          const prev = byId.get(id);
-          if (!prev || (e.last_seen || 0) > (prev.last_seen || 0)) byId.set(id, e);
-        }
-      }
-      const fresh = Array.from(byId.values())
-        .filter((e) => e && e.url && Date.now() / 1000 - (e.last_seen || 0) < 180)
-        .sort(rankBackend);
-      if (fresh.length > 0) {
-        const url = fresh[0].url.replace(/\/$/, "");
-        _cached = { at: Date.now(), url };
-        return url;
-      }
-    } catch {
-      // fall through to relative
+  try {
+    const entries = isFirestoreConfigured()
+      ? await _readBackendsFromFirestore()
+      : await _readBackendsFromRegistryFiles();
+    const fresh = entries.sort(rankBackend);
+    if (fresh.length > 0) {
+      const url = fresh[0].url.replace(/\/$/, "");
+      _cached = { at: Date.now(), url };
+      return url;
     }
+  } catch {
+    // fall through to relative
   }
-  // Last resort: same-origin /api/* (Next dev proxy or self-host).
   return "";
 }
 
@@ -210,51 +266,22 @@ export const getEdgeVoices = () => call<string[]>("/api/edge-voices");
  * or empty. Bypasses the backend resolver — used by the launch banner to
  * decide whether to show "click to start".
  */
-async function _readRegistry(url: string): Promise<RegistryEntry[]> {
-  try {
-    const r = await fetch(url, { cache: "no-store" });
-    if (!r.ok) return [];
-    const entries = (await r.json()) as RegistryEntry[];
-    return entries.filter((e) =>
-      e && e.url && Date.now() / 1000 - (e.last_seen || 0) < 180,
-    );
-  } catch {
-    return [];
-  }
-}
-
 export async function fetchLiveBackends(): Promise<RegistryEntry[]> {
   const fixed = process.env.NEXT_PUBLIC_BACKEND_URL;
   if (fixed) {
-    // Fixed backend overrides the registry — pretend it's always available.
+    // Fixed backend overrides discovery — pretend it's always available.
     return [{
       instance_id: "fixed", url: fixed, status: "available",
       queue_depth: 0, last_seen: Date.now() / 1000,
     }];
   }
 
-  // Read BOTH registries (R2 + optional Hostinger fallback) and merge
-  // — this is what lets a Colab-with-R2 and an HF-with-SFTP-only see
-  // each other in the same dashboard. NEXT_PUBLIC_REGISTRY_FALLBACK_URL
-  // is optional; if set, its entries are merged with the primary's.
-  const primary  = process.env.NEXT_PUBLIC_REGISTRY_URL;
-  const fallback = process.env.NEXT_PUBLIC_REGISTRY_FALLBACK_URL;
-  const urls = [primary, fallback].filter((u): u is string => !!u);
-  if (urls.length === 0) return [];
-
-  const lists = await Promise.all(urls.map(_readRegistry));
-  // Dedupe by instance_id, keep the entry with the freshest last_seen.
-  const byId = new Map<string, RegistryEntry>();
-  for (const list of lists) {
-    for (const e of list) {
-      const id = e.instance_id || e.url;
-      const prev = byId.get(id);
-      if (!prev || (e.last_seen || 0) > (prev.last_seen || 0)) {
-        byId.set(id, e);
-      }
-    }
+  // Prefer Firestore (the new path). Fall back to legacy registry files
+  // only if Firestore isn't configured (mid-migration deployments).
+  if (isFirestoreConfigured()) {
+    return _readBackendsFromFirestore();
   }
-  return Array.from(byId.values());
+  return _readBackendsFromRegistryFiles();
 }
 
 export const COLAB_URL = process.env.NEXT_PUBLIC_COLAB_URL || "";

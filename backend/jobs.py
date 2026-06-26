@@ -285,16 +285,20 @@ def _run_one(job: dict[str, Any]):
                         summary["dry_run"] = job.get("dry_run", False)
                         summary["ok"] = True
 
-                        storage.upload_run_summary(job["run_id"], summary)
-                        storage.update_runs_index({
-                            "run_id":      job["run_id"],
-                            "channel":     summary.get("channel"),
-                            "dry_run":     summary.get("dry_run", False),
-                            "ok":          True,
-                            "finished_at": summary["finished_at"],
-                            "video_url":   public,
-                            "has_video":   True,
-                        })
+                        from backend import runs_db
+                        runs_db.write_run(
+                            job["run_id"],
+                            summary=summary,
+                            index_entry={
+                                "channel":     summary.get("channel"),
+                                "dry_run":     summary.get("dry_run", False),
+                                "ok":          True,
+                                "finished_at": summary["finished_at"],
+                                "video_url":   public,
+                                "has_video":   True,
+                                "video_storage": "primary",
+                            },
+                        )
                     except Exception as _e:
                         log.warning(f"job {job_id} run-summary mirror failed: {_e}")
             except Exception as e:

@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { Rocket, ExternalLink, Loader2, CheckCircle2 } from "lucide-react";
 import { fetchLiveBackends, COLAB_URL, type RegistryEntry } from "@/lib/api";
+import { getDb, isFirestoreConfigured } from "@/lib/firestore";
+import { collection, onSnapshot, Timestamp } from "firebase/firestore";
 
 /**
  * Shows a prominent "Launch backend" CTA whenever no Colab instance is
@@ -19,25 +21,56 @@ export default function LaunchBanner() {
 
   useEffect(() => {
     let cancelled = false;
-    let stoppedAt = 0;
+
+    // Preferred path: Firestore realtime subscription. Instantly reflects
+    // backend add/remove without polling.
+    if (isFirestoreConfigured()) {
+      const db = getDb();
+      if (db) {
+        const unsub = onSnapshot(
+          collection(db, "backends"),
+          (snap) => {
+            if (cancelled) return;
+            const cutoff = Date.now() / 1000 - 180;
+            const list: RegistryEntry[] = [];
+            snap.forEach((doc) => {
+              const d = doc.data() as Record<string, unknown>;
+              const last = _firestoreEpoch(d.last_seen);
+              if (last !== null && last < cutoff) return;
+              const url = String(d.url || "");
+              if (!url) return;
+              list.push({
+                instance_id: doc.id, url,
+                status:      d.status === "busy" ? "busy" : "available",
+                queue_depth: Number(d.queue_depth ?? 0),
+                last_seen:   last ?? Date.now() / 1000,
+                tier:        d.tier === "cpu" ? "cpu" : "gpu",
+                label:       (d.label as string) ?? null,
+              });
+            });
+            setBackends(list);
+            if (waitingForBoot && list.length > 0) setWaitingForBoot(false);
+          },
+          (err) => console.warn("LaunchBanner snapshot error:", err),
+        );
+        return () => { cancelled = true; unsub(); };
+      }
+    }
+
+    // Legacy fallback: poll the registry file(s).
     const tick = async () => {
       if (cancelled) return;
       try {
         const list = await fetchLiveBackends();
         if (cancelled) return;
         setBackends(list);
-        // If we were waiting for boot and a backend showed up, drop the flag.
-        if (waitingForBoot && list.length > 0) {
-          setWaitingForBoot(false);
-          stoppedAt = Date.now();
-        }
+        if (waitingForBoot && list.length > 0) setWaitingForBoot(false);
       } catch { /* noop */ }
-      // Poll faster while waiting for boot, slower once stable.
       const delay = waitingForBoot ? 5_000 : 20_000;
       setTimeout(tick, delay);
     };
     tick();
-    return () => { cancelled = true; void stoppedAt; };
+    return () => { cancelled = true; };
   }, [waitingForBoot]);
 
   // Still loading: show nothing (avoid flash)
@@ -144,4 +177,15 @@ export default function LaunchBanner() {
       </div>
     </div>
   );
+}
+
+function _firestoreEpoch(v: unknown): number | null {
+  if (v == null) return null;
+  if (typeof v === "number") return v;
+  if (typeof v === "object" && v !== null && "seconds" in v) {
+    const t = v as { seconds: number; nanoseconds?: number };
+    return t.seconds + (t.nanoseconds ?? 0) / 1e9;
+  }
+  if (v instanceof Timestamp) return v.toMillis() / 1000;
+  return null;
 }

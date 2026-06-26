@@ -2,11 +2,17 @@
 
 /**
  * Backend Monitor — one card per registered backend with live CPU /
- * RAM / disk / GPU and the currently-running job. Polls each backend's
- * /api/stats in parallel every 2 seconds.
+ * RAM / disk / GPU and the currently-running job.
  *
- * "Down" backends (in registry but unreachable) get a separate dead-row
- * at the bottom of the list so it's obvious which instance crashed.
+ * Discovery: Firestore `backends` collection via onSnapshot — instant
+ * card add/remove on heartbeat change, no polling overhead.
+ *
+ * Per-backend stats: still polled via GET /api/stats every 2s (the
+ * CPU/RAM/GPU numbers aren't in Firestore, only in each backend's
+ * in-process psutil + nvidia-smi state).
+ *
+ * Unreachable backends keep their card but go red/DOWN so it's obvious
+ * which instance crashed.
  */
 import { useEffect, useRef, useState } from "react";
 import clsx from "clsx";
@@ -17,6 +23,8 @@ import {
 import {
   fetchLiveBackends, fetchStatsFor, type RegistryEntry, type BackendStats,
 } from "@/lib/api";
+import { getDb, isFirestoreConfigured } from "@/lib/firestore";
+import { collection, onSnapshot, Timestamp } from "firebase/firestore";
 import Sparkline from "@/components/Sparkline";
 
 const POLL_MS = 2000;
@@ -35,6 +43,7 @@ type BackendState = {
 };
 
 export default function MonitorPage() {
+  const [entries, setEntries] = useState<RegistryEntry[]>([]);
   const [backends, setBackends] = useState<Record<string, BackendState>>({});
   const [registryError, setRegistryError] = useState<string | null>(null);
 
@@ -42,23 +51,71 @@ export default function MonitorPage() {
   // React rerenders for other reasons.
   const historyRef = useRef<Record<string, BackendState["history"]>>({});
 
+  // ── Discovery: prefer Firestore realtime, fall back to legacy poll ──
+  useEffect(() => {
+    let cancelled = false;
+
+    if (isFirestoreConfigured()) {
+      const db = getDb();
+      if (db) {
+        const unsub = onSnapshot(
+          collection(db, "backends"),
+          (snap) => {
+            if (cancelled) return;
+            const cutoff = Date.now() / 1000 - 180;
+            const list: RegistryEntry[] = [];
+            snap.forEach((doc) => {
+              const d = doc.data() as Record<string, unknown>;
+              const last = _firestoreEpoch(d.last_seen);
+              if (last !== null && last < cutoff) return;
+              const url = String(d.url || "");
+              if (!url) return;
+              list.push({
+                instance_id: doc.id, url,
+                status:      d.status === "busy" ? "busy" : "available",
+                queue_depth: Number(d.queue_depth ?? 0),
+                last_seen:   last ?? Date.now() / 1000,
+                tier:        d.tier === "cpu" ? "cpu" : "gpu",
+                label:       (d.label as string) ?? null,
+              });
+            });
+            setEntries(list);
+            setRegistryError(null);
+          },
+          (err) => setRegistryError(String(err)),
+        );
+        return () => { cancelled = true; unsub(); };
+      }
+    }
+
+    // Legacy: poll registry file(s) every 4s for discovery.
+    const tick = async () => {
+      if (cancelled) return;
+      try {
+        const list = await fetchLiveBackends();
+        if (!cancelled) {
+          setEntries(list);
+          setRegistryError(null);
+        }
+      } catch (e) {
+        if (!cancelled) setRegistryError((e as Error).message || "registry fetch failed");
+      }
+      if (!cancelled) setTimeout(tick, 4000);
+    };
+    tick();
+    return () => { cancelled = true; };
+  }, []);
+
+  // ── Stats: poll each backend's /api/stats every 2s ──
   useEffect(() => {
     let cancelled = false;
 
     const poll = async () => {
       if (cancelled) return;
       try {
-        const entries = await fetchLiveBackends();
-        setRegistryError(null);
-
-        // Snapshot existing keys so we can remove ones that disappeared.
-        const seen = new Set<string>();
-
-        // Fetch all backends' stats in parallel.
         const results = await Promise.all(
           entries.map(async (e) => {
             const id = e.instance_id || e.url;
-            seen.add(id);
             const stats = await fetchStatsFor(e.url);
             return { id, entry: e, stats };
           }),
@@ -82,18 +139,21 @@ export default function MonitorPage() {
               history: { ...h },
             };
           }
+          // Preserve unreachable cards even when entries shrinks — Firestore
+          // updates as soon as last_seen goes stale, so a card disappearing
+          // means the backend really is gone.
           return next;
         });
       } catch (e) {
-        setRegistryError((e as Error).message || "registry fetch failed");
+        // per-backend stats are best-effort; don't surface as a registry error
       } finally {
         if (!cancelled) setTimeout(poll, POLL_MS);
       }
     };
     poll();
-
     return () => { cancelled = true; };
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entries.map((e) => e.url).join("|")]);
 
   const list = Object.values(backends).sort((a, b) => {
     // GPU available first, then CPU available, then busy, then down.
@@ -349,6 +409,17 @@ function appendTrim(arr: number[], v: number): number[] {
   const next = [...arr, v];
   if (next.length > HISTORY_LEN) next.shift();
   return next;
+}
+
+function _firestoreEpoch(v: unknown): number | null {
+  if (v == null) return null;
+  if (typeof v === "number") return v;
+  if (typeof v === "object" && v !== null && "seconds" in v) {
+    const t = v as { seconds: number; nanoseconds?: number };
+    return t.seconds + (t.nanoseconds ?? 0) / 1e9;
+  }
+  if (v instanceof Timestamp) return v.toMillis() / 1000;
+  return null;
 }
 
 function gb(mb: number) {

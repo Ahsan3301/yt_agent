@@ -1,24 +1,31 @@
 """
-keys_sync.py — Centralised API-key distribution via Hostinger.
+keys_sync.py — Centralised API-key distribution via Firestore.
 
-The dashboard's API Keys page writes a single `keys.json` file to
-Hostinger (under `.private/`, blocked from public HTTP). Every backend
-(Colab GPU, HF Space CPU) pulls this file on startup and populates its
-`os.environ`. Result: you set keys in ONE place, all backends use them.
+The dashboard's API Keys page writes per-key documents to the
+`api_keys` Firestore collection. Every backend (Colab GPU, HF Space CPU)
+pulls them on startup and populates its `os.environ`. Result: you set
+keys in ONE place, all backends use them.
 
-What's a "managed key"?  Any of the API-key field names listed in
-MANAGED_KEYS below. We deliberately don't manage FTP_* / PUBLIC_*
-because those are the bootstrap minimum each backend already has.
+Document layout:
+    api_keys/<KEY_NAME> {
+      value:      str,
+      updated_at: Timestamp,
+    }
+
+What's a "managed key"? Any of the API-key field names listed in
+MANAGED_KEYS below. We deliberately don't manage R2_* / SFTP_* / etc.
+because those are the bootstrap minimum each backend already has via
+its platform secret store.
 """
 import os
 import logging
-from backend import storage
+from backend import db
 
 log = logging.getLogger(__name__)
 
 # Keys that are safe to manage via the central store. (Bootstrap-required
-# keys like FTP_HOST stay platform-local so a backend can boot without
-# the keys file existing yet.)
+# keys like R2_ACCOUNT_ID stay platform-local so a backend can boot
+# without the central store being reachable yet.)
 MANAGED_KEYS = [
     "GROQ_API_KEY",
     "NVIDIA_NIM_API_KEY",
@@ -31,17 +38,36 @@ MANAGED_KEYS = [
 ]
 
 
+def _read_all() -> dict[str, str]:
+    """Return {key_name: value} from Firestore. Empty dict on any failure
+    (caller treats as 'no central store' and falls back to env vars)."""
+    if not db.is_configured():
+        return {}
+    try:
+        c = db.client()
+        out: dict[str, str] = {}
+        for snap in c.collection("api_keys").stream():
+            data = snap.to_dict() or {}
+            v = data.get("value")
+            if v:
+                out[snap.id] = str(v)
+        return out
+    except Exception as e:
+        log.warning(f"keys_sync: Firestore read failed: {e}")
+        return {}
+
+
 def pull_into_env(override: bool = True) -> dict:
     """
-    Fetch keys.json from Hostinger and populate os.environ.
+    Fetch keys from Firestore and populate os.environ.
 
     override=True (default): the central store wins over any pre-set env
-    var. This is the right behaviour on Colab/HF where the platform-level
-    secrets are minimal and the central store should be authoritative.
+    var. Right behaviour on Colab/HF where the platform-level secrets are
+    minimal and the central store should be authoritative.
     """
-    keys = storage.download_keys()
+    keys = _read_all()
     if not keys:
-        log.info("keys_sync: no central keys.json (or empty) — using local env only")
+        log.info("keys_sync: no central keys (or empty) — using local env only")
         return {}
     applied = {}
     for name in MANAGED_KEYS:
@@ -59,23 +85,31 @@ def pull_into_env(override: bool = True) -> dict:
 
 def push_from_payload(updates: dict) -> dict:
     """
-    Merge `updates` into the existing keys.json on Hostinger and upload.
+    Merge `updates` into the Firestore api_keys collection.
     Used by the dashboard's PUT /api/keys to broadcast changes.
 
     `updates` values of None (or empty string) DELETE that key from the
     central store. Returns the new full dict.
     """
-    current = storage.download_keys()
+    if not db.is_configured():
+        raise RuntimeError("Firestore not configured")
+    c = db.client()
+    current = _read_all()
+    batch = c.batch()
+    coll = c.collection("api_keys")
     for name, value in (updates or {}).items():
         if name not in MANAGED_KEYS:
             continue
+        ref = coll.document(name)
         if value in (None, ""):
+            batch.delete(ref)
             current.pop(name, None)
             os.environ.pop(name, None)
         else:
+            batch.set(ref, {"value": str(value), "updated_at": db.server_timestamp()})
             current[name] = str(value)
             os.environ[name] = str(value)
-    storage.upload_keys(current)
+    batch.commit()
     return current
 
 
@@ -85,7 +119,7 @@ def central_status() -> dict[str, dict]:
     store right now (independent of os.environ). Used by the dashboard's
     GET /api/keys to render the masked list.
     """
-    keys = storage.download_keys()
+    keys = _read_all()
     out = {}
     for name in MANAGED_KEYS:
         v = keys.get(name) or ""

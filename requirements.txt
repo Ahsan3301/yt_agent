@@ -10,6 +10,7 @@ truststore>=0.9        # corporate / self-signed CA support on Windows
 paramiko>=3.4          # SFTP — used when port 21 is firewalled (e.g. HF Spaces)
 boto3>=1.34            # S3-compatible client for Cloudflare R2 (primary storage)
 psutil>=5.9            # CPU/RAM/disk stats for the dashboard monitor
+firebase-admin>=6.4    # Firestore client for the small-data layer (registry, keys, settings, runs index)
 
 # Pipeline — TTS, research, footage
 edge-tts>=6.1.9
