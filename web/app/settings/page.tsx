@@ -5,7 +5,7 @@ import { Save, Loader2 } from "lucide-react";
 import clsx from "clsx";
 import { getSettings, putSettings, getEdgeVoices, type Settings } from "@/lib/api";
 
-const TABS = ["Content", "Voice", "Video", "Upload", "Keywords"] as const;
+const TABS = ["Content", "Voice", "Video", "Upload", "Keywords", "Automation"] as const;
 type Tab = typeof TABS[number];
 
 const TONES = [
@@ -397,6 +397,8 @@ export default function SettingsPage() {
           ))}
         </div>
       )}
+
+      {tab === "Automation" && <AutomationTab />}
     </div>
   );
 }
@@ -431,6 +433,225 @@ function Slider({ label, v, min, max, step, onChange }:
       <label className="label">{label}: <span className="text-white font-mono">{v}</span></label>
       <input type="range" min={min} max={max} step={step} className="w-full accent-accent"
              value={v} onChange={(e) => onChange(parseFloat(e.target.value))} />
+    </div>
+  );
+}
+
+// ── Automation tab ────────────────────────────────────────────
+type ScheduleDoc = {
+  enabled: boolean;
+  daily_targets: Record<string, number>;
+  publish_default: boolean;
+  buffer_seconds: number;
+};
+
+function AutomationTab() {
+  const [sched, setSched] = useState<ScheduleDoc | null>(null);
+  const [savingS, setSavingS] = useState(false);
+  const [savedSAt, setSavedSAt] = useState<number | null>(null);
+  const [youtubeConnected, setYoutubeConnected] = useState<boolean | null>(null);
+  const [connecting, setConnecting] = useState(false);
+  const [discordSet, setDiscordSet] = useState<boolean | null>(null);
+  const [triggerKeySet, setTriggerKeySet] = useState<boolean | null>(null);
+
+  // Read ?youtube= query param to show success/error toast.
+  const [oauthResult, setOauthResult] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/schedule", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => setSched(d as ScheduleDoc))
+      .catch(() => setSched({
+        enabled: false,
+        daily_targets: { horror: 1, wisdom: 0 },
+        publish_default: true,
+        buffer_seconds: 0,
+      }));
+    fetch("/api/keys", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => {
+        setYoutubeConnected(!!d?.YOUTUBE_REFRESH_TOKEN?.set);
+        setDiscordSet(!!d?.DISCORD_WEBHOOK_URL?.set);
+        setTriggerKeySet(!!d?.RENDER_TRIGGER_KEY?.set);
+      })
+      .catch(() => {});
+    if (typeof window !== "undefined") {
+      const p = new URLSearchParams(window.location.search);
+      const yt = p.get("youtube");
+      if (yt) setOauthResult(yt);
+    }
+  }, []);
+
+  const saveSched = async () => {
+    if (!sched) return;
+    setSavingS(true);
+    try {
+      await fetch("/api/schedule", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(sched),
+      });
+      setSavedSAt(Date.now());
+    } catch {
+      // ignored
+    }
+    setSavingS(false);
+  };
+
+  const connectYoutube = async () => {
+    setConnecting(true);
+    try {
+      const r = await fetch("/api/youtube/auth");
+      const d = await r.json();
+      if (d.url) {
+        window.location.href = d.url as string;
+      } else {
+        alert("YouTube auth not configured. Server returned: " + JSON.stringify(d));
+      }
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  const disconnectYoutube = async () => {
+    if (!confirm("Disconnect YouTube? You'll need to re-grant consent to publish again.")) return;
+    await fetch("/api/youtube/disconnect", { method: "POST" });
+    setYoutubeConnected(false);
+  };
+
+  if (!sched) return <div className="text-sm text-neutral-400">Loading…</div>;
+
+  return (
+    <div className="space-y-6">
+      {/* OAuth result toast */}
+      {oauthResult === "connected" && (
+        <div className="card border-emerald-500/30 bg-emerald-500/5 text-sm text-emerald-200">
+          ✓ YouTube connected. Refresh token stored in Firestore.
+        </div>
+      )}
+      {oauthResult && oauthResult !== "connected" && (
+        <div className="card border-red-500/30 bg-red-500/5 text-sm text-red-200">
+          YouTube connection failed: <code>{oauthResult}</code>. Check Vercel env vars
+          (YOUTUBE_OAUTH_CLIENT_ID + YOUTUBE_OAUTH_CLIENT_SECRET) and the authorised
+          redirect URI in Google Cloud Console.
+        </div>
+      )}
+
+      {/* ── Discord webhook status ── */}
+      <div className="card space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="font-semibold">Discord alerts</div>
+            <div className="text-xs text-neutral-500">
+              Pipeline completes, failures, cleanup summaries, YouTube publishes.
+            </div>
+          </div>
+          <span className={clsx("pill", discordSet ? "pill-success" : "pill-muted")}>
+            {discordSet === null ? "..." : discordSet ? "configured" : "not set"}
+          </span>
+        </div>
+        {!discordSet && (
+          <div className="text-xs text-neutral-400">
+            Set <code>DISCORD_WEBHOOK_URL</code> on the API Keys page. Get a webhook
+            URL from Discord: Server Settings → Integrations → Webhooks → New Webhook.
+          </div>
+        )}
+      </div>
+
+      {/* ── YouTube connection ── */}
+      <div className="card space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="font-semibold">YouTube auto-publish</div>
+            <div className="text-xs text-neutral-500">
+              One-time OAuth grant. Refresh token survives container restarts (stored in Firestore).
+            </div>
+          </div>
+          <span className={clsx("pill", youtubeConnected ? "pill-success" : "pill-muted")}>
+            {youtubeConnected === null ? "..." : youtubeConnected ? "connected" : "not connected"}
+          </span>
+        </div>
+        <div className="flex gap-2 flex-wrap">
+          {!youtubeConnected ? (
+            <button onClick={connectYoutube} disabled={connecting} className="btn btn-primary">
+              {connecting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              Connect YouTube
+            </button>
+          ) : (
+            <button onClick={disconnectYoutube} className="btn btn-ghost">Disconnect</button>
+          )}
+        </div>
+      </div>
+
+      {/* ── Scheduler ── */}
+      <div className="card space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="font-semibold">Scheduled renders</div>
+            <div className="text-xs text-neutral-500">
+              GitHub Actions cron fires daily at 09:00 UTC and calls the Vercel
+              gateway. Toggle on to start daily renders.
+            </div>
+          </div>
+          <span className={clsx("pill", sched.enabled ? "pill-success" : "pill-muted")}>
+            {sched.enabled ? "active" : "disabled"}
+          </span>
+        </div>
+
+        <Toggle
+          checked={sched.enabled}
+          onChange={(b) => setSched({ ...sched, enabled: b })}
+          label="Enable scheduled renders"
+          hint="When off, the daily cron is a no-op. When on, queues videos per channel."
+        />
+
+        {sched.enabled && (
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {(["horror", "wisdom"] as const).map((ch) => (
+                <Slider
+                  key={ch}
+                  label={`${ch} videos / day`}
+                  v={sched.daily_targets[ch] ?? 0}
+                  min={0}
+                  max={10}
+                  step={1}
+                  onChange={(v) => setSched({
+                    ...sched,
+                    daily_targets: { ...sched.daily_targets, [ch]: v },
+                  })}
+                />
+              ))}
+            </div>
+
+            <Toggle
+              checked={sched.publish_default}
+              onChange={(b) => setSched({ ...sched, publish_default: b })}
+              label="Publish scheduled renders to YouTube"
+              hint="If off, scheduled renders are dry-runs — same as manual 'Run pipeline now' from the dashboard."
+            />
+          </>
+        )}
+
+        {triggerKeySet === false && (
+          <div className="text-xs text-amber-300">
+            ⚠ <code>RENDER_TRIGGER_KEY</code> is not set on the API Keys page yet —
+            without it, GitHub Actions can't authenticate to call the scheduled-render
+            route. Generate a random string and paste it both as the Firestore value
+            AND as a GitHub repository secret.
+          </div>
+        )}
+
+        <div className="flex items-center justify-between border-t border-line pt-3">
+          <div className="text-xs text-neutral-500">
+            {savedSAt && Date.now() - savedSAt < 4000 ? "Saved." : ""}
+          </div>
+          <button className="btn btn-primary" onClick={saveSched} disabled={savingS}>
+            {savingS ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+            Save schedule
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
