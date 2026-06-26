@@ -1,0 +1,84 @@
+name: Sync HF Space
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "modules/**"
+      - "main.py"
+      - "requirements.txt"
+      - "huggingface/**"
+  workflow_dispatch: {}
+
+# Single in-flight sync at a time; cancel queued ones.
+concurrency:
+  group: hf-space-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout main repo
+        uses: actions/checkout@v4
+        with:
+          path: main-repo
+
+      - name: Clone HF Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE_REPO: ahsan3301/yt-agent-backend
+        run: |
+          set -e
+          if [ -z "$HF_TOKEN" ]; then
+            echo "::error::HF_TOKEN secret not set"
+            exit 1
+          fi
+          git clone "https://oauth:$HF_TOKEN@huggingface.co/spaces/$HF_SPACE_REPO" hf-space-repo
+
+      - name: Rsync backend/modules/main.py/requirements.txt
+        run: |
+          set -e
+          rsync -avh --delete \
+            main-repo/backend/ hf-space-repo/backend/
+          rsync -avh --delete \
+            main-repo/modules/ hf-space-repo/modules/
+          cp main-repo/main.py hf-space-repo/main.py
+          cp main-repo/requirements.txt hf-space-repo/requirements.txt
+          # Dockerfile + README.md stay HF-specific; preserve them if
+          # they already exist in the Space repo. If huggingface/ in main
+          # has updates to those, copy them too.
+          if [ -f main-repo/huggingface/Dockerfile ]; then
+            cp main-repo/huggingface/Dockerfile hf-space-repo/Dockerfile
+          fi
+          if [ -f main-repo/huggingface/README.md ]; then
+            cp main-repo/huggingface/README.md hf-space-repo/README.md
+          fi
+
+      - name: Commit + push
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          set -e
+          cd hf-space-repo
+          git config user.email "bot@yt-agent.local"
+          git config user.name "yt-agent-sync"
+          if git diff --quiet && git diff --cached --quiet; then
+            echo "no changes — skipping commit"
+            exit 0
+          fi
+          git add -A
+          git commit -m "Sync from main @ ${GITHUB_SHA::8}"
+          # Retry up to 5 times on HF's transient 429
+          for i in 1 2 3 4 5; do
+            if git push; then
+              echo "pushed on attempt $i"
+              exit 0
+            fi
+            echo "push attempt $i failed; sleeping..."
+            sleep $((30 * i))
+          done
+          echo "::error::push failed after 5 attempts"
+          exit 1

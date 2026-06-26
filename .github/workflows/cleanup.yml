@@ -1,0 +1,39 @@
+name: Daily cleanup
+
+on:
+  schedule:
+    # 05:00 UTC daily — low-traffic hour. Adjust for your timezone.
+    - cron: "0 5 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Trigger Vercel cleanup route
+        env:
+          VERCEL_BASE: ${{ vars.VERCEL_BASE_URL }}
+          API_KEY: ${{ secrets.RENDER_TRIGGER_KEY }}
+        run: |
+          set -e
+          if [ -z "$VERCEL_BASE" ]; then
+            VERCEL_BASE="https://yt-agent-olive.vercel.app"
+          fi
+          if [ -z "$API_KEY" ]; then
+            echo "::error::RENDER_TRIGGER_KEY secret not set"
+            exit 1
+          fi
+          response=$(curl -sS -X POST \
+            -H "Content-Type: application/json" \
+            -H "X-API-Key: ${API_KEY}" \
+            -w "\n%{http_code}" \
+            "${VERCEL_BASE}/api/maintenance/cleanup")
+          body=$(echo "$response" | sed '$d')
+          code=$(echo "$response" | tail -n1)
+          echo "HTTP $code"
+          echo "$body"
+          if [ "$code" -ge 300 ]; then
+            echo "::error::cleanup returned $code"
+            exit 1
+          fi
