@@ -32,6 +32,7 @@ web/out/
 web/dist/
 web/.turbo/
 web/next-env.d.ts.bak
+web/tsconfig.tsbuildinfo
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
