@@ -178,7 +178,12 @@ def load_settings():
     """Read settings.json (creating it from defaults if missing). Returns dict."""
     SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
     if not SETTINGS_PATH.exists():
-        save_settings(DEFAULT_SETTINGS)
+        # Fresh container — write defaults to LOCAL file only. We MUST NOT
+        # push to Firestore here: that would clobber the user's saved
+        # settings before settings_sync.pull_into_local() (called from the
+        # server startup hook) gets a chance to hydrate them. See
+        # backend/server.py startup → settings_sync.pull_into_local().
+        save_settings(DEFAULT_SETTINGS, _bootstrap=True)
         return dict(DEFAULT_SETTINGS)
     try:
         with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
@@ -191,16 +196,24 @@ def load_settings():
     return _deep_merge(DEFAULT_SETTINGS, user)
 
 
-def save_settings(data):
+def save_settings(data, *, _bootstrap: bool = False):
     """Atomic write of settings.json, then mirror to remote storage so
     the value survives container restarts on Colab/HF Space. The remote
     push is best-effort and non-fatal; the local write is the source
-    of truth for the running process."""
+    of truth for the running process.
+
+    _bootstrap=True: write the local file only. Used by load_settings()
+    when seeding a fresh container with DEFAULT_SETTINGS — pushing those
+    defaults to Firestore would overwrite the user's last saved values.
+    """
     SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = SETTINGS_PATH.with_suffix(".json.tmp")
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
     os.replace(tmp, SETTINGS_PATH)
+
+    if _bootstrap:
+        return
 
     # Lazy import: backend.* depends on modules.config at import time,
     # so we can't import it at module level (circular). Importing inside
