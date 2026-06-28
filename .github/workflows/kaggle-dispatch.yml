@@ -8,7 +8,11 @@ name: Kaggle on-demand worker
 
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    # Every 5 min as a safety net. Vercel POST /api/jobs ALSO triggers
+    # this workflow directly via the GitHub Actions API when a job is
+    # queued with no live GPU worker, so the user usually doesn't wait
+    # this long — see web/app/api/jobs/route.ts:_maybeWakeKaggle.
+    - cron: "*/5 * * * *"
   workflow_dispatch: {}
 
 concurrency:
