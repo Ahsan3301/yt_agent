@@ -382,11 +382,15 @@ def _run_one(job: dict[str, Any]):
         try:
             from backend import notifier
             elapsed = int(time.time() - (job.get("started_at") or time.time()))
+            # Worker identity in the embed — tells you at a glance whether
+            # Colab, Kaggle, or HF Space handled the job.
+            worker_label = os.getenv("INSTANCE_LABEL") or "unknown"
             if job["status"] == "complete":
                 notifier.info(
                     f"✅ Pipeline complete · {job.get('channel', 'unknown')}",
                     body=f"Run `{job['run_id']}` finished in {elapsed}s",
                     fields=[
+                        ("worker", worker_label, True),
                         ("dry_run", str(job.get("dry_run", False)), True),
                         ("public_url", job.get("public_url") or "—", False),
                     ],
@@ -397,6 +401,7 @@ def _run_one(job: dict[str, Any]):
                     f"❌ Pipeline failed · {job.get('channel', 'unknown')}",
                     body=f"Run `{job.get('run_id') or job['id']}` failed after {elapsed}s",
                     fields=[
+                        ("worker", worker_label, True),
                         ("error", str(job.get("error") or "unknown"), False),
                         ("dry_run", str(job.get("dry_run", False)), True),
                     ],
