@@ -633,7 +633,10 @@ function OneClickAuth({
       if (d.url) {
         window.location.href = d.url as string;
       } else {
-        setResult(`${provider} auth not configured. ${JSON.stringify(d)}`);
+        // Friendly "setup required" instead of raw JSON dump.
+        setResult(
+          `setup-required:${provider}:${d.next_step || d.error || "OAuth client not configured on Vercel."}`,
+        );
         setBusy(null);
       }
     } catch (e) {
@@ -678,7 +681,52 @@ function OneClickAuth({
         </div>
       </div>
 
-      {result && (
+      {result && result.startsWith("setup-required:") && (() => {
+        const [, provider, nextStep] = result.split(":");
+        const consoleUrl = provider === "github"
+          ? "https://github.com/settings/applications/new"
+          : "https://huggingface.co/settings/applications/new";
+        const callbackUrl = typeof window !== "undefined"
+          ? `${window.location.origin}/api/${provider}/callback`
+          : "";
+        return (
+          <div className="rounded-md p-3 border border-amber-500/30 bg-amber-500/5 text-amber-100 space-y-2 text-xs">
+            <div className="font-medium">One-time setup needed for {provider === "github" ? "GitHub" : "Hugging Face"}</div>
+            <ol className="list-decimal list-inside space-y-1 text-amber-200/90">
+              <li>
+                Create the OAuth app:{" "}
+                <a href={consoleUrl} target="_blank" rel="noreferrer" className="underline hover:text-white">
+                  {consoleUrl} <ExternalLink className="h-3 w-3 inline" />
+                </a>
+              </li>
+              <li>
+                Set the callback / redirect URL to exactly:{" "}
+                <code className="bg-bg-2 px-1 rounded">{callbackUrl}</code>
+                <button
+                  onClick={() => navigator.clipboard?.writeText(callbackUrl)}
+                  className="ml-1 opacity-70 hover:opacity-100"
+                  title="Copy"
+                >
+                  <Copy className="h-3 w-3 inline" />
+                </button>
+              </li>
+              <li>
+                Copy Client ID + Client Secret → add to Vercel env vars as{" "}
+                <code className="bg-bg-2 px-1 rounded">
+                  {provider === "github" ? "GITHUB_OAUTH_CLIENT_ID/SECRET" : "HUGGINGFACE_OAUTH_CLIENT_ID/SECRET"}
+                </code>
+              </li>
+              <li>Redeploy Vercel (Deployments → ⋯ → Redeploy) → come back here</li>
+            </ol>
+            <details className="opacity-70">
+              <summary className="cursor-pointer">Server message</summary>
+              <div className="mt-1 text-[10px] font-mono">{nextStep}</div>
+            </details>
+          </div>
+        );
+      })()}
+
+      {result && !result.startsWith("setup-required:") && (
         <div className={clsx(
           "text-xs rounded-md p-2.5 border",
           result.includes("failed") || result.includes("error")
