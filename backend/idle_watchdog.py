@@ -19,6 +19,16 @@ Configure via .env:
     IDLE_TIMEOUT_SECONDS=600     # 10 min of total quiet → die. 0 = disabled.
     IDLE_CHECK_INTERVAL=30       # how often the watchdog checks
     IDLE_STARTUP_GRACE=300       # don't shut down within N seconds of boot
+    KAGGLE_AUTO_SHUTDOWN_AFTER_IDLE_SECONDS=600  # Kaggle override (see below)
+
+Kaggle quirks (when running on a Kaggle Notebook GPU runner):
+  • We're a one-shot worker woken on-demand by the GitHub Actions
+    dispatch cron. Once the queue empties we want to release the GPU
+    promptly to preserve the 30 hr/week budget.
+  • Setting KAGGLE_AUTO_SHUTDOWN_AFTER_IDLE_SECONDS overrides
+    IDLE_TIMEOUT_SECONDS — same semantics, different default.
+  • The watchdog also considers "queued in Firestore (claimable)" as
+    activity so we don't die before claiming the job that woke us up.
 """
 import os
 import time
@@ -27,7 +37,8 @@ import threading
 
 log = logging.getLogger(__name__)
 
-IDLE_TIMEOUT_SECONDS = int(os.getenv("IDLE_TIMEOUT_SECONDS", "600") or 600)
+_KAGGLE_OVERRIDE = int(os.getenv("KAGGLE_AUTO_SHUTDOWN_AFTER_IDLE_SECONDS", "0") or 0)
+IDLE_TIMEOUT_SECONDS = _KAGGLE_OVERRIDE or int(os.getenv("IDLE_TIMEOUT_SECONDS", "600") or 600)
 IDLE_CHECK_INTERVAL  = int(os.getenv("IDLE_CHECK_INTERVAL",  "30")  or 30)
 IDLE_STARTUP_GRACE   = int(os.getenv("IDLE_STARTUP_GRACE",   "300") or 300)
 
@@ -35,6 +46,32 @@ _lock = threading.Lock()
 _last_active = time.time()
 _started_at  = time.time()
 _running     = False
+
+
+def _firestore_queued_for_us() -> int:
+    """Count Firestore jobs with status==queued AND no backend yet.
+    Best-effort: any error returns 0 (we just fall through to the
+    timeout-based shutdown). Used to keep Kaggle workers alive while
+    a queued job is still floating around waiting to be claimed."""
+    try:
+        from backend import db
+        if not db.is_configured():
+            return 0
+        snap = (
+            db.client()
+            .collection("jobs")
+            .where("status", "==", "queued")
+            .limit(10)
+            .stream()
+        )
+        n = 0
+        for doc in snap:
+            v = doc.to_dict() or {}
+            if not v.get("backend_instance_id"):
+                n += 1
+        return n
+    except Exception:
+        return 0
 
 
 def touch():
@@ -97,8 +134,14 @@ def start():
             since_boot = time.time() - _started_at
             if since_boot < IDLE_STARTUP_GRACE:
                 continue
-            # Activity = any job running OR queued.
+            # Activity = local job running/queued OR Firestore-queued
+            # job we might still claim. The Firestore check matters on
+            # Kaggle: the worker is woken with a queued job pending,
+            # and the claim transaction takes a tick after boot.
             if jobs.is_busy() or jobs.queue_depth() > 0:
+                touch()
+                continue
+            if _firestore_queued_for_us() > 0:
                 touch()
                 continue
             if idle_seconds() >= IDLE_TIMEOUT_SECONDS:

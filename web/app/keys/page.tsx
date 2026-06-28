@@ -270,6 +270,20 @@ const PLATFORM_SECRETS: PlatformSecret[] = [
       "VERCEL_BASE_URL       (optional repo variable; defaults to yt-agent-olive.vercel.app)",
     ],
   },
+  {
+    section: "Kaggle on-demand GPU worker",
+    description:
+      "Free T4 / P100 fallback when Colab is offline. The kaggle-dispatch.yml workflow wakes a Kaggle notebook whenever the queue has work and no GPU is alive. Notebook self-terminates after 10 min idle so it doesn't burn the 30 GPU hr/week budget. See kaggle/README.md for the full setup.",
+    badge: "GitHub",
+    get_url: "https://www.kaggle.com/settings/account",
+    docs_url:
+      "https://github.com/Ahsan3301/yt_agent/blob/main/kaggle/README.md",
+    vars: [
+      "KAGGLE_USERNAME       (from kaggle.json — Account → Create New Token)",
+      "KAGGLE_KEY            (from kaggle.json — same place)",
+      "HF_SPACE_URL          (optional repo variable; defaults to your space)",
+    ],
+  },
 ];
 
 const ALL_MANAGED_KEYS = SECTIONS.flatMap((s) => s.keys.map((k) => k.name));

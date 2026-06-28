@@ -74,6 +74,40 @@ _USE_NVENC = _detect_nvenc()
 log.info(f"video encoder: {'h264_nvenc (GPU)' if _USE_NVENC else 'libx264 (CPU)'}")
 
 
+# ── GPU-native renderer detection ───────────────────────────────
+# The optional editor_gpu module needs torch + decord + PyAV. If any
+# dep is missing the import fails and we silently stay on the ffmpeg
+# path — that's the contract for HF Space / other CPU workers without
+# the requirements-gpu.txt extras.
+try:
+    from modules import editor_gpu  # noqa: F401
+    _HAS_GPU_RENDERER = True
+    log.info("editor_gpu: available")
+except Exception as e:
+    editor_gpu = None  # type: ignore[assignment]
+    _HAS_GPU_RENDERER = False
+    log.info(f"editor_gpu: unavailable ({e.__class__.__name__}); using ffmpeg path")
+
+
+def _use_gpu_renderer() -> bool:
+    """True iff per-segment GPU path should be tried for this call.
+
+    Three gates:
+      1. The editor_gpu module imported (torch + decord + av present).
+      2. CUDA is reachable AT CALL TIME (not just at import).
+      3. The user hasn't forced "cpu" via settings.video.render_pipeline.
+    """
+    if not _HAS_GPU_RENDERER:
+        return False
+    try:
+        if not editor_gpu.is_available():
+            return False
+    except Exception:
+        return False
+    mode = (load_settings().get("video", {}) or {}).get("render_pipeline", "auto")
+    return mode in ("auto", "gpu")
+
+
 def _vcodec_args(crf: str = "23", preset_cpu: str = "fast") -> list[str]:
     """Return the -c:v ... block for a YouTube Shorts encode.
 
@@ -471,16 +505,35 @@ def _plan_segments(sources, target_duration):
 def _render_video_segment(src, start, dur, out_path):
     """Cut a video segment, scale + crop to portrait, no audio.
 
-    Note on encoder: _vcodec_args() picks h264_nvenc when a GPU is
-    available, so the *encode* stage runs on GPU. The decode + scale +
-    crop stages stay on CPU — a previous attempt at a full-GPU pipeline
-    (NVDEC + scale_cuda + NVENC) was reverted because scale_cuda doesn't
-    accept the `force_original_aspect_ratio` parameter we need for
-    variable-aspect inputs, and per-segment failures cascaded badly.
+    Dispatches to the GPU renderer (modules.editor_gpu) when available
+    AND settings.video.render_pipeline allows it. Per-segment fallback:
+    on any non-Cancelled exception from the GPU path we log and fall
+    through to the ffmpeg path for this one segment.
+    """
+    if _use_gpu_renderer():
+        try:
+            return editor_gpu.render_video_segment_gpu(
+                src["path"], start, dur, out_path,
+                fps=OUTPUT_FPS, w=OUTPUT_WIDTH, h=OUTPUT_HEIGHT, crf=23,
+            )
+        except Exception as e:
+            if isinstance(e, run_state.Cancelled):
+                raise
+            log.warning(
+                f"editor_gpu: render_video_segment failed for "
+                f"{os.path.basename(src['path'])} ({e.__class__.__name__}: {e}); "
+                f"falling back to ffmpeg for this segment"
+            )
+    return _render_video_segment_ffmpeg(src, start, dur, out_path)
 
-    The current setup still gets the NVENC encode-side win (~15-25%
-    wall-clock improvement) without the complexity of a full hardware
-    pipeline."""
+
+def _render_video_segment_ffmpeg(src, start, dur, out_path):
+    """ffmpeg-only path. NVENC encode but CPU decode/scale/crop.
+
+    This is the historical implementation, kept verbatim so HF Space and
+    any other torch-less worker continues to work unchanged. Also acts as
+    the per-segment fallback when the GPU path errors on a specific clip.
+    """
     run_ffmpeg([
         "-ss", f"{start:.2f}",
         "-i", src["path"],
@@ -587,6 +640,9 @@ def _render_image_segment(src, dur, out_path, channel="horror"):
     Render a still image as a dur-seconds clip with a cinematic motion
     style (zoom in/out, pan in 4 directions) plus color grading, vignette,
     and film grain controlled by settings.video.effects_intensity.
+
+    Dispatches to the GPU renderer (modules.editor_gpu) when available.
+    Same per-segment fallback discipline as _render_video_segment.
     """
     global _image_segment_index
     motion = _pick_motion(_image_segment_index)
@@ -595,6 +651,28 @@ def _render_image_segment(src, dur, out_path, channel="horror"):
     intensity = float(load_settings().get("video", {}).get("effects_intensity", 0.7))
     intensity = max(0.0, min(1.0, intensity))
 
+    if _use_gpu_renderer():
+        try:
+            return editor_gpu.render_image_segment_gpu(
+                src["path"], dur, out_path,
+                motion=motion, channel=channel, intensity=intensity,
+                fps=OUTPUT_FPS, w=OUTPUT_WIDTH, h=OUTPUT_HEIGHT, crf=22,
+            )
+        except Exception as e:
+            if isinstance(e, run_state.Cancelled):
+                raise
+            log.warning(
+                f"editor_gpu: render_image_segment failed for "
+                f"{os.path.basename(src['path'])} ({e.__class__.__name__}: {e}); "
+                f"falling back to ffmpeg for this segment"
+            )
+
+    return _render_image_segment_ffmpeg(src, dur, out_path, channel=channel,
+                                        motion=motion, intensity=intensity)
+
+
+def _render_image_segment_ffmpeg(src, dur, out_path, *, channel, motion, intensity):
+    """ffmpeg-only Ken Burns + grade. Historical path, kept verbatim."""
     frames = max(1, int(round(dur * OUTPUT_FPS)))
     W, H = OUTPUT_WIDTH, OUTPUT_HEIGHT
 

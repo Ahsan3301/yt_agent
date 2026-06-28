@@ -1,0 +1,17 @@
+# GPU-only extras for the editor_gpu render pipeline.
+#
+# Pulled by Colab + Kaggle workers on top of the base requirements.txt.
+# Workers without these (e.g. HF Space CPU container) keep using the
+# existing ffmpeg-only path; modules/editor.py's import of editor_gpu
+# is guarded by try/except ImportError.
+#
+# Pin choices:
+#   torch 2.4.0 — Colab T4 has CUDA 12.x; the cu121 wheel matches.
+#   decord 0.6.0 — only release with stable NVDEC GPU decode support.
+#   av 12.3.0 — PyAV with h264_nvenc encoder bindings; older wheels
+#               (<12) are missing the CUDA HW context plumbing.
+
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch==2.4.0+cu121
+decord==0.6.0
+av==12.3.0

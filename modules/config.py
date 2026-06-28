@@ -92,6 +92,20 @@ DEFAULT_SETTINGS = {
         "output_crf": 23,
         "output_preset": "medium",
         "output_audio_bitrate": "96k",
+        # Per-segment render pipeline.
+        #   "auto" — use the GPU renderer (modules/editor_gpu) when torch.cuda
+        #            is available AND the editor_gpu module imported successfully.
+        #            Falls back to the ffmpeg path per-segment on any failure.
+        #   "gpu"  — force GPU; if torch.cuda is missing the job will still
+        #            silently fall back to ffmpeg (we never hard-fail on this).
+        #   "cpu"  — force the existing ffmpeg-only path. Use this if you hit
+        #            a GPU regression and want a clean rollback.
+        "render_pipeline": "auto",
+        # Cap intermediate buffer height in the GPU path. T4 has 16 GB VRAM
+        # so 1920 is fine, but smaller cards or extra-long segments can OOM
+        # on very tall buffers; the GPU renderer clamps to this and lets
+        # interpolation do the final upscale to the output 1080×1920.
+        "gpu_oom_safe_height": 1920,
         # Per-shot AI image generation: how many polished prompts (with
         # rotating camera angles) we try before falling back to the best
         # below-threshold result.
