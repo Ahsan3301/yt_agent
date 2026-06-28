@@ -517,7 +517,8 @@ def _render_video_segment(src, start, dur, out_path):
                 fps=OUTPUT_FPS, w=OUTPUT_WIDTH, h=OUTPUT_HEIGHT, crf=23,
             )
         except Exception as e:
-            if isinstance(e, run_state.Cancelled):
+            from modules import run_state as _rs
+            if isinstance(e, _rs.Cancelled):
                 raise
             log.warning(
                 f"editor_gpu: render_video_segment failed for "
@@ -659,7 +660,8 @@ def _render_image_segment(src, dur, out_path, channel="horror"):
                 fps=OUTPUT_FPS, w=OUTPUT_WIDTH, h=OUTPUT_HEIGHT, crf=22,
             )
         except Exception as e:
-            if isinstance(e, run_state.Cancelled):
+            from modules import run_state as _rs
+            if isinstance(e, _rs.Cancelled):
                 raise
             log.warning(
                 f"editor_gpu: render_image_segment failed for "
