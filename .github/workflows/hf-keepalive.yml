@@ -1,0 +1,29 @@
+name: HF Space keep-alive
+
+# HF Space free tier sleeps after ~48 h of inactivity. This cron hits
+# its /api/health every 25 min so it stays warm as a tertiary backup
+# behind Colab + Kaggle. Cost: 5 sec × 58 runs/day ≈ negligible.
+
+on:
+  schedule:
+    - cron: "*/25 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Ping HF Space health
+        env:
+          HF_SPACE_URL: ${{ vars.HF_SPACE_URL }}
+        run: |
+          set -e
+          if [ -z "$HF_SPACE_URL" ]; then
+            # Default to your account's space if not overridden via repo var.
+            HF_SPACE_URL="https://ahsan3301-yt-agent-backend.hf.space"
+          fi
+          # Non-fatal: HF sometimes returns 503 during cold start, that's
+          # fine — the GET itself is what wakes it. We just log and move on.
+          code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 30 "${HF_SPACE_URL}/api/health" || echo 000)
+          echo "HF Space ${HF_SPACE_URL}/api/health → HTTP $code"

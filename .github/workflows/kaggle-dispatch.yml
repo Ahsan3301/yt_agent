@@ -1,0 +1,74 @@
+name: Kaggle on-demand worker
+
+# Wake-on-demand fallback. Every 10 minutes, ask Vercel "is there work
+# pending that no GPU worker is going to pick up?" If yes, push the
+# Kaggle worker notebook so Kaggle spins up a free T4 / P100. The
+# notebook self-terminates after 10 min of idle so we don't waste the
+# 30 GPU hr/week budget.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: kaggle-dispatch
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Ask Vercel if a worker is needed
+        id: probe
+        env:
+          VERCEL_BASE: ${{ vars.VERCEL_BASE_URL }}
+          API_KEY: ${{ secrets.RENDER_TRIGGER_KEY }}
+        run: |
+          set -e
+          if [ -z "$VERCEL_BASE" ]; then
+            VERCEL_BASE="https://yt-agent-olive.vercel.app"
+          fi
+          if [ -z "$API_KEY" ]; then
+            echo "::warning::RENDER_TRIGGER_KEY not set — skipping"
+            echo "needs_worker=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          body=$(curl -sS \
+            -H "X-API-Key: ${API_KEY}" \
+            "${VERCEL_BASE}/api/maintenance/needs-worker")
+          echo "$body"
+          needs=$(echo "$body" | python3 -c "import json,sys; d=json.load(sys.stdin); print('true' if d.get('needs_worker') else 'false')")
+          echo "needs_worker=$needs" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        if: steps.probe.outputs.needs_worker == 'true'
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        if: steps.probe.outputs.needs_worker == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Kaggle CLI
+        if: steps.probe.outputs.needs_worker == 'true'
+        run: pip install --quiet kaggle
+
+      - name: Push Kaggle worker kernel
+        if: steps.probe.outputs.needs_worker == 'true'
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        run: |
+          set -e
+          if [ -z "$KAGGLE_USERNAME" ] || [ -z "$KAGGLE_KEY" ]; then
+            echo "::error::KAGGLE_USERNAME and KAGGLE_KEY repo secrets are required (see kaggle/README.md)"
+            exit 1
+          fi
+          # The kernel-metadata.json lives next to the notebook. `kaggle
+          # kernels push` reads both. The kernel is marked accelerator=gpu;
+          # Kaggle places it on a T4 or P100 depending on queue.
+          kaggle kernels push -p kaggle/
+          echo "::notice::Kaggle worker dispatched. Watch progress at https://www.kaggle.com/$KAGGLE_USERNAME/code"
