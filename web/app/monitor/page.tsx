@@ -77,6 +77,7 @@ export default function MonitorPage() {
                 last_seen:   last ?? Date.now() / 1000,
                 tier:        d.tier === "cpu" ? "cpu" : "gpu",
                 label:       (d.label as string) ?? null,
+                gpu_name:    (d.gpu_name as string) ?? null,
               });
             });
             setEntries(list);
@@ -226,7 +227,7 @@ function BackendCard({ bs }: { bs: BackendState }) {
       {/* Header */}
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 mb-1">
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
             <Server className={clsx("h-4 w-4", tierColor)} />
             <span className="font-semibold truncate">
               {entry.label || stats?.instance_label || entry.url.replace(/^https?:\/\//, "")}
@@ -234,6 +235,12 @@ function BackendCard({ bs }: { bs: BackendState }) {
             <span className={clsx("pill", entry.tier === "gpu" ? "pill-success" : "pill-info")}>
               {entry.tier?.toUpperCase()}
             </span>
+            {/* Real GPU model from nvidia-smi (e.g. "Tesla P100-PCIE-16GB"). */}
+            {entry.gpu_name && (
+              <span className="pill pill-info text-[10px]" title="actual hardware reported by nvidia-smi">
+                {entry.gpu_name}
+              </span>
+            )}
             {stats?.encoder && (
               <span
                 className={clsx(

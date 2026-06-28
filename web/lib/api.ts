@@ -21,6 +21,7 @@ export type RegistryEntry = {
   started_at?: number;
   tier?: "gpu" | "cpu";
   label?: string | null;
+  gpu_name?: string | null;
   version?: string;
 };
 
@@ -74,6 +75,7 @@ async function _readBackendsFromFirestore(): Promise<RegistryEntry[]> {
         started_at:  _toEpoch(d.started_at) ?? undefined,
         tier:        d.tier === "cpu" ? "cpu" : "gpu",
         label:       (d.label as string) ?? null,
+        gpu_name:    (d.gpu_name as string) ?? null,
         version:     (d.version as string) ?? undefined,
       });
     });

@@ -33,11 +33,52 @@ log = logging.getLogger(__name__)
 
 HEARTBEAT_INTERVAL = int(os.getenv("REGISTRY_HEARTBEAT_SECONDS", "30") or 30)
 
+
+def _detect_gpu_name() -> str:
+    """Read the actual GPU model from nvidia-smi.
+
+    Kaggle hands out T4 or P100 randomly per session; Colab varies between
+    T4 and (rarely) A100. Hardcoding 'kaggle-t4-gpu' in env vars is wrong
+    half the time. This runs once at import so the registry doc reports
+    the real hardware.
+
+    Returns the trimmed model string (e.g. 'Tesla P100-PCIE-16GB') or ""
+    if nvidia-smi isn't on PATH / no GPU is attached.
+    """
+    import subprocess
+    try:
+        r = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+            capture_output=True, text=True, timeout=4,
+        )
+        if r.returncode != 0:
+            return ""
+        # Take the first GPU (Kaggle T4 x2 returns two lines).
+        first = (r.stdout or "").splitlines()[0].strip()
+        return first
+    except Exception:
+        return ""
+
+
 # Per-instance metadata.
 INSTANCE_ID = os.getenv("INSTANCE_ID") or f"{socket.gethostname()}-{uuid.uuid4().hex[:6]}"
 PUBLIC_URL = os.getenv("PUBLIC_BACKEND_URL", "")    # set by the Colab notebook after cloudflared
 INSTANCE_TIER = (os.getenv("INSTANCE_TIER", "gpu") or "gpu").lower()
-INSTANCE_LABEL = os.getenv("INSTANCE_LABEL", "")
+GPU_NAME = _detect_gpu_name()
+
+# Auto-build a useful label if the env var didn't set one explicitly.
+# Examples: "kaggle · Tesla P100-PCIE-16GB", "colab · Tesla T4".
+_raw_label = os.getenv("INSTANCE_LABEL", "").strip()
+if _raw_label and GPU_NAME:
+    # Strip stale "-t4-gpu" / "-gpu" suffixes and append the real model.
+    base = _raw_label.split("-")[0].split(" ")[0]
+    INSTANCE_LABEL = f"{base} · {GPU_NAME}"
+elif _raw_label:
+    INSTANCE_LABEL = _raw_label
+elif GPU_NAME:
+    INSTANCE_LABEL = GPU_NAME
+else:
+    INSTANCE_LABEL = ""
 
 # Back-compat — used by /api/debug/heartbeat in server.py.
 REGISTRY_FILENAME = "backends"   # now a Firestore collection name
@@ -65,6 +106,9 @@ def _self_payload(queue_depth: int) -> dict:
         "queue_depth":  int(queue_depth),
         "tier":         INSTANCE_TIER,
         "label":        INSTANCE_LABEL or None,
+        # Real GPU model from nvidia-smi (e.g. "Tesla P100-PCIE-16GB").
+        # Empty string on CPU-only workers — frontend can show "—".
+        "gpu_name":     GPU_NAME or None,
         "version":      "2.0",
         "started_at":   _startup_epoch,
         "last_seen":    db.server_timestamp(),
