@@ -23,9 +23,15 @@ from backend import db
 
 log = logging.getLogger(__name__)
 
-# Keys that are safe to manage via the central store. (Bootstrap-required
-# keys like R2_ACCOUNT_ID stay platform-local so a backend can boot
-# without the central store being reachable yet.)
+# Keys that are safe to manage via the central store.
+#
+# Originally we excluded R2_* / SFTP_* because they were bootstrap-required.
+# But after the Firestore migration, Firestore itself is the boot dependency —
+# once a worker can reach Firestore it can pull every other credential. This
+# matters most on Kaggle, where the secrets-panel UI detaches secrets on each
+# 'kaggle kernels push' new-version — making R2 credentials painful to keep
+# attached. Now R2/SFTP live in Firestore too; the only platform-local secret
+# a worker needs is GOOGLE_APPLICATION_CREDENTIALS_JSON_B64 (or _JSON).
 MANAGED_KEYS = [
     "GROQ_API_KEY",
     "NVIDIA_NIM_API_KEY",
@@ -39,6 +45,19 @@ MANAGED_KEYS = [
     "DISCORD_WEBHOOK_URL",       # alerting channel for renders + cleanup
     "YOUTUBE_REFRESH_TOKEN",     # auto-publish to YouTube
     "RENDER_TRIGGER_KEY",        # shared secret for GitHub Actions → Vercel
+    # Storage credentials — moved here so Kaggle only needs one platform
+    # secret (the Firebase service account).
+    "R2_ACCOUNT_ID",
+    "R2_ACCESS_KEY_ID",
+    "R2_SECRET_ACCESS_KEY",
+    "R2_BUCKET",
+    "R2_PUBLIC_URL",
+    "SFTP_HOST",
+    "SFTP_PORT",
+    "SFTP_USER",
+    "SFTP_PASS",
+    "SFTP_BASE_DIR",
+    "PUBLIC_BASE_URL",
 ]
 
 

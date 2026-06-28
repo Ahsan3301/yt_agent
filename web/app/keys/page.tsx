@@ -158,6 +158,85 @@ const SECTIONS: Array<{
     ],
   },
   {
+    section: "Storage (R2 + SFTP)",
+    icon: Database,
+    blurb:
+      "Credentials for video storage. Moved into Firestore so Kaggle (which loses its Add-ons → Secrets attachments on every new notebook version) only needs ONE platform-level secret (the Firebase service account). Colab + HF Space pick these up the same way.",
+    keys: [
+      {
+        name: "R2_ACCOUNT_ID",
+        label: "Cloudflare R2 Account ID",
+        description: "Find it at https://dash.cloudflare.com/?to=/:account/r2/overview — top-right of the R2 page.",
+        get_url: "https://dash.cloudflare.com/?to=/:account/r2/overview",
+        docs_url: "https://developers.cloudflare.com/r2/api/s3/tokens/",
+        importance: "recommended",
+      },
+      {
+        name: "R2_ACCESS_KEY_ID",
+        label: "R2 Access Key ID",
+        description: "From R2 → Manage R2 API Tokens → Create API token (Read & Write).",
+        get_url: "https://dash.cloudflare.com/?to=/:account/r2/api-tokens",
+        importance: "recommended",
+      },
+      {
+        name: "R2_SECRET_ACCESS_KEY",
+        label: "R2 Secret Access Key",
+        description: "Paired with the access key ID. Treat as a password.",
+        get_url: "https://dash.cloudflare.com/?to=/:account/r2/api-tokens",
+        importance: "recommended",
+      },
+      {
+        name: "R2_BUCKET",
+        label: "R2 Bucket Name",
+        description: "The bucket where videos land (e.g. yt-agent-videos).",
+        importance: "recommended",
+      },
+      {
+        name: "R2_PUBLIC_URL",
+        label: "R2 Public URL",
+        description: "The pub-xxxxx.r2.dev URL Cloudflare assigns when you enable public access on the bucket.",
+        importance: "recommended",
+      },
+      {
+        name: "SFTP_HOST",
+        label: "Hostinger SFTP Host",
+        description: "Optional. Used as R2 overflow archive when R2 hits R2_MAX_GB.",
+        get_url: "https://hpanel.hostinger.com/files-and-folders/file-manager/ssh",
+        importance: "optional",
+      },
+      {
+        name: "SFTP_USER",
+        label: "Hostinger SFTP User",
+        description: "Optional.",
+        importance: "optional",
+      },
+      {
+        name: "SFTP_PASS",
+        label: "Hostinger SFTP Password",
+        description: "Optional. Treat as a password.",
+        importance: "optional",
+      },
+      {
+        name: "SFTP_PORT",
+        label: "Hostinger SFTP Port",
+        description: "Optional. Default 65002 on Hostinger.",
+        importance: "optional",
+      },
+      {
+        name: "SFTP_BASE_DIR",
+        label: "Hostinger SFTP Base Directory",
+        description: "Optional. e.g. domains/yourdomain.com/public_html/videos.",
+        importance: "optional",
+      },
+      {
+        name: "PUBLIC_BASE_URL",
+        label: "Hostinger Public Base URL",
+        description: "Optional. e.g. https://yourdomain.com — the URL prefix the SFTP files are served from.",
+        importance: "optional",
+      },
+    ],
+  },
+  {
     section: "Auto-Publish",
     icon: PlaySquare,
     blurb:
@@ -211,37 +290,9 @@ const PLATFORM_SECRETS: PlatformSecret[] = [
     docs_url: "https://firebase.google.com/docs/admin/setup",
     vars: ["GOOGLE_APPLICATION_CREDENTIALS_JSON"],
   },
-  {
-    section: "Cloudflare R2 (video storage)",
-    description:
-      "Free tier: 10 GB. The pipeline migrates old videos to Hostinger SFTP when R2 hits R2_MAX_GB (default 7 GB).",
-    badge: "Colab/HF",
-    get_url: "https://dash.cloudflare.com/?to=/:account/r2/overview",
-    docs_url: "https://developers.cloudflare.com/r2/api/s3/tokens/",
-    vars: [
-      "R2_ACCOUNT_ID",
-      "R2_ACCESS_KEY_ID",
-      "R2_SECRET_ACCESS_KEY",
-      "R2_BUCKET",
-      "R2_PUBLIC_URL",
-    ],
-  },
-  {
-    section: "Hostinger SFTP (R2 overflow archive)",
-    description:
-      "Optional. Without these, old videos can't migrate off R2 and the bucket will eventually fill. Hostinger has a free trial; their cheapest paid plan also works.",
-    badge: "Colab/HF",
-    get_url: "https://hpanel.hostinger.com/files-and-folders/file-manager/ssh",
-    docs_url: "https://support.hostinger.com/en/articles/1583245-how-to-use-ssh",
-    vars: [
-      "SFTP_HOST",
-      "SFTP_USER",
-      "SFTP_PASS",
-      "SFTP_PORT       (default 65002 on Hostinger)",
-      "SFTP_BASE_DIR",
-      "PUBLIC_BASE_URL",
-    ],
-  },
+  // R2 + SFTP moved out of Platform-level Secrets — they're now Firestore-
+  // managed in the 'Storage' section above. The only platform-level secret
+  // workers still need is GOOGLE_APPLICATION_CREDENTIALS_JSON (Firebase).
   {
     section: "YouTube OAuth Client (for auto-publish flow)",
     description:

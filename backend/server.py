@@ -106,6 +106,14 @@ def _on_startup():
     # lazily on first request.
     try:
         keys_sync.pull_into_env()
+        # storage.py captured R2_* / SFTP_* env vars at import time. The
+        # pull above may have just populated them from Firestore — refresh
+        # the storage module's globals so r2_configured() returns True.
+        # This matters most on Kaggle where R2 lives in Firestore.
+        try:
+            storage.reload_env()
+        except Exception as e:
+            log.warning(f"storage.reload_env failed: {e}")
     except Exception as e:
         log.warning(f"keys_sync.pull_into_env failed: {e}")
     # Hydrate settings.json from R2/SFTP so a fresh container boots
@@ -255,6 +263,13 @@ def put_keys(payload: KeysPayload):
                 except Exception:
                     pass
                 os.environ.pop(k, None)
+
+    # Refresh storage.py's captured globals so freshly-set R2_* / SFTP_*
+    # values take effect on the next upload without a worker restart.
+    try:
+        storage.reload_env()
+    except Exception as e:
+        log.debug(f"storage.reload_env after PUT /api/keys non-fatal: {e}")
 
     return {"ok": True, "central_updated": len(managed_updates),
             "local_updated": len(local_updates)}

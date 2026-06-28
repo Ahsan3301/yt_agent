@@ -56,6 +56,41 @@ R2_PUBLIC_URL         = _env("R2_PUBLIC_URL", "").rstrip("/")
 R2_MAX_GB             = float(_env("R2_MAX_GB", "7") or 7)
 R2_ENDPOINT = f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com" if R2_ACCOUNT_ID else ""
 
+
+def reload_env() -> None:
+    """Re-read R2_* and SFTP_* env vars into the module globals.
+
+    Why: server.py imports this module BEFORE keys_sync.pull_into_env()
+    runs in the startup hook. On workers that get their R2/SFTP creds
+    from Firestore (Kaggle especially — Kaggle's secrets-panel UI
+    detaches per-version, so storing them in Firestore is the only
+    sane path), the module-level constants captured "" at import time.
+    Calling this after keys_sync.pull_into_env() refreshes them.
+
+    Idempotent. Safe to call multiple times.
+    """
+    global R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY
+    global R2_BUCKET, R2_PUBLIC_URL, R2_ENDPOINT
+    global SFTP_HOST, SFTP_PORT, SFTP_USER, SFTP_PASS, SFTP_BASE_DIR
+    global PUBLIC_BASE_URL
+    global _r2
+    R2_ACCOUNT_ID         = _env("R2_ACCOUNT_ID", "")
+    R2_ACCESS_KEY_ID      = _env("R2_ACCESS_KEY_ID", "")
+    R2_SECRET_ACCESS_KEY  = _env("R2_SECRET_ACCESS_KEY", "")
+    R2_BUCKET             = _env("R2_BUCKET", "yt-agent")
+    R2_PUBLIC_URL         = _env("R2_PUBLIC_URL", "").rstrip("/")
+    R2_ENDPOINT = f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com" if R2_ACCOUNT_ID else ""
+    SFTP_HOST     = _env("SFTP_HOST", _env("FTP_HOST", ""))
+    SFTP_PORT     = int(_env("SFTP_PORT", _env("FTP_PORT", "22")) or 22)
+    SFTP_USER     = _env("SFTP_USER", _env("FTP_USER", ""))
+    SFTP_PASS     = _env("SFTP_PASS", _env("FTP_PASS", ""))
+    SFTP_BASE_DIR = _env("SFTP_BASE_DIR", _env("FTP_BASE_DIR", "")).rstrip("/")
+    PUBLIC_BASE_URL = _env("PUBLIC_BASE_URL", "").rstrip("/")
+    # Invalidate any cached boto3 client so the next call uses the new creds.
+    _r2 = None
+    log.info(f"storage: env reloaded (r2_configured={r2_configured()}, "
+             f"sftp_configured={sftp_configured()})")
+
 # ── Secondary (Hostinger SFTP) ──────────────────────────────
 SFTP_HOST             = _env("SFTP_HOST", _env("FTP_HOST", ""))
 SFTP_USER             = _env("SFTP_USER", _env("FTP_USER", ""))
