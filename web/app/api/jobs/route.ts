@@ -90,6 +90,23 @@ export async function POST(req: NextRequest) {
     const workers = await pickWorkers();
     const target = workers[0];
 
+    // Decide UP-FRONT whether to wake Kaggle. We fire the workflow_dispatch
+    // in PARALLEL with the worker dispatch so the user doesn't wait. The
+    // condition is "no live GPU worker" — a CPU-only worker (HF Space) is
+    // OK to dispatch the job to immediately, but we still wake Kaggle so
+    // GPU finishes faster than HF would.
+    const liveGpu = workers.find(
+      (w) => w.tier === "gpu" && w.status === "available",
+    );
+    let wakePromise: Promise<void> | null = null;
+    if (!liveGpu) {
+      logRoute(reqId, "no live GPU — triggering kaggle workflow", {
+        any_worker: !!target,
+        target_tier: target?.tier,
+      });
+      wakePromise = _maybeWakeKaggle(reqId);
+    }
+
     if (target) {
       logRoute(reqId, "dispatching", { backend: target.instance_id, url: target.url });
       try {
@@ -116,6 +133,15 @@ export async function POST(req: NextRequest) {
             req_id: reqId,
           });
           if (idempKey) await storeIdempotent(idempKey, finalId);
+          // CRITICAL: await the wake call BEFORE returning the response.
+          // Vercel kills the function context the moment we send the
+          // response — an un-awaited fetch() to api.github.com gets
+          // dropped on the floor, which is exactly the bug we just hit.
+          if (wakePromise) {
+            await wakePromise.catch((e) =>
+              logRoute(reqId, "kaggle wake error", { err: String(e) }),
+            );
+          }
           return NextResponse.json(workerJob);
         }
         logRoute(reqId, "dispatch http error", { status: r.status });
@@ -133,14 +159,12 @@ export async function POST(req: NextRequest) {
     if (idempKey) await storeIdempotent(idempKey, jobId);
     logRoute(reqId, "queued (no worker)", { job_id: jobId });
 
-    // Best-effort: kick the Kaggle dispatcher workflow so the user
-    // doesn't wait up to 10 min for the next cron tick. The OAuth
-    // 'repo' scope already includes workflow:write, so the
-    // GITHUB_ACCESS_TOKEN stored in Firestore from /api/github/auth
-    // can fire workflow_dispatch directly.
-    void _maybeWakeKaggle(reqId).catch((e) =>
-      logRoute(reqId, "kaggle wake error", { err: String(e) }),
-    );
+    // Same await — must complete before Vercel kills us.
+    if (wakePromise) {
+      await wakePromise.catch((e) =>
+        logRoute(reqId, "kaggle wake error", { err: String(e) }),
+      );
+    }
 
     return NextResponse.json(base);
   } catch (e) {
@@ -162,33 +186,55 @@ export async function POST(req: NextRequest) {
 async function _maybeWakeKaggle(reqId: string): Promise<void> {
   const repoFullName = process.env.GITHUB_REPO_FULL_NAME || "Ahsan3301/yt_agent";
   const [owner, repo] = repoFullName.split("/");
-  if (!owner || !repo) return;
+  if (!owner || !repo) {
+    logRoute(reqId, "kaggle wake skipped (invalid repo)", { repoFullName });
+    return;
+  }
 
-  const snap = await adminDb()
-    .collection("api_keys")
-    .doc("GITHUB_ACCESS_TOKEN")
-    .get();
-  const token = snap.exists ? ((snap.data() as { value?: string }).value || "") : "";
+  let token = "";
+  try {
+    const snap = await adminDb()
+      .collection("api_keys")
+      .doc("GITHUB_ACCESS_TOKEN")
+      .get();
+    token = snap.exists ? ((snap.data() as { value?: string }).value || "") : "";
+  } catch (e) {
+    logRoute(reqId, "kaggle wake firestore read failed", { err: String(e) });
+    return;
+  }
   if (!token) {
-    logRoute(reqId, "kaggle wake skipped (no GITHUB_ACCESS_TOKEN)", {});
+    logRoute(reqId, "kaggle wake skipped (GITHUB_ACCESS_TOKEN not in Firestore)", {
+      next_step:
+        "Connections page → One-click connect → Sign in with GitHub. Re-run after.",
+    });
     return;
   }
 
   const url = `https://api.github.com/repos/${owner}/${repo}/actions/workflows/kaggle-dispatch.yml/dispatches`;
-  const r = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ ref: "main" }),
-  });
-  if (r.ok) {
-    logRoute(reqId, "kaggle dispatch triggered", { status: r.status });
-  } else {
-    logRoute(reqId, "kaggle dispatch failed", { status: r.status, body: await r.text() });
+  logRoute(reqId, "kaggle wake POST", { url });
+  try {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ ref: "main" }),
+    });
+    // 204 No Content = success; anything else is a problem we want visible.
+    if (r.status === 204) {
+      logRoute(reqId, "kaggle dispatch triggered (204 No Content)", {});
+      return;
+    }
+    const body = await r.text();
+    logRoute(reqId, "kaggle dispatch unexpected status", {
+      status: r.status,
+      body: body.slice(0, 400),
+    });
+  } catch (e) {
+    logRoute(reqId, "kaggle wake fetch threw", { err: String(e) });
   }
 }
 
