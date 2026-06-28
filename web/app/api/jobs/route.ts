@@ -132,10 +132,63 @@ export async function POST(req: NextRequest) {
     });
     if (idempKey) await storeIdempotent(idempKey, jobId);
     logRoute(reqId, "queued (no worker)", { job_id: jobId });
+
+    // Best-effort: kick the Kaggle dispatcher workflow so the user
+    // doesn't wait up to 10 min for the next cron tick. The OAuth
+    // 'repo' scope already includes workflow:write, so the
+    // GITHUB_ACCESS_TOKEN stored in Firestore from /api/github/auth
+    // can fire workflow_dispatch directly.
+    void _maybeWakeKaggle(reqId).catch((e) =>
+      logRoute(reqId, "kaggle wake error", { err: String(e) }),
+    );
+
     return NextResponse.json(base);
   } catch (e) {
     logRoute(reqId, "POST jobs failed", { err: String(e) });
     return NextResponse.json({ error: String(e) }, { status: 500 });
+  }
+}
+
+/**
+ * Best-effort: trigger the kaggle-dispatch workflow immediately via the
+ * GitHub Actions API so the user doesn't wait for the 10-minute cron
+ * tick when their submission lands with no GPU worker alive.
+ *
+ * Auth: the OAuth `repo` scope from /api/github/auth already includes
+ * workflow:write. We pull the saved token from Firestore.
+ *
+ * Repo: GITHUB_REPO_FULL_NAME env var or sensible default.
+ */
+async function _maybeWakeKaggle(reqId: string): Promise<void> {
+  const repoFullName = process.env.GITHUB_REPO_FULL_NAME || "Ahsan3301/yt_agent";
+  const [owner, repo] = repoFullName.split("/");
+  if (!owner || !repo) return;
+
+  const snap = await adminDb()
+    .collection("api_keys")
+    .doc("GITHUB_ACCESS_TOKEN")
+    .get();
+  const token = snap.exists ? ((snap.data() as { value?: string }).value || "") : "";
+  if (!token) {
+    logRoute(reqId, "kaggle wake skipped (no GITHUB_ACCESS_TOKEN)", {});
+    return;
+  }
+
+  const url = `https://api.github.com/repos/${owner}/${repo}/actions/workflows/kaggle-dispatch.yml/dispatches`;
+  const r = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ ref: "main" }),
+  });
+  if (r.ok) {
+    logRoute(reqId, "kaggle dispatch triggered", { status: r.status });
+  } else {
+    logRoute(reqId, "kaggle dispatch failed", { status: r.status, body: await r.text() });
   }
 }
 

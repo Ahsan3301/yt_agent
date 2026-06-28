@@ -121,9 +121,58 @@ def _r2c():
 
 
 def _r2_put_file(key: str, local_path: str, content_type: str) -> str:
-    _r2c().upload_file(local_path, R2_BUCKET, key,
-                       ExtraArgs={"ContentType": content_type})
-    return f"{R2_PUBLIC_URL}/{key}"
+    """Atomic upload: stage to a `.tmp` key, then server-side rename.
+
+    Why: boto3's upload_file uses multipart for files > ~8 MB. If a chunk
+    fails mid-stream (network blip, SSL truststore conflict), the final
+    object can be left missing OR a half-written object can be visible
+    to readers. We avoid both by:
+
+      1. Uploading to a hidden staging key  `{key}.tmp.{pid}.{epoch}`
+      2. On success: server-side copy  staging → final  (single atomic op)
+      3. Delete the staging key
+      4. On any failure: best-effort delete + abort multipart for staging
+
+    Readers of `{key}` either see the complete file or no file at all —
+    never a partial. Both ops use the same S3-compatible API, no extra
+    bandwidth (server-side copy is free on R2).
+    """
+    import time as _time
+    staging = f"{key}.tmp.{os.getpid()}.{int(_time.time())}"
+    client = _r2c()
+    try:
+        client.upload_file(local_path, R2_BUCKET, staging,
+                           ExtraArgs={"ContentType": content_type})
+        # Server-side copy → final key (atomic; readers see the new object).
+        client.copy_object(
+            Bucket=R2_BUCKET,
+            Key=key,
+            CopySource={"Bucket": R2_BUCKET, "Key": staging},
+            ContentType=content_type,
+            MetadataDirective="REPLACE",
+        )
+        # Drop the staging key.
+        try:
+            client.delete_object(Bucket=R2_BUCKET, Key=staging)
+        except Exception as _e:
+            log.debug(f"r2 staging cleanup non-fatal: {_e}")
+        return f"{R2_PUBLIC_URL}/{key}"
+    except Exception as e:
+        # Best-effort: kill the staging object + abort any incomplete
+        # multipart uploads under it so we don't leave broken bytes.
+        try:
+            client.delete_object(Bucket=R2_BUCKET, Key=staging)
+        except Exception:
+            pass
+        try:
+            mpu = client.list_multipart_uploads(Bucket=R2_BUCKET, Prefix=staging)
+            for u in mpu.get("Uploads", []):
+                client.abort_multipart_upload(
+                    Bucket=R2_BUCKET, Key=u["Key"], UploadId=u["UploadId"],
+                )
+        except Exception:
+            pass
+        raise RuntimeError(f"R2 upload failed for {key}: {e}") from e
 
 
 def _r2_delete(key: str) -> bool:

@@ -42,6 +42,16 @@ IDLE_TIMEOUT_SECONDS = _KAGGLE_OVERRIDE or int(os.getenv("IDLE_TIMEOUT_SECONDS",
 IDLE_CHECK_INTERVAL  = int(os.getenv("IDLE_CHECK_INTERVAL",  "30")  or 30)
 IDLE_STARTUP_GRACE   = int(os.getenv("IDLE_STARTUP_GRACE",   "300") or 300)
 
+# Absolute ceiling on session lifetime regardless of activity. Prevents
+# a worker from running forever when something gets stuck OR when stale
+# queued jobs in Firestore keep the activity check artificially busy.
+# Default 1 h on Kaggle, off elsewhere (Colab + HF Space should never
+# be auto-killed against the user's will).
+HARD_MAX_LIFETIME_SECONDS = int(
+    os.getenv("HARD_MAX_LIFETIME_SECONDS",
+              "3600" if _KAGGLE_OVERRIDE else "0") or 0
+)
+
 _lock = threading.Lock()
 _last_active = time.time()
 _started_at  = time.time()
@@ -106,8 +116,21 @@ def _shutdown():
     except Exception:
         pass  # not running in Colab, that's fine
 
-    # 3) Hard-exit. Skip atexit hooks (we already cleaned up); os._exit is
-    #    the only way to be sure uvicorn workers actually stop.
+    # 3) On Kaggle the parent kernel is papermill; SIGTERM-ing the
+    #    process group ensures every worker uvicorn spawned exits
+    #    before we hard-exit. Without this, os._exit(0) only kills the
+    #    current process and uvicorn's main loop survives in another
+    #    pid, keeping the kernel "Running" forever.
+    try:
+        import signal
+        pgid = os.getpgid(0)
+        log.warning(f"idle watchdog: SIGTERM to process group {pgid}")
+        os.killpg(pgid, signal.SIGTERM)
+    except Exception as e:
+        log.debug(f"killpg failed (Windows / restricted env): {e}")
+
+    # 4) Hard-exit. Skip atexit hooks (we already cleaned up); os._exit
+    #    is the only way to be sure uvicorn workers actually stop.
     os._exit(0)
 
 
@@ -127,24 +150,48 @@ def start():
         log.info(f"idle watchdog running "
                  f"(timeout={IDLE_TIMEOUT_SECONDS}s, "
                  f"check_every={IDLE_CHECK_INTERVAL}s, "
-                 f"startup_grace={IDLE_STARTUP_GRACE}s)")
+                 f"startup_grace={IDLE_STARTUP_GRACE}s, "
+                 f"hard_max={HARD_MAX_LIFETIME_SECONDS}s)")
         from backend import jobs
         while _running:
             time.sleep(IDLE_CHECK_INTERVAL)
             since_boot = time.time() - _started_at
+
+            # Absolute ceiling — fires no matter what. Catches the
+            # "watchdog never shuts down because something keeps
+            # touching it" failure mode on Kaggle.
+            if HARD_MAX_LIFETIME_SECONDS > 0 and since_boot >= HARD_MAX_LIFETIME_SECONDS:
+                log.warning(
+                    f"idle watchdog: HARD_MAX_LIFETIME_SECONDS={HARD_MAX_LIFETIME_SECONDS}s "
+                    f"reached (uptime={int(since_boot)}s); shutting down regardless of activity"
+                )
+                _shutdown()
+                return
+
             if since_boot < IDLE_STARTUP_GRACE:
                 continue
+
             # Activity = local job running/queued OR Firestore-queued
             # job we might still claim. The Firestore check matters on
             # Kaggle: the worker is woken with a queued job pending,
             # and the claim transaction takes a tick after boot.
-            if jobs.is_busy() or jobs.queue_depth() > 0:
+            local_busy = jobs.is_busy()
+            local_q = jobs.queue_depth()
+            remote_q = _firestore_queued_for_us()
+            idle = idle_seconds()
+            log.info(
+                f"idle watchdog tick: uptime={int(since_boot)}s "
+                f"idle={int(idle)}s/{IDLE_TIMEOUT_SECONDS}s "
+                f"local_busy={local_busy} local_q={local_q} remote_q={remote_q}"
+            )
+
+            if local_busy or local_q > 0:
                 touch()
                 continue
-            if _firestore_queued_for_us() > 0:
+            if remote_q > 0:
                 touch()
                 continue
-            if idle_seconds() >= IDLE_TIMEOUT_SECONDS:
+            if idle >= IDLE_TIMEOUT_SECONDS:
                 _shutdown()
                 return  # unreachable
 

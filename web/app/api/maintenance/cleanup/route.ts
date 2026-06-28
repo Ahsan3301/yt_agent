@@ -23,6 +23,11 @@ const RETENTION_DAYS = {
   idempotency: 7,
   videos: 30,
 };
+// Orphaned queued jobs — queued for too long with no backend ever
+// claiming them. Usually leftovers from a failed worker start. Clearing
+// them prevents Kaggle's watchdog from staying alive forever waiting
+// for a job it can never claim.
+const ORPHAN_QUEUED_HOURS = 2;
 
 export async function POST(req: NextRequest) {
   const auth = await requireMaintenanceKey(req);
@@ -38,6 +43,7 @@ export async function POST(req: NextRequest) {
     idempotency_deleted: 0,
     videos_requested: 0,
     errors: [] as string[],
+    orphan_queued_failed: 0,
   };
 
   // ── runs_index + run_summaries ──
@@ -85,6 +91,39 @@ export async function POST(req: NextRequest) {
     summary.jobs_deleted = n;
   } catch (e) {
     summary.errors.push(`jobs cleanup: ${String(e)}`);
+  }
+
+  // ── orphan queued jobs ──
+  // Anything still status=queued AND backend_instance_id=null after
+  // ORPHAN_QUEUED_HOURS is almost certainly a leftover from a failed
+  // dispatch (worker died before claim, or duplicate from idempotency
+  // race). Mark them failed so the watchdog stops treating them as
+  // "claimable work" — keeps Kaggle from staying alive forever.
+  try {
+    const cutoff = now - ORPHAN_QUEUED_HOURS * 3600;
+    const snap = await adminDb()
+      .collection("jobs")
+      .where("status", "==", "queued")
+      .get();
+    const batch = adminDb().batch();
+    let n = 0;
+    snap.forEach((doc) => {
+      const d = doc.data() as Record<string, unknown>;
+      if (d.backend_instance_id) return;
+      const q = _toEpoch(d.queued_at);
+      if (q != null && q < cutoff) {
+        batch.update(doc.ref, {
+          status: "failed",
+          error: `orphaned in queue for >${ORPHAN_QUEUED_HOURS}h with no backend claim`,
+          finished_at: now,
+        });
+        n += 1;
+      }
+    });
+    if (n > 0) await batch.commit();
+    summary.orphan_queued_failed = n;
+  } catch (e) {
+    summary.errors.push(`orphan queued cleanup: ${String(e)}`);
   }
 
   // ── idempotency ──
