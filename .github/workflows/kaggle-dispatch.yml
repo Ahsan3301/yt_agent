@@ -24,8 +24,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
-      - name: Ask Vercel if a worker is needed
+      - name: Ask Vercel if a worker is needed (cron path)
         id: probe
+        # Manual workflow_dispatch (fired by Vercel POST /api/jobs)
+        # ALREADY decided we need Kaggle — skip the probe in that case so
+        # we don't false-negative on a stale backends doc or a queued job
+        # whose backend_instance_id was set by a failed HF dispatch.
+        if: github.event_name != 'workflow_dispatch'
         env:
           VERCEL_BASE: ${{ vars.VERCEL_BASE_URL }}
           API_KEY: ${{ secrets.RENDER_TRIGGER_KEY }}
@@ -46,22 +51,29 @@ jobs:
           needs=$(echo "$body" | python3 -c "import json,sys; d=json.load(sys.stdin); print('true' if d.get('needs_worker') else 'false')")
           echo "needs_worker=$needs" >> "$GITHUB_OUTPUT"
 
+      - name: Note (manual trigger always pushes to Kaggle)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          echo "::notice::Manual workflow_dispatch — skipping probe, pushing kernel directly."
+          echo "needs_worker=true" >> "$GITHUB_OUTPUT"
+        id: manual_trigger
+
       - name: Checkout
-        if: steps.probe.outputs.needs_worker == 'true'
+        if: github.event_name == 'workflow_dispatch' || steps.probe.outputs.needs_worker == 'true'
         uses: actions/checkout@v4
 
       - name: Set up Python
-        if: steps.probe.outputs.needs_worker == 'true'
+        if: github.event_name == 'workflow_dispatch' || steps.probe.outputs.needs_worker == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Install Kaggle CLI
-        if: steps.probe.outputs.needs_worker == 'true'
+        if: github.event_name == 'workflow_dispatch' || steps.probe.outputs.needs_worker == 'true'
         run: pip install --quiet kaggle
 
       - name: Push Kaggle worker kernel
-        if: steps.probe.outputs.needs_worker == 'true'
+        if: github.event_name == 'workflow_dispatch' || steps.probe.outputs.needs_worker == 'true'
         env:
           KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
           KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
