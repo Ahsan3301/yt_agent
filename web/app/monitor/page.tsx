@@ -262,7 +262,11 @@ function BackendCard({ bs }: { bs: BackendState }) {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <TerminateButton entryId={entry.instance_id} busy={!!stats?.busy} />
+          <TerminateButton
+            entryId={entry.instance_id}
+            busy={!!stats?.busy}
+            reachable={reachable}
+          />
           <div className={clsx("flex items-center gap-1 text-xs", statusColor)}>
             {reachable ? (
               stats?.busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wifi className="h-3.5 w-3.5" />
@@ -453,9 +457,14 @@ function fmtUptime(s: number) {
  * idle-shutdown is too slow, or to free Colab without disconnecting
  * the runtime tab manually.
  */
-function TerminateButton({ entryId, busy }: { entryId: string; busy: boolean }) {
+function TerminateButton({
+  entryId, busy, reachable,
+}: { entryId: string; busy: boolean; reachable: boolean }) {
   const [confirming, setConfirming] = useState(false);
   const [terminating, setTerminating] = useState(false);
+
+  // Down cards don't need a 2-step confirm — just clear the corpse.
+  const needsConfirm = reachable;
 
   const terminate = async () => {
     setTerminating(true);
@@ -465,14 +474,31 @@ function TerminateButton({ entryId, busy }: { entryId: string; busy: boolean }) 
       });
       if (!r.ok) {
         const body = await r.text();
-        alert(`Terminate failed (HTTP ${r.status}): ${body.slice(0, 200)}`);
+        alert(`${reachable ? "Terminate" : "Remove"} failed (HTTP ${r.status}): ${body.slice(0, 200)}`);
       }
     } catch (e) {
-      alert(`Terminate failed: ${String(e)}`);
+      alert(`${reachable ? "Terminate" : "Remove"} failed: ${String(e)}`);
     }
     setTerminating(false);
     setConfirming(false);
   };
+
+  const label = reachable ? "Terminate" : "Remove";
+
+  // Down cards: one-click remove (no confirmation needed — nothing to lose).
+  if (!needsConfirm) {
+    return (
+      <button
+        onClick={terminate}
+        disabled={terminating}
+        className="px-2 h-7 rounded-md border border-line text-neutral-400 hover:text-red-300 hover:border-red-500/40 text-xs inline-flex items-center gap-1"
+        title="Remove this dead worker from the registry"
+      >
+        {terminating ? <Loader2 className="h-3 w-3 animate-spin" /> : <Power className="h-3 w-3" />}
+        Remove
+      </button>
+    );
+  }
 
   if (confirming) {
     return (
@@ -502,7 +528,7 @@ function TerminateButton({ entryId, busy }: { entryId: string; busy: boolean }) 
       title="Terminate this worker session"
     >
       <Power className="h-3 w-3" />
-      Terminate
+      {label}
     </button>
   );
 }

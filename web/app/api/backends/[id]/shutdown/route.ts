@@ -23,31 +23,62 @@ export async function POST(
   try {
     const snap = await adminDb().collection("backends").doc(id).get();
     if (!snap.exists) {
-      return NextResponse.json({ error: "backend not found" }, { status: 404 });
+      // Already gone — treat as success (idempotent).
+      return NextResponse.json({ ok: true, note: "backend doc already absent" });
     }
     const data = snap.data() as { url?: string };
-    const url = data.url;
-    if (!url) {
-      return NextResponse.json({ error: "backend has no public url" }, { status: 400 });
-    }
-    const r = await fetch(`${url.replace(/\/$/, "")}/api/shutdown`, {
-      method: "POST",
-      headers: { "X-Vercel-Gateway": "1" },
-    });
-    if (!r.ok) {
-      const body = await r.text();
-      return NextResponse.json(
-        { error: `worker returned ${r.status}`, body: body.slice(0, 300) },
-        { status: 502 },
-      );
-    }
-    const body = await r.json().catch(() => ({}));
-    // Also clear the backends/<id> doc so the dashboard doesn't keep
-    // showing it as alive for the 90-sec freshness window.
+    const url = data.url || "";
+
+    // Delete the Firestore doc FIRST so the dashboard's onSnapshot
+    // drops the card instantly — don't make the user stare at a
+    // stale 'DOWN' card while waiting for the 180-sec freshness
+    // window. We also want this delete to happen even if the worker
+    // is unreachable (it might have already crashed) so the user
+    // can clear corpse cards.
     try {
       await adminDb().collection("backends").doc(id).delete();
-    } catch { /* non-fatal */ }
-    return NextResponse.json({ ok: true, worker: body });
+    } catch (e) {
+      // Non-fatal but unusual — surface it so we know.
+      console.error("backends doc delete failed:", e);
+    }
+
+    if (!url) {
+      return NextResponse.json({
+        ok: true,
+        note: "backend had no public_url; just removed from registry",
+      });
+    }
+
+    // Now best-effort tell the worker to exit. Don't await long —
+    // the worker schedules os._exit(0) on a 1-sec delay so its
+    // response might race with the kill. Either outcome is fine
+    // (we've already removed the registry entry).
+    try {
+      const r = await fetch(`${url.replace(/\/$/, "")}/api/shutdown`, {
+        method: "POST",
+        headers: { "X-Vercel-Gateway": "1" },
+        // Cap at 4 seconds — if the worker takes longer it's probably
+        // already dying.
+        signal: AbortSignal.timeout(4000),
+      });
+      if (r.ok) {
+        const body = await r.json().catch(() => ({}));
+        return NextResponse.json({ ok: true, worker: body, removed_from_registry: true });
+      }
+      return NextResponse.json({
+        ok: true,
+        worker_status: r.status,
+        removed_from_registry: true,
+        note: "worker did not respond cleanly but registry was cleared",
+      });
+    } catch (e) {
+      return NextResponse.json({
+        ok: true,
+        worker_error: String(e),
+        removed_from_registry: true,
+        note: "worker unreachable but registry was cleared",
+      });
+    }
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }
