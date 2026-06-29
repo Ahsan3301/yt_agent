@@ -16,11 +16,32 @@ heartbeats) but keep everything else at INFO+ from the project itself
 and uvicorn errors. Frontend can filter further by level/text.
 """
 from __future__ import annotations
+import contextvars
 import logging
 import threading
 import time
 from collections import deque
 from typing import Iterable
+
+# Per-task request id. Set on job start (backend/jobs.py:_run_one) and on
+# inbound HTTP requests (backend/server.py middleware) so EVERY log line
+# emitted during the work carries the same req_id. The dashboard's
+# /queue/[id] view + the Vercel function logs can be cross-correlated.
+req_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("req_id", default="")
+
+
+def set_req_id(req_id: str) -> None:
+    """Set the current task's req_id. Call from job worker entry +
+    HTTP request middleware. Returns the token so callers can restore."""
+    if req_id:
+        req_id_var.set(req_id)
+
+
+def current_req_id() -> str:
+    try:
+        return req_id_var.get() or ""
+    except LookupError:
+        return ""
 
 # How many records to keep in memory. ~10 KB per record * 2000 = 20 MB max.
 _MAX_RECORDS = 2000
@@ -53,13 +74,19 @@ class _RingBufferHandler(logging.Handler):
         except Exception:
             msg = record.msg if isinstance(record.msg, str) else repr(record.msg)
 
+        # Carry the request id if one was set on the current task.
+        # Prepend it visibly to the message for human reading too.
+        rid = current_req_id()
+        display_msg = f"[req={rid}] {msg}" if rid else msg
+
         global _next_seq
         entry = {
-            "seq":   None,           # filled below under lock
-            "time":  record.created,  # epoch seconds (float)
-            "level": record.levelname,
-            "name":  record.name,
-            "msg":   msg,
+            "seq":    None,           # filled below under lock
+            "time":   record.created,  # epoch seconds (float)
+            "level":  record.levelname,
+            "name":   record.name,
+            "msg":    display_msg,
+            "req_id": rid,
         }
         # Stack info / exception text — fold into msg if present.
         if record.exc_info:
@@ -174,11 +201,12 @@ def _enqueue_for_firestore(entry: dict) -> None:
         if _sink_writes_done.get(rid, 0) >= _FIRESTORE_MAX_WRITES_PER_RUN:
             return
         _sink_pending.setdefault(rid, []).append({
-            "ts":    entry.get("time"),
-            "level": entry.get("level"),
-            "name":  entry.get("name"),
-            "msg":   entry.get("msg"),
-            "seq":   entry.get("seq"),
+            "ts":     entry.get("time"),
+            "level":  entry.get("level"),
+            "name":   entry.get("name"),
+            "msg":    entry.get("msg"),
+            "seq":    entry.get("seq"),
+            "req_id": entry.get("req_id") or "",
         })
 
 

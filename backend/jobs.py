@@ -314,8 +314,17 @@ def _run_one(job: dict[str, Any]):
     """Execute one pipeline run and upload the result to remote storage."""
     from main import run_pipeline
     from modules import run_state
+    from backend import logbuf
     # Bridge run_state updates back to this job record.
     job_id = job["id"]
+
+    # req_id propagation — every log line emitted from any thread that
+    # inherits this context will carry the id. Vercel passes its req_id
+    # via X-Request-Id when dispatching; we fall back to the job id when
+    # no upstream header existed.
+    req_id = str(job.get("req_id") or job_id)[:12]
+    logbuf.set_req_id(req_id)
+    log.info(f"job worker started for {job_id} (req_id={req_id})")
 
     def progress_bridge():
         last = {"percent": -1, "step": None}
@@ -434,10 +443,12 @@ def _run_one(job: dict[str, Any]):
                 # Persist to Firestore `errors` collection + fire the
                 # Discord embed in one call. The /health page reads
                 # from errors to show the last N failures.
+                from backend import logbuf as _lb
                 notifier.report_error(
                     err=str(job.get("error") or "unknown pipeline failure"),
                     title=f"❌ Pipeline failed · {job.get('channel', 'unknown')}",
                     run_id=job.get("run_id") or job["id"],
+                    req_id=_lb.current_req_id(),
                     extra={
                         "worker":  worker_label,
                         "elapsed": elapsed,
