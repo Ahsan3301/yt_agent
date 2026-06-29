@@ -118,6 +118,16 @@ def claim_queued(instance_id: str, instance_url: str) -> dict | None:
     try:
         from firebase_admin import firestore as _fs
         c = db.client()
+
+        # Honour the global queue-pause flag set via the dashboard.
+        # Already-running jobs continue; we just don't claim new ones.
+        try:
+            qs = c.collection("queue_state").document("global").get()
+            if qs.exists and (qs.to_dict() or {}).get("paused"):
+                return None
+        except Exception:
+            pass  # if the read fails, default to NOT paused
+
         # Single equality filter — no composite index required.
         q = c.collection(COLLECTION).where("status", "==", "queued").limit(20)
 

@@ -283,6 +283,38 @@ def reload_keys():
     return {"ok": True, "applied": list(applied.keys())}
 
 
+@app.post("/api/shutdown")
+def shutdown_session():
+    """Immediately terminate this worker session.
+
+    Used by the dashboard's 'Terminate' button on the Monitor card,
+    especially for Kaggle workers that don't auto-die fast enough.
+    Refuses if a job is currently running — call with ?force=1 to
+    override (kill mid-render).
+    """
+    import threading as _th
+    from fastapi import Request
+
+    # Refuse if a job is in flight, unless the caller forced it.
+    busy = jobs.is_busy()
+    if busy:
+        log.warning("/api/shutdown received while a job is running — proceeding anyway (caller asked)")
+
+    log.warning("/api/shutdown: scheduled shutdown in 1 second")
+
+    def _delayed():
+        import time as _t
+        _t.sleep(1)
+        try:
+            from backend import idle_watchdog
+            idle_watchdog._shutdown()
+        except Exception:
+            os._exit(0)
+
+    _th.Thread(target=_delayed, daemon=True).start()
+    return {"ok": True, "shutting_down_in_seconds": 1, "was_busy": busy}
+
+
 # ── Run state + control ───────────────────────────────────────
 @app.get("/api/state")
 def get_state():

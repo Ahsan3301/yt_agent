@@ -5,16 +5,17 @@ import { usePathname } from "next/navigation";
 import { useState, useEffect } from "react";
 import {
   Clapperboard, Settings, History, KeyRound, LayoutDashboard, Activity,
-  Menu, X,
+  ListChecks, Menu, X,
 } from "lucide-react";
 import clsx from "clsx";
 
 const NAV = [
-  { href: "/",         label: "Dashboard", icon: LayoutDashboard },
-  { href: "/monitor",  label: "Monitor",   icon: Activity        },
-  { href: "/settings", label: "Settings",  icon: Settings        },
-  { href: "/history",  label: "History",   icon: History         },
-  { href: "/keys",     label: "Connections", icon: KeyRound      },
+  { href: "/",         label: "Dashboard",   icon: LayoutDashboard },
+  { href: "/queue",    label: "Job queue",   icon: ListChecks      },
+  { href: "/monitor",  label: "Monitor",     icon: Activity        },
+  { href: "/settings", label: "Settings",    icon: Settings        },
+  { href: "/history",  label: "History",     icon: History         },
+  { href: "/keys",     label: "Connections", icon: KeyRound        },
 ];
 
 export default function Sidebar() {

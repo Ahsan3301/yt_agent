@@ -18,7 +18,7 @@ import { useEffect, useRef, useState } from "react";
 import clsx from "clsx";
 import {
   Cpu, MemoryStick, HardDrive, Activity, Zap, Wifi, WifiOff,
-  Server, Loader2, Box, Clock,
+  Server, Loader2, Box, Clock, Power,
 } from "lucide-react";
 import {
   fetchLiveBackends, fetchStatsFor, type RegistryEntry, type BackendStats,
@@ -261,13 +261,16 @@ function BackendCard({ bs }: { bs: BackendState }) {
             {entry.url}
           </div>
         </div>
-        <div className={clsx("flex items-center gap-1 text-xs", statusColor)}>
-          {reachable ? (
-            stats?.busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wifi className="h-3.5 w-3.5" />
-          ) : (
-            <WifiOff className="h-3.5 w-3.5" />
-          )}
-          {!reachable ? "DOWN" : stats?.busy ? "BUSY" : "AVAILABLE"}
+        <div className="flex items-center gap-2">
+          <TerminateButton entryId={entry.instance_id} busy={!!stats?.busy} />
+          <div className={clsx("flex items-center gap-1 text-xs", statusColor)}>
+            {reachable ? (
+              stats?.busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wifi className="h-3.5 w-3.5" />
+            ) : (
+              <WifiOff className="h-3.5 w-3.5" />
+            )}
+            {!reachable ? "DOWN" : stats?.busy ? "BUSY" : "AVAILABLE"}
+          </div>
         </div>
       </div>
 
@@ -442,4 +445,64 @@ function fmtUptime(s: number) {
   if (s < 3600) return `${Math.floor(s / 60)}m`;
   if (s < 86400) return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
   return `${Math.floor(s / 86400)}d`;
+}
+
+/**
+ * Terminate button — calls POST /api/backends/<id>/shutdown which
+ * proxies to the worker's /api/shutdown. Useful when Kaggle's auto
+ * idle-shutdown is too slow, or to free Colab without disconnecting
+ * the runtime tab manually.
+ */
+function TerminateButton({ entryId, busy }: { entryId: string; busy: boolean }) {
+  const [confirming, setConfirming] = useState(false);
+  const [terminating, setTerminating] = useState(false);
+
+  const terminate = async () => {
+    setTerminating(true);
+    try {
+      const r = await fetch(`/api/backends/${encodeURIComponent(entryId)}/shutdown`, {
+        method: "POST",
+      });
+      if (!r.ok) {
+        const body = await r.text();
+        alert(`Terminate failed (HTTP ${r.status}): ${body.slice(0, 200)}`);
+      }
+    } catch (e) {
+      alert(`Terminate failed: ${String(e)}`);
+    }
+    setTerminating(false);
+    setConfirming(false);
+  };
+
+  if (confirming) {
+    return (
+      <div className="flex items-center gap-1">
+        <button
+          onClick={terminate}
+          disabled={terminating}
+          className="px-2 h-7 rounded-md border border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/20 text-xs inline-flex items-center gap-1"
+          title={busy ? "Worker is busy — terminating will kill the running job" : "Terminate session"}
+        >
+          {terminating ? <Loader2 className="h-3 w-3 animate-spin" /> : <Power className="h-3 w-3" />}
+          {busy ? "Kill anyway" : "Confirm"}
+        </button>
+        <button
+          onClick={() => setConfirming(false)}
+          className="px-2 h-7 rounded-md border border-line text-neutral-400 text-xs"
+        >
+          Cancel
+        </button>
+      </div>
+    );
+  }
+  return (
+    <button
+      onClick={() => setConfirming(true)}
+      className="px-2 h-7 rounded-md border border-line text-neutral-400 hover:text-red-300 hover:border-red-500/40 text-xs inline-flex items-center gap-1"
+      title="Terminate this worker session"
+    >
+      <Power className="h-3 w-3" />
+      Terminate
+    </button>
+  );
 }
