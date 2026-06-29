@@ -1,5 +1,16 @@
-import truststore
-truststore.inject_into_ssl()
+# truststore makes Python use the OS certificate store (Windows/macOS) so
+# corporate proxies + self-signed certs work without bundling extra CAs.
+# On Linux it's unnecessary (the system CA bundle just works) AND it
+# triggers a urllib3-internal infinite recursion when boto3 does R2
+# uploads over HTTPS — manifests as "maximum recursion depth exceeded"
+# at exactly the worst possible moment (after a successful render, on
+# the upload step). All our workers run on Linux (Colab / Kaggle / HF
+# Space) so we only inject on Windows/macOS where it's both needed and
+# safe.
+import sys as _sys
+if _sys.platform.startswith(("win", "darwin", "cygwin")):
+    import truststore as _truststore
+    _truststore.inject_into_ssl()
 
 
 """
