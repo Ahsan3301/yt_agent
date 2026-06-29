@@ -15,7 +15,14 @@ Preset schema (all fields optional except `name`):
     name              : unique slug
     display_name      : human-facing label
     tone              : free-form tone tag the scriptwriter prompt uses
-    voice             : edge-tts voice id (and a kokoro fallback)
+    voice             : edge-tts voice id (default English voice)
+    voices            : LIST of alternate voices in the niche's primary
+                        language — voiceover picks the first; UI surfaces
+                        the rest as user-selectable
+    voices_by_lang    : {"en": [...], "ur": [...], "hi": [...]} — per-
+                        language voice catalog. voiceover._resolve_voice
+                        consults this when language != preset default.
+    language          : primary content language (default "en")
     rate, pitch       : edge-tts prosody knobs
     script_prompt     : the LLM template for narration writing
     storyboard_prompt : the LLM template for shot planning (uses
@@ -39,6 +46,121 @@ log = logging.getLogger(__name__)
 
 # ── Color grade presets that the editor knows how to render ──────
 COLOR_GRADES = ("cool_desaturated", "warm_punchy", "neutral", "vivid_high_contrast")
+
+
+# ── Niche voice catalog ─────────────────────────────────────────
+# A LIST of voice options per niche per language. The voiceover module
+# picks the first by default; the wizard / channels page can surface
+# the rest for the user to choose a different one. Kept separate from
+# the CHANNEL_PRESETS table because it'd otherwise bloat each preset
+# entry by ~15 lines; merged in at module-load time.
+#
+# Picking criteria per niche: voices that have actually rendered well
+# on test prompts. en-US-*MultilingualNeural variants are preferred
+# when the niche may go non-English later (horror, finance, etc.) so
+# code-mixed or hand-off scripts stay coherent.
+NICHE_VOICE_CATALOG: dict[str, dict[str, list[str]]] = {
+    "horror": {
+        "en": [
+            "en-US-BrianMultilingualNeural",
+            "en-US-ChristopherNeural",
+            "en-GB-RyanNeural",
+            "en-US-GuyNeural",
+        ],
+        "ur": ["ur-PK-AsadNeural", "ur-PK-UzmaNeural"],
+        "hi": ["hi-IN-MadhurNeural", "hi-IN-SwaraNeural"],
+    },
+    "wisdom": {
+        "en": [
+            "en-US-AndrewMultilingualNeural",
+            "en-US-RogerNeural",
+            "en-GB-ThomasNeural",
+            "en-US-EricNeural",
+        ],
+        "ur": ["ur-PK-AsadNeural"],
+        "hi": ["hi-IN-MadhurNeural"],
+    },
+    "finance": {
+        "en": [
+            "en-US-GuyNeural",
+            "en-US-AndrewMultilingualNeural",
+            "en-US-DavisNeural",
+            "en-GB-ThomasNeural",
+        ],
+        "ur": ["ur-PK-AsadNeural"],
+        "hi": ["hi-IN-MadhurNeural"],
+    },
+    "fitness": {
+        "en": [
+            "en-US-DavisNeural",
+            "en-US-GuyNeural",
+            "en-US-RogerNeural",
+            "en-US-BrianMultilingualNeural",
+        ],
+        "ur": ["ur-PK-AsadNeural"],
+        "hi": ["hi-IN-MadhurNeural"],
+    },
+    "science": {
+        "en": [
+            "en-US-AriaNeural",
+            "en-US-JennyNeural",
+            "en-GB-LibbyNeural",
+            "en-US-EmmaMultilingualNeural",
+        ],
+        "ur": ["ur-PK-UzmaNeural"],
+        "hi": ["hi-IN-SwaraNeural"],
+    },
+    "history": {
+        "en": [
+            "en-US-ChristopherNeural",
+            "en-GB-RyanNeural",
+            "en-US-AndrewMultilingualNeural",
+            "en-GB-ThomasNeural",
+        ],
+        "ur": ["ur-PK-AsadNeural"],
+        "hi": ["hi-IN-MadhurNeural"],
+    },
+    "comedy": {
+        "en": [
+            "en-US-JennyNeural",
+            "en-US-AriaNeural",
+            "en-US-EmmaMultilingualNeural",
+            "en-US-GuyNeural",
+        ],
+        "ur": ["ur-PK-UzmaNeural"],
+        "hi": ["hi-IN-SwaraNeural"],
+    },
+    "food": {
+        "en": [
+            "en-US-JaneNeural",
+            "en-US-EmmaMultilingualNeural",
+            "en-US-AriaNeural",
+            "en-GB-SoniaNeural",
+        ],
+        "ur": ["ur-PK-UzmaNeural"],
+        "hi": ["hi-IN-SwaraNeural"],
+    },
+    "travel": {
+        "en": [
+            "en-US-EmmaMultilingualNeural",
+            "en-US-JaneNeural",
+            "en-GB-SoniaNeural",
+            "en-US-AndrewMultilingualNeural",
+        ],
+        "ur": ["ur-PK-UzmaNeural"],
+        "hi": ["hi-IN-SwaraNeural"],
+    },
+    "gaming": {
+        "en": [
+            "en-US-RogerNeural",
+            "en-US-DavisNeural",
+            "en-US-GuyNeural",
+            "en-US-BrianMultilingualNeural",
+        ],
+        "ur": ["ur-PK-AsadNeural"],
+        "hi": ["hi-IN-MadhurNeural"],
+    },
+}
 
 
 # ── Hardcoded presets — the starter set. ─────────────────────────
@@ -318,6 +440,18 @@ def get_channel(name: str) -> dict:
     # Default web_research_enabled = (channel benefits from facts).
     # Preset can override by setting an explicit value.
     cfg.setdefault("web_research_enabled", cfg.get("research_mode") == "fact_research")
+    # Language default — every niche is English-first unless explicitly
+    # overridden by a Firestore channel doc or a custom synthesised
+    # preset (e.g. an Urdu horror channel sets language="ur").
+    cfg.setdefault("language", "en")
+    # Merge in the voice catalog so callers see voices_by_lang without
+    # the preset table needing to inline every voice variant.
+    if "voices_by_lang" not in cfg and key in NICHE_VOICE_CATALOG:
+        cfg["voices_by_lang"] = NICHE_VOICE_CATALOG[key]
+    # Surface the alternate English voice list as `voices` for the UI's
+    # voice picker. First entry mirrors the preset's `voice` field.
+    if "voices" not in cfg:
+        cfg["voices"] = (cfg.get("voices_by_lang") or {}).get("en") or [cfg.get("voice")]
     return cfg
 
 

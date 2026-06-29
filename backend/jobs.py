@@ -132,6 +132,13 @@ def submit(payload: dict[str, Any]) -> dict[str, Any]:
         "manual_channel_desc": str(payload.get("manual_channel_desc") or "")[:500],
         # tri-state: None = use channel default; True/False = override.
         "web_research":        payload.get("web_research"),
+        # Real-events research mode (forces script grounding in
+        # documented facts). Tri-state same as web_research.
+        "real_events":         payload.get("real_events"),
+        # Script language (ISO-2). None = use channel preset default.
+        "language":            (str(payload.get("language") or "")[:5].lower() or None),
+        # Voice override (one of the niche's voices_by_lang entries).
+        "voice_override":      str(payload.get("voice_override") or "")[:80] or None,
     }
     with _lock:
         _jobs[jid] = job
@@ -173,6 +180,9 @@ def adopt_remote(remote_job: dict[str, Any]) -> bool:
         "manual_images":       list(remote_job.get("manual_images") or [])[:32],
         "manual_channel_desc": str(remote_job.get("manual_channel_desc") or "")[:500],
         "web_research":        remote_job.get("web_research"),
+        "real_events":         remote_job.get("real_events"),
+        "language":            (str(remote_job.get("language") or "")[:5].lower() or None),
+        "voice_override":      str(remote_job.get("voice_override") or "")[:80] or None,
     }
     with _lock:
         if jid in _jobs:
@@ -356,6 +366,9 @@ def _run_one(job: dict[str, Any]):
         manual_images=job.get("manual_images") or [],
         manual_channel_desc=job.get("manual_channel_desc", ""),
         web_research=job.get("web_research"),
+        real_events=job.get("real_events"),
+        language=job.get("language"),
+        voice_override=job.get("voice_override"),
     )
 
     # Pipeline finished — final state and (optionally) upload.

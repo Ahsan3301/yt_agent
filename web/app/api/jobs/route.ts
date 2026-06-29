@@ -92,6 +92,21 @@ export async function POST(req: NextRequest) {
       body.web_research === true ? true :
       body.web_research === false ? false :
       undefined;
+    // Same tri-state for real-events research mode.
+    const real_events =
+      body.real_events === true ? true :
+      body.real_events === false ? false :
+      undefined;
+    // Script language — ISO-2 code (en, ur, hi, es...). null = use
+    // channel preset's language. Stored as null in Firestore when
+    // unset so Python sees None.
+    const language = (typeof body.language === "string" && body.language.trim())
+      ? body.language.trim().slice(0, 5).toLowerCase()
+      : null;
+    // Voice override — one of the niche's voices_by_lang entries.
+    const voice_override = (typeof body.voice_override === "string" && body.voice_override.trim())
+      ? body.voice_override.trim().slice(0, 80)
+      : null;
 
     // Idempotency check.
     const idempKey = req.headers.get("Idempotency-Key") || "";
@@ -131,6 +146,9 @@ export async function POST(req: NextRequest) {
       manual_channel_desc, manual_images,
       // null in Firestore is fine; backend reads it as Python None.
       web_research: web_research === undefined ? null : web_research,
+      real_events:  real_events  === undefined ? null : real_events,
+      language,
+      voice_override,
     };
 
     // Pick a worker. If one is alive, dispatch immediately.
@@ -168,6 +186,7 @@ export async function POST(req: NextRequest) {
             channel, dry_run,
             manual_topic, manual_script, manual_title,
             manual_channel_desc, manual_images, web_research,
+            real_events, language, voice_override,
           }),
         });
         if (r.ok) {

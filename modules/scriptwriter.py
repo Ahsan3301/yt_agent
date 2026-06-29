@@ -450,6 +450,10 @@ def write_script(research_data, max_attempts=3):
     channel_type = research_data.get("type", "horror")
     channel_cfg = _ch.get_channel(channel_type)
 
+    # Job-level overrides (set by the wizard / scheduled-render).
+    language = (research_data.get("language") or channel_cfg.get("language") or "en").lower()[:2]
+    real_events = bool(research_data.get("real_events"))
+
     # Optional facts block when the browser research agent ran upstream.
     facts = research_data.get("facts") or []
     sources = research_data.get("sources") or []
@@ -462,14 +466,73 @@ def write_script(research_data, max_attempts=3):
             + "\n"
         )
 
+    # ── Real-events mode ────────────────────────────────────────
+    # When ON the script MUST be grounded in something verifiable —
+    # a documented true event, a published case, a recorded historical
+    # incident, OR (for mythology/folklore niches) a faithful retelling
+    # of a real published legend rather than invented lore.
+    # The instruction adapts to the niche so the same toggle reads as
+    # "true horror story" for horror, "real case study" for finance,
+    # "documented experiment" for science, etc.
+    real_events_block = ""
+    if real_events:
+        nm = channel_type
+        framings = {
+            "horror":  "Base the narration on a DOCUMENTED real incident — a haunting, disappearance, ritual murder, or unexplained event that has actual case files / news reports / paranormal records. Name the real victim or place (or a faithful pseudonym if names are protected). If you must use mythology / folklore, retell the published legend accurately — do NOT invent new myths.",
+            "wisdom":  "Ground the takeaway in a REAL person's story — a documented life, choice, or moment from history or recent reporting. Name them. Don't invent characters.",
+            "finance": "This must be a REAL case study — a documented company, founder, market event, with real dates, real dollar figures, real outcomes. No composite or hypothetical scenarios.",
+            "fitness": "Cite a REAL athlete, real study, real protocol — with the actual reference. No invented anecdotes.",
+            "science": "Every claim must trace to a real published study, experiment, or established theory. Mention the discoverer / lab / year where it adds weight.",
+            "history": "Faithful historical retelling — real dates, real people, real geography. Mythology niches retell the published myth without invention.",
+            "comedy":  "Anchor the bit in a REAL widely-shared experience (the DMV, airport security, etc.) — not invented absurdity.",
+            "food":    "Real cuisines, real techniques, real chefs / regions. No invented dishes.",
+            "travel":  "Real places, real cultural details, real practical info. Mythology of a place = retell the actual local legend.",
+            "gaming":  "Real games, real dev quotes, real patches / lore drops with patch numbers / interview citations. No invented lore.",
+        }
+        framing = framings.get(nm, "Ground every claim in something documented and real. Avoid invented scenarios; cite specific people/places/dates where it strengthens credibility.")
+        real_events_block = (
+            "REAL EVENTS MODE — accuracy is mandatory:\n"
+            f"  {framing}\n"
+            "  If you genuinely don't have a real anchor for this topic, "
+            "say so in the narration ('reports vary', 'one widely-circulated account holds...') "
+            "rather than fabricating. NEVER present invented details as fact.\n"
+        )
+
+    # Multilingual: when the script language isn't English, tell the
+    # LLM to actually write in that language. Edge-tts will pronounce
+    # the chosen language; the channel preset's voice selection
+    # (voices_by_lang) handles the actual TTS voice.
+    LANG_NAMES = {
+        "en": "English", "ur": "Urdu (Naskh script)", "hi": "Hindi (Devanagari script)",
+        "es": "Spanish", "fr": "French", "de": "German",
+        "ar": "Arabic", "pt": "Portuguese",
+    }
+    language_block = ""
+    if language != "en":
+        lang_label = LANG_NAMES.get(language, language)
+        language_block = (
+            f"LANGUAGE: Write the narration in {lang_label}. "
+            f"All free-text fields (narration, youtube_title, description) "
+            f"go in {lang_label}. Tags + search_keywords can stay English (YouTube SEO is language-flexible).\n"
+        )
+
+    # Prefix carries language + real-events guidance. Facts continue
+    # to flow through the existing per-template slot (HORROR_PROMPT
+    # doesn't have a hole for them yet, so for that path we fold them
+    # into the prefix too).
+    prefix_universal = (language_block + real_events_block).strip()
+    prefix_horror    = (language_block + real_events_block + facts_block).strip()
+    if prefix_universal: prefix_universal += "\n\n"
+    if prefix_horror:    prefix_horror    += "\n\n"
+
     if channel_type == "horror":
-        prompt = HORROR_PROMPT.format(
+        prompt = prefix_horror + HORROR_PROMPT.format(
             title=research_data["raw_title"],
             tone_guidance=tone_guidance,
             word_min=word_min, word_max=word_max, hard_cap=hard_cap,
         )
     else:
-        prompt = UNIVERSAL_PROMPT.format(
+        prompt = prefix_universal + UNIVERSAL_PROMPT.format(
             title=research_data["raw_title"],
             channel_label=channel_cfg.get("display_name") or channel_type,
             tone=channel_cfg.get("tone") or tone_guidance,

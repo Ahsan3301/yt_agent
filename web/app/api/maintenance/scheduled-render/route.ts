@@ -67,6 +67,9 @@ export async function POST(req: NextRequest) {
       niche: string;
       channel_name: string;
       web_research: boolean | null;
+      real_events: boolean | null;
+      language: string | null;
+      voice: string | null;
     }> = [];
     try {
       const channelsSnap = await adminDb().collection("channels").get();
@@ -83,6 +86,11 @@ export async function POST(req: NextRequest) {
             web_research:
               c.web_research === true ? true :
               c.web_research === false ? false : null,
+            real_events:
+              c.real_events === true ? true :
+              c.real_events === false ? false : null,
+            language: (typeof c.language === "string" && c.language) ? String(c.language) : null,
+            voice:    (typeof c.voice === "string" && c.voice) ? String(c.voice) : null,
           });
         }
         targets[niche] = (targets[niche] || 0) + count;
@@ -96,7 +104,10 @@ export async function POST(req: NextRequest) {
       for (const [niche, count] of Object.entries(legacy)) {
         const n = Math.max(0, Math.min(10, Number(count) || 0));
         for (let i = 0; i < n; i++) {
-          channelMeta.push({ niche, channel_name: niche, web_research: null });
+          channelMeta.push({
+            niche, channel_name: niche,
+            web_research: null, real_events: null, language: null, voice: null,
+          });
         }
         if (n > 0) targets[niche] = (targets[niche] || 0) + n;
       }
@@ -142,6 +153,9 @@ export async function POST(req: NextRequest) {
         // Per-channel web_research override (from channels collection).
         // null = use the niche's default from modules/channels.py.
         web_research: slot.web_research,
+        real_events:  slot.real_events,
+        language:     slot.language,
+        voice_override: slot.voice,
         // Track which dashboard-channel this job belongs to so the
         // /queue page can group jobs by channel later.
         source_channel_name: slot.channel_name,
@@ -163,6 +177,9 @@ export async function POST(req: NextRequest) {
             channel: cleanChannel,
             dry_run,
             web_research: slot.web_research,
+            real_events: slot.real_events,
+            language: slot.language,
+            voice_override: slot.voice,
           }),
         }).catch(() => {});
       }

@@ -265,6 +265,18 @@ def run_pipeline(
     #   False -> force OFF
     # Lets the dashboard's per-job toggle override channel defaults.
     web_research: Optional[bool] = None,
+    # Real-events mode — when True, scriptwriter is forced to anchor
+    # the narration in documented real events (or accurately retold
+    # mythology). Niche-aware framing chosen inside scriptwriter.
+    real_events: Optional[bool] = None,
+    # Script language (ISO-2 code). Default "en"; channel preset or
+    # job-level override can flip it to "ur", "hi", etc. Affects both
+    # the scriptwriter LLM instruction AND the edge-tts voice selection.
+    language: Optional[str] = None,
+    # Voice override — if the user picked a specific voice from the
+    # niche catalog in the wizard, pass it here. Overrides the channel
+    # preset's default voice but NOT the language-default fallback.
+    voice_override: Optional[str] = None,
 ):
     """
     Execute the full automation pipeline for one video.
@@ -402,6 +414,14 @@ def run_pipeline(
             ), run_id=run_id)
         else:
             log.info("[2/6] Writing script with LLM...")
+            # Inject job-level language + real_events into the research
+            # bundle so write_script picks them up.
+            if language is not None:
+                content["language"] = (language or "en").lower()[:2]
+            elif channel_cfg.get("language"):
+                content["language"] = channel_cfg["language"]
+            if real_events is not None:
+                content["real_events"] = bool(real_events)
             script = _step(summary, "script", lambda: write_script(content), run_id=run_id)
         if not script:
             log.error("Script generation failed. Aborting.")
@@ -414,7 +434,11 @@ def run_pipeline(
         # ── STEP 3: Voiceover ─────────────────────────────────────
         log.info("[3/6] Generating voiceover...")
         audio_dir = os.path.join(work_dir, "audio")
-        audio_path = _step(summary, "voiceover", lambda: generate_voiceover(script["narration"], channel_type, audio_dir), run_id=run_id)
+        # Resolve effective language for voiceover (matches scriptwriter).
+        eff_language = ((language or channel_cfg.get("language") or "en") or "en").lower()[:2]
+        audio_path = _step(summary, "voiceover", lambda: generate_voiceover(
+            script["narration"], channel_type, audio_dir, language=eff_language,
+        ), run_id=run_id)
         if not audio_path:
             log.error("Voiceover generation failed. Aborting.")
             return _finish(summary, work_dir, False)
@@ -521,6 +545,19 @@ def run_pipeline(
             summary["steps"]["upload"] = {"ok": True, "skipped": True, "seconds": 0}
         else:
             log.info("[6/6] Uploading to YouTube...")
+            # SEO borrow — when enabled in settings, replace our script's
+            # title/desc/tags with a remix of the top viral Shorts on
+            # the same topic. Falls back to the LLM's metadata on any
+            # failure (missing API key, no viral video, quota hit).
+            try:
+                from modules import seo_borrower as _seo
+                from modules.config import load_settings as _ls
+                if _ls().get("upload", {}).get("seo_borrow", True):
+                    topic_seed = (content or {}).get("raw_title") or script.get("youtube_title")
+                    if topic_seed:
+                        script = _seo.borrow_seo(topic_seed, script)
+            except Exception as e:
+                log.warning(f"SEO borrow skipped: {e}")
             video_id = _step(summary, "upload", lambda: upload_video(final_video, script, channel_type), run_id=run_id)
             if video_id:
                 summary["video_id"] = video_id

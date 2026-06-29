@@ -32,6 +32,36 @@ type Channel = {
   enabled: boolean;
   description?: string;
   web_research?: boolean | null;
+  real_events?: boolean | null;
+  language?: string;
+  voice?: string | null;
+};
+
+// Stay in sync with web/app/create/wizard/page.tsx WIZARD_LANGUAGES.
+const CHANNEL_LANGUAGES = [
+  { code: "en", label: "English" },
+  { code: "ur", label: "Urdu (اردو)" },
+  { code: "hi", label: "Hindi (हिंदी)" },
+  { code: "es", label: "Spanish" },
+  { code: "fr", label: "French" },
+  { code: "de", label: "German" },
+  { code: "ar", label: "Arabic" },
+  { code: "pt", label: "Portuguese" },
+];
+
+// Same catalog as the wizard; surface in the channel settings so the
+// per-channel default voice can be chosen here.
+const CHANNEL_VOICE_CATALOG: Record<string, Record<string, string[]>> = {
+  horror:  { en: ["en-US-BrianMultilingualNeural","en-US-ChristopherNeural","en-GB-RyanNeural","en-US-GuyNeural"], ur: ["ur-PK-AsadNeural","ur-PK-UzmaNeural"], hi: ["hi-IN-MadhurNeural","hi-IN-SwaraNeural"] },
+  wisdom:  { en: ["en-US-AndrewMultilingualNeural","en-US-RogerNeural","en-GB-ThomasNeural","en-US-EricNeural"], ur: ["ur-PK-AsadNeural"], hi: ["hi-IN-MadhurNeural"] },
+  finance: { en: ["en-US-GuyNeural","en-US-AndrewMultilingualNeural","en-US-DavisNeural","en-GB-ThomasNeural"], ur: ["ur-PK-AsadNeural"], hi: ["hi-IN-MadhurNeural"] },
+  fitness: { en: ["en-US-DavisNeural","en-US-GuyNeural","en-US-RogerNeural","en-US-BrianMultilingualNeural"], ur: ["ur-PK-AsadNeural"], hi: ["hi-IN-MadhurNeural"] },
+  science: { en: ["en-US-AriaNeural","en-US-JennyNeural","en-GB-LibbyNeural","en-US-EmmaMultilingualNeural"], ur: ["ur-PK-UzmaNeural"], hi: ["hi-IN-SwaraNeural"] },
+  history: { en: ["en-US-ChristopherNeural","en-GB-RyanNeural","en-US-AndrewMultilingualNeural","en-GB-ThomasNeural"], ur: ["ur-PK-AsadNeural"], hi: ["hi-IN-MadhurNeural"] },
+  comedy:  { en: ["en-US-JennyNeural","en-US-AriaNeural","en-US-EmmaMultilingualNeural","en-US-GuyNeural"], ur: ["ur-PK-UzmaNeural"], hi: ["hi-IN-SwaraNeural"] },
+  food:    { en: ["en-US-JaneNeural","en-US-EmmaMultilingualNeural","en-US-AriaNeural","en-GB-SoniaNeural"], ur: ["ur-PK-UzmaNeural"], hi: ["hi-IN-SwaraNeural"] },
+  travel:  { en: ["en-US-EmmaMultilingualNeural","en-US-JaneNeural","en-GB-SoniaNeural","en-US-AndrewMultilingualNeural"], ur: ["ur-PK-UzmaNeural"], hi: ["hi-IN-SwaraNeural"] },
+  gaming:  { en: ["en-US-RogerNeural","en-US-DavisNeural","en-US-GuyNeural","en-US-BrianMultilingualNeural"], ur: ["ur-PK-AsadNeural"], hi: ["hi-IN-MadhurNeural"] },
 };
 
 export default function ChannelsPage() {
@@ -249,6 +279,12 @@ function ChannelForm({
     initial?.web_research === true ? "on" :
     initial?.web_research === false ? "off" : "default"
   );
+  const [realEvents, setRealEvents] = useState<"default" | "on" | "off">(
+    initial?.real_events === true ? "on" :
+    initial?.real_events === false ? "off" : "default"
+  );
+  const [language, setLanguage] = useState(initial?.language || "en");
+  const [voice, setVoice] = useState(initial?.voice || "");
 
   const submit = () => {
     if (!name.trim()) return;
@@ -262,6 +298,11 @@ function ChannelForm({
       web_research:
         webResearch === "on" ? true :
         webResearch === "off" ? false : null,
+      real_events:
+        realEvents === "on" ? true :
+        realEvents === "off" ? false : null,
+      language,
+      voice: voice || null,
     });
   };
 
@@ -354,6 +395,40 @@ function ChannelForm({
         </div>
       )}
 
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div>
+          <label className="label">Language</label>
+          <select
+            className="select"
+            value={language}
+            onChange={(e) => { setLanguage(e.target.value); setVoice(""); }}
+          >
+            {CHANNEL_LANGUAGES.map((l) => (
+              <option key={l.code} value={l.code}>{l.label}</option>
+            ))}
+          </select>
+          <div className="text-[10px] text-neutral-500 mt-1">
+            Script + voice language. Non-English uses edge-tts.
+          </div>
+        </div>
+        <div>
+          <label className="label">Voice (optional)</label>
+          <select
+            className="select"
+            value={voice}
+            onChange={(e) => setVoice(e.target.value)}
+          >
+            <option value="">Niche default for {language}</option>
+            {(CHANNEL_VOICE_CATALOG[niche]?.[language] || []).map((v) => (
+              <option key={v} value={v}>{v}</option>
+            ))}
+          </select>
+          <div className="text-[10px] text-neutral-500 mt-1">
+            Override the niche&apos;s default voice for this language.
+          </div>
+        </div>
+      </div>
+
       <div>
         <label className="label">Web research (NIM browser agent)</label>
         <div className="flex gap-1">
@@ -375,6 +450,31 @@ function ChannelForm({
         <div className="text-[10px] text-neutral-500 mt-1">
           When ON, NIM controls a headless Chromium for facts + hero images.
           Adds ~30-60 sec per render.
+        </div>
+      </div>
+
+      <div>
+        <label className="label">Real events mode</label>
+        <div className="flex gap-1">
+          {(["default", "on", "off"] as const).map((v) => (
+            <button
+              key={v}
+              onClick={() => setRealEvents(v)}
+              className={clsx(
+                "px-2.5 h-7 rounded-md border text-xs",
+                realEvents === v
+                  ? "border-accent/50 bg-accent/10 text-white"
+                  : "border-line text-neutral-400 hover:text-neutral-200",
+              )}
+            >
+              {v === "default" ? "Off" : v.toUpperCase()}
+            </button>
+          ))}
+        </div>
+        <div className="text-[10px] text-neutral-500 mt-1">
+          When ON, the script must be grounded in documented real events
+          (or accurately retold mythology). Niche-aware framing — true
+          horror story / real case study / documented experiment / etc.
         </div>
       </div>
 

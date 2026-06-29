@@ -44,16 +44,48 @@ type WizardState = {
   channelId: string;        // FROM /api/channels (the destination)
   niche: string;            // FROM PRESET_CHANNELS or custom
   customNicheDesc: string;
+  language: string;          // ISO-2 (en, ur, hi, ...)
   // Step 2
   mode: "topic" | "script";
   topic: string;
   script: string;
   title: string;
+  realEvents: boolean;       // ON → narration must be grounded in real events
   // Step 3
   images: { url: string; size: number; preview: string }[];
   webResearch: "default" | "on" | "off";
   // Step 4
   dryRun: boolean;
+  voice: string;             // empty = use niche default
+};
+
+// Languages the pipeline can write + speak in. Adding one = add to
+// modules/voiceover.py:LANG_DEFAULT_VOICES + modules/scriptwriter.py:LANG_NAMES.
+const WIZARD_LANGUAGES = [
+  { code: "en", label: "English" },
+  { code: "ur", label: "Urdu (اردو)" },
+  { code: "hi", label: "Hindi (हिंदी)" },
+  { code: "es", label: "Spanish" },
+  { code: "fr", label: "French" },
+  { code: "de", label: "German" },
+  { code: "ar", label: "Arabic" },
+  { code: "pt", label: "Portuguese" },
+];
+
+// Voice catalog per niche per language — MUST stay in sync with
+// modules/channels.py NICHE_VOICE_CATALOG. Subset shown in UI to keep
+// the picker scannable; backend accepts any edge-tts voice id anyway.
+const VOICE_CATALOG: Record<string, Record<string, string[]>> = {
+  horror:  { en: ["en-US-BrianMultilingualNeural","en-US-ChristopherNeural","en-GB-RyanNeural","en-US-GuyNeural"], ur: ["ur-PK-AsadNeural","ur-PK-UzmaNeural"], hi: ["hi-IN-MadhurNeural","hi-IN-SwaraNeural"] },
+  wisdom:  { en: ["en-US-AndrewMultilingualNeural","en-US-RogerNeural","en-GB-ThomasNeural","en-US-EricNeural"], ur: ["ur-PK-AsadNeural"], hi: ["hi-IN-MadhurNeural"] },
+  finance: { en: ["en-US-GuyNeural","en-US-AndrewMultilingualNeural","en-US-DavisNeural","en-GB-ThomasNeural"], ur: ["ur-PK-AsadNeural"], hi: ["hi-IN-MadhurNeural"] },
+  fitness: { en: ["en-US-DavisNeural","en-US-GuyNeural","en-US-RogerNeural","en-US-BrianMultilingualNeural"], ur: ["ur-PK-AsadNeural"], hi: ["hi-IN-MadhurNeural"] },
+  science: { en: ["en-US-AriaNeural","en-US-JennyNeural","en-GB-LibbyNeural","en-US-EmmaMultilingualNeural"], ur: ["ur-PK-UzmaNeural"], hi: ["hi-IN-SwaraNeural"] },
+  history: { en: ["en-US-ChristopherNeural","en-GB-RyanNeural","en-US-AndrewMultilingualNeural","en-GB-ThomasNeural"], ur: ["ur-PK-AsadNeural"], hi: ["hi-IN-MadhurNeural"] },
+  comedy:  { en: ["en-US-JennyNeural","en-US-AriaNeural","en-US-EmmaMultilingualNeural","en-US-GuyNeural"], ur: ["ur-PK-UzmaNeural"], hi: ["hi-IN-SwaraNeural"] },
+  food:    { en: ["en-US-JaneNeural","en-US-EmmaMultilingualNeural","en-US-AriaNeural","en-GB-SoniaNeural"], ur: ["ur-PK-UzmaNeural"], hi: ["hi-IN-SwaraNeural"] },
+  travel:  { en: ["en-US-EmmaMultilingualNeural","en-US-JaneNeural","en-GB-SoniaNeural","en-US-AndrewMultilingualNeural"], ur: ["ur-PK-UzmaNeural"], hi: ["hi-IN-SwaraNeural"] },
+  gaming:  { en: ["en-US-RogerNeural","en-US-DavisNeural","en-US-GuyNeural","en-US-BrianMultilingualNeural"], ur: ["ur-PK-AsadNeural"], hi: ["hi-IN-MadhurNeural"] },
 };
 
 const STEPS = [
@@ -71,13 +103,16 @@ export default function WizardPage() {
     channelId: "",
     niche: "horror",
     customNicheDesc: "",
+    language: "en",
     mode: "topic",
     topic: "",
     script: "",
     title: "",
+    realEvents: false,
     images: [],
     webResearch: "default",
     dryRun: true,
+    voice: "",
   });
   const [channels, setChannels] = useState<Channel[]>([]);
   const [customs, setCustoms] = useState<ChannelPreset[]>([]);
@@ -172,6 +207,23 @@ export default function WizardPage() {
           </div>
         )}
       </div>
+
+      <div>
+        <label className="label">Language</label>
+        <select
+          className="select"
+          value={state.language}
+          onChange={(e) => setState({ ...state, language: e.target.value, voice: "" })}
+        >
+          {WIZARD_LANGUAGES.map((l) => (
+            <option key={l.code} value={l.code}>{l.label}</option>
+          ))}
+        </select>
+        <div className="text-[10px] text-neutral-500 mt-1">
+          Picks the script-writing language AND a matching neural voice.
+          Non-English uses edge-tts (kokoro is English-only).
+        </div>
+      </div>
     </div>
   );
 
@@ -252,6 +304,23 @@ export default function WizardPage() {
           maxLength={100}
         />
       </div>
+
+      <label className="flex items-start gap-2 text-sm cursor-pointer">
+        <input
+          type="checkbox" className="accent-accent mt-1"
+          checked={state.realEvents}
+          onChange={(e) => setState({ ...state, realEvents: e.target.checked })}
+        />
+        <div>
+          <div>Real events mode</div>
+          <div className="text-xs text-neutral-500">
+            Forces the script to be grounded in documented real events,
+            case studies, or accurately-retold mythology — no invented
+            scenarios. The instruction adapts to the niche (true horror
+            story / real case study / documented experiment).
+          </div>
+        </div>
+      </label>
     </div>
   );
 
@@ -395,13 +464,22 @@ export default function WizardPage() {
         </div>
       </label>
 
-      <div className="card text-xs text-neutral-400 space-y-1">
-        <div className="font-medium text-neutral-300 mb-1">Voice + music</div>
-        <p>
-          Voice + music settings come from the niche preset. To override per-niche,
-          edit on the <Link href="/settings" className="text-accent hover:underline">Settings → Voice</Link> tab.
-          Per-job voice override is on the roadmap.
-        </p>
+      <div>
+        <label className="label">Voice</label>
+        <select
+          className="select"
+          value={state.voice}
+          onChange={(e) => setState({ ...state, voice: e.target.value })}
+        >
+          <option value="">Niche default ({state.niche} · {state.language})</option>
+          {(VOICE_CATALOG[state.niche]?.[state.language] || []).map((v) => (
+            <option key={v} value={v}>{v}</option>
+          ))}
+        </select>
+        <div className="text-[10px] text-neutral-500 mt-1">
+          Voices are Microsoft Edge neural TTS. Music is set per-niche in
+          <Link href="/settings" className="text-accent hover:underline ml-1">Settings → Voice</Link>.
+        </div>
       </div>
     </div>
   );
@@ -421,6 +499,9 @@ export default function WizardPage() {
         body.manual_script = state.script.trim();
       }
       if (state.title.trim()) body.manual_title = state.title.trim();
+      if (state.language && state.language !== "en") body.language = state.language;
+      if (state.realEvents) body.real_events = true;
+      if (state.voice) body.voice_override = state.voice;
       if (state.images.length > 0) {
         body.manual_images = state.images.map((i) => i.url);
       }
@@ -454,6 +535,7 @@ export default function WizardPage() {
       <div className="card text-sm space-y-1.5">
         <Row k="Channel"  v={selectedChannel?.name || "(none — niche-only)"} />
         <Row k="Niche"    v={state.niche} />
+        <Row k="Language" v={WIZARD_LANGUAGES.find(l => l.code === state.language)?.label || state.language} />
         <Row k="Mode"     v={state.mode === "topic" ? "Topic seed (AI writes script)" : "Full script (AI polishes)"} />
         {state.mode === "topic" && (
           <Row k="Topic"  v={state.topic.slice(0, 80) + (state.topic.length > 80 ? "…" : "") || "(empty)"} />
@@ -462,8 +544,10 @@ export default function WizardPage() {
           <Row k="Words"  v={`${state.script.split(/\s+/).filter(Boolean).length} words`} />
         )}
         {state.title && <Row k="Title override" v={state.title} />}
+        <Row k="Real events" v={state.realEvents ? "yes — script grounded in documented facts" : "no — free-form"} />
         <Row k="Images"   v={`${state.images.length} uploaded`} />
         <Row k="Web research" v={state.webResearch === "default" ? "(niche default)" : state.webResearch.toUpperCase()} />
+        <Row k="Voice"    v={state.voice || `(niche default for ${state.language})`} />
         <Row k="Dry-run"  v={state.dryRun ? "yes — skip YouTube upload" : "no — publish to YouTube"} />
       </div>
       <div className="text-xs text-neutral-500">

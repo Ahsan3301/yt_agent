@@ -3,12 +3,20 @@ voiceover.py — Text-to-Speech Module
 Primary:  edge-tts  (Microsoft neural voices, free, no API key)
 Fallback: kokoro    (local model, best quality, requires pip install kokoro)
 
-edge-tts voices for horror: en-US-GuyNeural, en-US-ChristopherNeural
-edge-tts voices for wisdom: en-US-AndrewNeural, en-GB-RyanNeural
+Voice selection is per-channel: the niche preset in modules/channels.py
+carries `voice`, `voices` (alternates), `rate`, `pitch`, and optionally
+`voices_by_lang` for multilingual niches. settings.json overrides the
+preset when the user wants to tweak a niche globally without editing code.
+
+Language switching: pass language="ur" / "hi" / "es" / etc. The function
+picks the matching voice from voices_by_lang[lang], falls back to
+LANG_DEFAULT_VOICES[lang] if the niche doesn't have a per-language voice,
+and finally to the niche's default English voice.
 """
 import os
 import asyncio
 import logging
+import traceback
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -19,16 +27,93 @@ load_dotenv()
 log = logging.getLogger(__name__)
 
 
-def _voice_config(channel_type):
-    """Build the per-channel voice config dict from settings.json."""
+# Sensible defaults per language for niches that don't ship their own
+# per-language voice. Adding a language to the system = one entry here.
+# (All are edge-tts voice ids; kokoro doesn't yet support these languages
+# so kokoro automatically yields to edge-tts when language != "en".)
+LANG_DEFAULT_VOICES: dict[str, dict[str, str]] = {
+    "en": {"male": "en-US-BrianMultilingualNeural",  "female": "en-US-AriaNeural"},
+    "ur": {"male": "ur-PK-AsadNeural",               "female": "ur-PK-UzmaNeural"},
+    "hi": {"male": "hi-IN-MadhurNeural",             "female": "hi-IN-SwaraNeural"},
+    "es": {"male": "es-ES-AlvaroNeural",             "female": "es-ES-ElviraNeural"},
+    "fr": {"male": "fr-FR-HenriNeural",              "female": "fr-FR-DeniseNeural"},
+    "de": {"male": "de-DE-ConradNeural",             "female": "de-DE-KatjaNeural"},
+    "ar": {"male": "ar-SA-HamedNeural",              "female": "ar-SA-ZariyahNeural"},
+    "pt": {"male": "pt-BR-AntonioNeural",            "female": "pt-BR-FranciscaNeural"},
+}
+
+# Niche → preferred gender for the language default lookup. Picked to
+# match the niche tone (horror leans male/baritone, wisdom male/measured,
+# comedy female/varied, etc.). Falls back to "male".
+NICHE_GENDER_HINT = {
+    "horror":   "male",
+    "wisdom":   "male",
+    "finance":  "male",
+    "fitness":  "male",
+    "science":  "female",
+    "history":  "male",
+    "comedy":   "female",
+    "food":     "female",
+    "travel":   "female",
+    "gaming":   "male",
+}
+
+
+def _resolve_voice(preset: dict, language: str | None) -> tuple[str, str, str]:
+    """Resolve (voice_id, rate, pitch) from the channel preset honoring
+    the requested language. settings.json can override either the per-
+    niche voice OR the per-language voice — useful when a user wants a
+    specific voice for ALL their Urdu content regardless of niche.
+    """
+    settings = load_settings().get("voice", {})
+    niche = preset.get("name") or "horror"
+    lang = (language or preset.get("language") or "en").lower()[:2]
+
+    # 1. settings.json override for THIS niche + language pair.
+    override = settings.get(f"edge_voice_{niche}_{lang}")
+    if override:
+        return override, settings.get(f"edge_rate_{niche}", preset.get("rate", "+0%")), \
+               settings.get(f"edge_pitch_{niche}", preset.get("pitch", "+0Hz"))
+
+    # 2. Niche preset has a per-language map.
+    voices_by_lang = preset.get("voices_by_lang") or {}
+    if lang in voices_by_lang and voices_by_lang[lang]:
+        candidates = voices_by_lang[lang]
+        # Accept either a list (use first) or a string.
+        voice_id = candidates[0] if isinstance(candidates, list) else candidates
+        return voice_id, preset.get("rate", "+0%"), preset.get("pitch", "+0Hz")
+
+    # 3. Cross-language voice from LANG_DEFAULT_VOICES.
+    if lang != "en" and lang in LANG_DEFAULT_VOICES:
+        gender = NICHE_GENDER_HINT.get(niche, "male")
+        voice_id = LANG_DEFAULT_VOICES[lang].get(gender) \
+                   or LANG_DEFAULT_VOICES[lang].get("male")
+        if voice_id:
+            return voice_id, preset.get("rate", "+0%"), preset.get("pitch", "+0Hz")
+
+    # 4. Niche's default English voice (existing behavior).
+    settings_voice = settings.get(f"edge_voice_{niche}")
+    voice = settings_voice or preset.get("voice", "en-US-BrianMultilingualNeural")
+    rate = settings.get(f"edge_rate_{niche}", preset.get("rate", "+0%"))
+    pitch = settings.get(f"edge_pitch_{niche}", preset.get("pitch", "+0Hz"))
+    return voice, rate, pitch
+
+
+def _voice_config(channel_type, language=None):
+    """Build the per-channel voice config dict. Reads the niche preset
+    (which is the source of truth) and merges any settings.json overrides
+    + language selection."""
+    from modules.channels import get_channel
+    preset = get_channel(channel_type)
+    voice, rate, pitch = _resolve_voice(preset, language)
     s = load_settings().get("voice", {})
-    ch = channel_type if channel_type in ("horror", "wisdom") else "horror"
     return {
-        "edge":         s.get(f"edge_voice_{ch}",  "en-US-BrianMultilingualNeural"),
-        "edge_rate":    s.get(f"edge_rate_{ch}",   "-5%"),
-        "edge_pitch":   s.get(f"edge_pitch_{ch}",  "-2Hz"),
-        "kokoro":       s.get(f"kokoro_voice_{ch}", "am_michael"),
-        "kokoro_speed": float(s.get(f"kokoro_speed_{ch}", 0.9)),
+        "edge":         voice,
+        "edge_rate":    rate,
+        "edge_pitch":   pitch,
+        "kokoro":       s.get(f"kokoro_voice_{channel_type}", "am_michael"),
+        "kokoro_speed": float(s.get(f"kokoro_speed_{channel_type}", 0.9)),
+        "language":     (language or preset.get("language") or "en").lower()[:2],
     }
 
 
@@ -46,16 +131,19 @@ async def _edge_tts_async(text, voice, output_path, rate="+0%", pitch="+0Hz"):
     await asyncio.wait_for(communicate.save(output_path), timeout=EDGE_TTS_TIMEOUT)
 
 
-def generate_with_edge_tts(text, channel_type, output_path):
+def generate_with_edge_tts(text, channel_type, output_path, language=None):
     """
     Generate voiceover using Microsoft edge-tts (free, no key needed).
     Returns path to .mp3 file.
     """
-    cfg = _voice_config(channel_type)
+    cfg = _voice_config(channel_type, language=language)
     voice = cfg["edge"]
     rate = cfg.get("edge_rate", "+0%")
     pitch = cfg.get("edge_pitch", "+0Hz")
-    log.info(f"Generating TTS with edge-tts | voice={voice} rate={rate} pitch={pitch} (timeout={EDGE_TTS_TIMEOUT}s/attempt)")
+    log.info(
+        f"Generating TTS with edge-tts | voice={voice} rate={rate} "
+        f"pitch={pitch} lang={cfg['language']} (timeout={EDGE_TTS_TIMEOUT}s/attempt)"
+    )
     try:
         retry(
             lambda: asyncio.run(_edge_tts_async(text, voice, output_path, rate=rate, pitch=pitch)),
@@ -80,6 +168,7 @@ def generate_with_edge_tts(text, channel_type, output_path):
 # we silently skip kokoro after the first failure instead of logging
 # a scary ERROR before falling back to edge-tts on every single video.
 _KOKORO_BROKEN = False
+_KOKORO_BROKEN_REASON: str | None = None
 
 # Cap kokoro generation. On a low-power CPU (i5-8265U class) a ~170-word
 # narration legitimately takes 60-120s; anything past 4 min is a hang or
@@ -87,13 +176,27 @@ _KOKORO_BROKEN = False
 KOKORO_WALL_CLOCK_BUDGET_SECONDS = 240
 
 
-def generate_with_kokoro(text, channel_type, output_path):
+def kokoro_broken_reason() -> str | None:
+    """Exposed for the /health page so the dashboard can show WHY
+    kokoro is disabled this run (was a silent black-hole before)."""
+    return _KOKORO_BROKEN_REASON
+
+
+def generate_with_kokoro(text, channel_type, output_path, language=None):
     """
     Generate voiceover using Kokoro-82M (local, higher quality).
     Requires: pip install kokoro soundfile
+
+    Kokoro currently ships English (`a` = American, `b` = British)
+    voices well; for non-English we yield to edge-tts since the
+    quality gap there reverses.
     """
-    global _KOKORO_BROKEN
+    global _KOKORO_BROKEN, _KOKORO_BROKEN_REASON
     if _KOKORO_BROKEN:
+        return None
+    lang = (language or "en").lower()[:2]
+    if lang != "en":
+        log.info(f"Kokoro skipped for language={lang} (English-only model); using edge-tts.")
         return None
     try:
         import time
@@ -101,7 +204,7 @@ def generate_with_kokoro(text, channel_type, output_path):
         import soundfile as sf
         import numpy as np
 
-        cfg = _voice_config(channel_type)
+        cfg = _voice_config(channel_type, language=language)
         voice_id = cfg["kokoro"]
         speed = cfg.get("kokoro_speed", 0.95)
         word_count = len(text.split())
@@ -132,33 +235,55 @@ def generate_with_kokoro(text, channel_type, output_path):
             sf.write(output_path, full_audio, 24000)
             log.info(f"Kokoro audio saved: {output_path}")
             return output_path
+        # Generator yielded nothing — treat as broken so we don't try again
+        # this process.
+        _KOKORO_BROKEN = True
+        _KOKORO_BROKEN_REASON = "KPipeline yielded zero audio chunks"
+        log.warning(f"Kokoro disabled: {_KOKORO_BROKEN_REASON}")
+        return None
 
     except ImportError as e:
         _KOKORO_BROKEN = True
-        log.warning(f"Kokoro not available ({e}); falling back to edge-tts for this run and silently skipping for the rest.")
+        _KOKORO_BROKEN_REASON = f"ImportError: {e} (pip install kokoro soundfile)"
+        log.warning(
+            f"Kokoro not available ({e}); falling back to edge-tts for "
+            f"this run and silently skipping for the rest. To install: "
+            f"pip install kokoro soundfile"
+        )
     except Exception as e:
         # DLL load failures, missing model files, GPU OOM, etc. — all
-        # unrecoverable for this process. Mark broken so we don't try again.
+        # unrecoverable for this process. Mark broken so we don't try
+        # again. UNLIKE the old code, we log the FULL traceback the
+        # first time so we can actually diagnose what broke.
         _KOKORO_BROKEN = True
-        log.warning(f"Kokoro disabled for this process: {e}")
+        _KOKORO_BROKEN_REASON = f"{type(e).__name__}: {e}"
+        log.warning(
+            "Kokoro disabled for this process — full traceback follows so "
+            "we can diagnose the failure:\n%s",
+            traceback.format_exc(),
+        )
     return None
 
 
-def generate_voiceover(narration_text, channel_type, output_dir):
+def generate_voiceover(narration_text, channel_type, output_dir, language=None):
     """
     Main entry point. Tries preferred engine, falls back automatically.
     Returns path to generated audio file.
+
+    `language` is a 2-letter ISO code — "en", "ur", "hi", "es"... When
+    non-English, kokoro is skipped (English-only model) and edge-tts
+    picks a matching neural voice.
     """
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     output_path = os.path.join(output_dir, "voiceover.mp3")
     engine = (load_settings().get("voice", {}).get("engine") or "edge").lower()
 
     if engine == "kokoro":
-        result = generate_with_kokoro(narration_text, channel_type, output_path)
+        result = generate_with_kokoro(narration_text, channel_type, output_path, language=language)
         if result:
             return result
         log.warning("Kokoro failed, falling back to edge-tts")
 
     # Default / fallback: edge-tts
-    result = generate_with_edge_tts(narration_text, channel_type, output_path)
+    result = generate_with_edge_tts(narration_text, channel_type, output_path, language=language)
     return result

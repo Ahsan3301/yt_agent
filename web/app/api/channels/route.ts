@@ -32,6 +32,13 @@ type ChannelDoc = {
   enabled: boolean;
   description?: string;
   web_research?: boolean | null;
+  // Real-events research mode (per-channel default). Same tri-state
+  // as web_research — null = use niche default (currently always false).
+  real_events?: boolean | null;
+  // ISO-2 script language. Default "en".
+  language?: string;
+  // Voice override — empty / null = niche default for that language.
+  voice?: string | null;
 };
 
 /** GET /api/channels — list all channels. */
@@ -83,6 +90,15 @@ export async function POST(req: NextRequest) {
       web_research:
         body.web_research === true ? true :
         body.web_research === false ? false : null,
+      real_events:
+        body.real_events === true ? true :
+        body.real_events === false ? false : null,
+      language: (typeof body.language === "string" && body.language.trim())
+        ? body.language.trim().slice(0, 5).toLowerCase()
+        : "en",
+      voice: (typeof body.voice === "string" && body.voice.trim())
+        ? body.voice.trim().slice(0, 80)
+        : null,
       updated_at: FieldValue.serverTimestamp(),
       ...(existing.exists ? {} : { created_at: FieldValue.serverTimestamp() }),
     };
