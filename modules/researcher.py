@@ -182,4 +182,67 @@ def research(channel_type="horror"):
             "keywords": topics[:5],
         }
 
-    return None
+    # ── Generic path: any other channel (finance, fitness, science,
+    #    history, comedy, food, travel, gaming, custom niches) gets
+    #    an LLM-suggested topic seeded from its channel preset. This
+    #    lets the dashboard's quick-run work for any niche even
+    #    without the user typing a topic in /create.
+    return _generic_research(channel_type)
+
+
+def _generic_research(channel_type: str) -> dict | None:
+    """LLM-suggest a topic for an arbitrary channel, using the niche's
+    own tone + visual style as context. Falls back to a footage keyword
+    if NIM is unreachable so the pipeline never hard-aborts on a
+    healthy worker — it just runs with a generic premise.
+    """
+    try:
+        from modules import channels as _ch, nim as _nim
+        cfg = _ch.get_channel(channel_type)
+        prompt = (
+            f"Suggest ONE specific, surprising topic for a 60-second YouTube Short "
+            f"on the {cfg.get('display_name') or channel_type} channel.\n\n"
+            f"Channel tone: {cfg.get('tone')}\n"
+            f"Hook style: {cfg.get('hook_style')}\n\n"
+            f"Reply with ONLY the topic — one short sentence, no preamble, no markdown. "
+            f"Make it concrete enough that a scriptwriter could write 200 words about it. "
+            f"Pick something fresh — avoid the obvious top-of-mind subject for this niche."
+        )
+        try:
+            raw = _nim.chat(
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=120,
+                temperature=0.95,
+                stream=False,
+            )
+            premise = (raw or "").strip().strip('"').strip().split("\n")[0][:280]
+        except Exception as e:
+            log.warning(f"researcher._generic_research: NIM call failed ({e})")
+            premise = ""
+
+        if not premise:
+            # Last-resort fallback: a footage keyword. Lets the pipeline
+            # still produce a video instead of aborting completely.
+            kws = cfg.get("footage_keywords") or [channel_type]
+            premise = kws[0] if kws else channel_type
+            log.warning(f"researcher._generic_research: falling back to keyword premise: {premise!r}")
+        else:
+            log.info(f"researcher._generic_research: NIM-suggested topic: {premise!r}")
+
+        return {
+            "type":       channel_type,
+            "raw_title":  premise,
+            "raw_body":   "",
+            "source_url": "",
+            "keywords":   (cfg.get("footage_keywords") or [])[:5],
+        }
+    except Exception as e:
+        log.error(f"researcher._generic_research crashed for {channel_type}: {e}")
+        # Absolute fallback so pipeline can still proceed.
+        return {
+            "type":       channel_type,
+            "raw_title":  f"{channel_type} explained",
+            "raw_body":   "",
+            "source_url": "",
+            "keywords":   [channel_type],
+        }

@@ -274,6 +274,40 @@ export default function CreatePage() {
               value={customDesc}
               onChange={(e) => setCustomDesc(e.target.value)}
             />
+            {/* Save without rendering — lets the user add a custom niche
+                to their picker before they have a topic ready. */}
+            <div className="flex items-center justify-between gap-2 pt-1">
+              <span className="text-[11px] text-neutral-500">
+                Saves to your dashboard&apos;s channel picker — no render queued.
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!customChannel.trim()) {
+                    setError("Type a channel name first.");
+                    return;
+                  }
+                  addCustomChannel({
+                    name: customChannel.trim(),
+                    description: customDesc.trim(),
+                  });
+                  const list = loadCustomChannels();
+                  setSavedCustom(list);
+                  const norm = customChannel.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+                  setChannel(norm);
+                  setCustomChannel("");
+                  setCustomDesc("");
+                  setUseCustom(false);
+                  setSuccess(`Saved "${norm}" — available in every channel picker now.`);
+                  setError(null);
+                }}
+                disabled={!customChannel.trim()}
+                className="btn btn-ghost h-7 text-xs"
+              >
+                <Plus className="h-3 w-3" />
+                Save niche
+              </button>
+            </div>
           </div>
         )}
       </div>
