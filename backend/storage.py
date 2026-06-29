@@ -155,29 +155,76 @@ def _r2c():
     return _r2
 
 
+# Single-PUT cutoff. Files at-or-under this size go through put_object
+# (no multipart, no chunk-streaming code path) which sidesteps the
+# urllib3/truststore/boto3 SSL-handshake recursion that was breaking
+# uploads. A 60-sec YouTube Short at 1080p is typically 5-20 MB; even
+# upgrading to 1080p60 stays well under 100 MB. Files larger than this
+# fall back to upload_file (multipart) — they're rare and we tolerate
+# the existing recursion risk for them.
+_SINGLE_PUT_MAX_BYTES = 100 * 1024 * 1024
+
+# urllib3 + truststore + boto3 multipart can recurse deeply during SSL
+# handshakes. Raise Python's default recursion ceiling so a renegotiation
+# storm doesn't manifest as 'maximum recursion depth exceeded'. 5000 is
+# safe — the deepest legitimate boto3 stack we've seen is ~600 frames.
+try:
+    import sys as _sys
+    if _sys.getrecursionlimit() < 5000:
+        _sys.setrecursionlimit(5000)
+except Exception:
+    pass
+
+
 def _r2_put_file(key: str, local_path: str, content_type: str) -> str:
     """Atomic upload: stage to a `.tmp` key, then server-side rename.
 
-    Why: boto3's upload_file uses multipart for files > ~8 MB. If a chunk
-    fails mid-stream (network blip, SSL truststore conflict), the final
-    object can be left missing OR a half-written object can be visible
-    to readers. We avoid both by:
+    Two upload paths chosen by file size:
 
-      1. Uploading to a hidden staging key  `{key}.tmp.{pid}.{epoch}`
-      2. On success: server-side copy  staging → final  (single atomic op)
-      3. Delete the staging key
-      4. On any failure: best-effort delete + abort multipart for staging
+      • Files ≤ _SINGLE_PUT_MAX_BYTES (default 100 MB) use put_object
+        with the file streamed as Body. NO multipart logic touched —
+        this is the path that dodges the boto3/urllib3 SSL recursion
+        bug ("maximum recursion depth exceeded" on big chunk uploads).
 
-    Readers of `{key}` either see the complete file or no file at all —
-    never a partial. Both ops use the same S3-compatible API, no extra
-    bandwidth (server-side copy is free on R2).
+      • Larger files use upload_file which auto-chunks. Recursion bug
+        risk remains there but we accept it — at our scale (~5-20 MB
+        Shorts) we never hit this branch in practice.
+
+    Atomicity: both paths upload to a hidden staging key first
+    (`{key}.tmp.{pid}.{epoch}`), then server-side copy to the final key,
+    then delete staging. Readers of `{key}` see either the complete
+    file or no file at all — never a partial.
     """
     import time as _time
     staging = f"{key}.tmp.{os.getpid()}.{int(_time.time())}"
     client = _r2c()
+    size = 0
     try:
-        client.upload_file(local_path, R2_BUCKET, staging,
-                           ExtraArgs={"ContentType": content_type})
+        size = os.path.getsize(local_path)
+    except OSError:
+        size = 0
+    try:
+        if 0 < size <= _SINGLE_PUT_MAX_BYTES:
+            # Single PUT — no multipart, no chunked stream, no recursion
+            # bug. Body=file-handle lets boto3 stream from disk without
+            # loading the whole thing into memory.
+            log.info(f"R2 single-PUT {size/1024/1024:.1f} MB -> {staging}")
+            with open(local_path, "rb") as f:
+                client.put_object(
+                    Bucket=R2_BUCKET,
+                    Key=staging,
+                    Body=f,
+                    ContentType=content_type,
+                )
+        else:
+            # Large file (>100 MB) or empty stat — fall back to
+            # upload_file which handles multipart. Recursion risk noted.
+            log.info(f"R2 multipart upload {size/1024/1024:.1f} MB -> {staging}")
+            client.upload_file(
+                local_path, R2_BUCKET, staging,
+                ExtraArgs={"ContentType": content_type},
+            )
+
         # Server-side copy → final key (atomic; readers see the new object).
         client.copy_object(
             Bucket=R2_BUCKET,
@@ -192,22 +239,39 @@ def _r2_put_file(key: str, local_path: str, content_type: str) -> str:
         except Exception as _e:
             log.debug(f"r2 staging cleanup non-fatal: {_e}")
         return f"{R2_PUBLIC_URL}/{key}"
+
+    except RecursionError as e:
+        # Specific case: the boto3/urllib3 SSL recursion bug. If we hit
+        # this on the single-PUT path something's deeply wrong; on the
+        # multipart path it's the known bug. Either way, clean up and
+        # surface clearly.
+        log.error(f"R2 upload hit RecursionError on {key} ({size/1024/1024:.1f} MB) — "
+                  f"likely urllib3/truststore SSL handshake recursion")
+        _r2_cleanup_staging(client, staging)
+        raise RuntimeError(
+            f"R2 upload failed for {key}: RecursionError "
+            f"(urllib3/SSL recursion). File was {size/1024/1024:.1f} MB."
+        ) from e
     except Exception as e:
-        # Best-effort: kill the staging object + abort any incomplete
-        # multipart uploads under it so we don't leave broken bytes.
-        try:
-            client.delete_object(Bucket=R2_BUCKET, Key=staging)
-        except Exception:
-            pass
-        try:
-            mpu = client.list_multipart_uploads(Bucket=R2_BUCKET, Prefix=staging)
-            for u in mpu.get("Uploads", []):
-                client.abort_multipart_upload(
-                    Bucket=R2_BUCKET, Key=u["Key"], UploadId=u["UploadId"],
-                )
-        except Exception:
-            pass
+        _r2_cleanup_staging(client, staging)
         raise RuntimeError(f"R2 upload failed for {key}: {e}") from e
+
+
+def _r2_cleanup_staging(client, staging: str) -> None:
+    """Best-effort: kill the staging object + abort any incomplete
+    multipart uploads under it so we don't leave broken bytes."""
+    try:
+        client.delete_object(Bucket=R2_BUCKET, Key=staging)
+    except Exception:
+        pass
+    try:
+        mpu = client.list_multipart_uploads(Bucket=R2_BUCKET, Prefix=staging)
+        for u in mpu.get("Uploads", []):
+            client.abort_multipart_upload(
+                Bucket=R2_BUCKET, Key=u["Key"], UploadId=u["UploadId"],
+            )
+    except Exception:
+        pass
 
 
 def _r2_delete(key: str) -> bool:
