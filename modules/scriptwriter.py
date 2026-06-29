@@ -22,7 +22,7 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
-PROMPT_VERSION = "v8"
+PROMPT_VERSION = "v9"
 
 
 # ── Universal retention-focused prompt ───────────────────────────
@@ -157,44 +157,57 @@ PREMISE (use exactly this — do not invent a different setting):
 TONE: {tone_guidance}
 
 WRITING RULES — follow all of them:
-  1. FIRST LINE = a hook that puts something WRONG in the viewer's head
+  1. NARRATOR PERSPECTIVE — third-person STORYTELLER, NOT first-person
+     autobiography. You are the disembodied narrator telling a chilling
+     tale about a SPECIFIC OTHER PERSON / PLACE / EVENT. Pick a concrete
+     character or location for the story to happen TO. Examples:
+       "Sarah's first night in the apartment, the dishwasher ran by itself."
+       "In a small Welsh village, the bell in the abandoned chapel rang once."
+       "The night watchman at Hotel Cecil noticed it on his third week."
+     NEVER "I was walking", "I felt", "I heard". The narrator describes
+     what happened TO OTHERS with chilling detachment.
+     Vary the protagonist across scripts — don't always use 'she' or
+     'the woman'. Names, places, occupations, eras change every time.
+  2. FIRST LINE = a hook that puts something WRONG in the viewer's head
      immediately. A single concrete, off-kilter detail anchored in the
-     premise. NO "It started when…", "I'll never forget…", "Let me tell
-     you about…", "It's been happening since I arrived…". Drop the
-     viewer mid-scene with something already broken.
-  2. First person, PRESENT tense throughout. "I hear", not "I heard".
-  3. Lean into DREAD, not jump-scares. The thing that scares the viewer
+     story's specific subject. NO "It started when…", "I'll never forget…",
+     "Let me tell you about…". Drop the viewer mid-scene, mid-event —
+     a specific moment something broke for a specific person.
+  3. Past tense is fine; present-tense storytelling ("she finds…")
+     also works for immediacy. NEVER first-person ("I find").
+  4. Lean into DREAD, not jump-scares. The thing that scares the viewer
      isn't a monster reveal — it's the moment they realize the rules of
-     reality bent quietly and the narrator didn't notice. Wrongness over
-     gore. Implication over description.
-  4. Use body horror in the *sensation* sense: the wet sound from the
-     wall, the breath that isn't yours, the warmth of a hand on your
-     shoulder when both your hands are visible. Specific, somatic,
-     non-graphic. Skip explicit violence and slasher content — that's
-     not where the chill lives.
-  5. Build paranoia: each beat should make a safe thing the narrator
-     mentioned earlier feel unsafe in retrospect. Re-contextualise the
-     mundane.
-  6. Escalate every 2-3 sentences. The reader should be afraid to keep
-     reading by the halfway point.
-  7. End on ONE final line — a single new fact that makes everything
+     reality bent quietly and the CHARACTER didn't notice. Wrongness
+     over gore. Implication over description.
+  5. Use body horror in the *sensation* sense — but happening to the
+     character, not the narrator: the wet sound from the wall behind
+     HER head, the breath that wasn't HIS, the warmth of a hand on
+     THEIR shoulder when both their hands were visible. Specific,
+     somatic, non-graphic. No explicit gore or slasher content.
+  6. Build paranoia: each beat should make a safe thing mentioned earlier
+     feel unsafe in retrospect. Re-contextualise the mundane.
+  7. Escalate every 2-3 sentences. The viewer should be afraid to keep
+     watching by the halfway point.
+  8. End on ONE final line — a single new fact that makes everything
      above worse. Not a twist; a confirmation of the worst-case
      interpretation the viewer had been pushing away.
-  8. LENGTH IS NOT OPTIONAL: narration must be {word_min}-{word_max} words.
-     This is a HARD CEILING — count your words before submitting and stop
-     writing when you reach {word_max}. Cut adverbs and connective tissue,
-     never the imagery. A {hard_cap}-word response is automatically rejected.
-  9. STRICTLY NO sexual content, no romantic/intimate subtext, no nudity,
-     no sexual violence. The genre is psychological terror, not adult.
+  9. LENGTH IS NOT OPTIONAL: narration must be {word_min}-{word_max} words.
+     This is a HARD CEILING — a {hard_cap}-word response is rejected.
+     Cut adverbs and connective tissue, never the imagery.
+  10. STRICTLY NO sexual content, no romantic/intimate subtext, no nudity,
+     no sexual violence. Genre is psychological terror, not adult.
 
 BANNED PHRASES — do not use any of these (or paraphrases):
-  - "my heart pounding/racing", "blood ran cold", "chill down my spine"
+  - First-person: "I felt", "I heard", "I saw", "my heart", "I knew",
+    "I'll never forget", "I was alone" — ANY 'I/me/my/mine' framing
+    means the script is wrong. Always third-person.
+  - "blood ran cold", "chill down my spine" (or anyone's spine — cliché)
   - "raspy voice", "darkest secret", "deepest fear"
-  - "little did I know", "what happened next", "you won't believe"
+  - "little did I know", "little did she know", "what happened next",
+    "you won't believe"
   - "creaks and groans", "wooden beams", "settling house"
-  - listing literal sensory data with numbers ("52-degree air", "60 Hz hum")
-  - explicit gore: "blood pooling", "intestines", "split skull", etc. —
-    aim for unease, not splatter
+  - explicit gore: "blood pooling", "intestines", "split skull" — unease,
+    not splatter
   - any sexual or romantic language
 
 YouTube title: under 60 chars. Curiosity gap, not clickbait. A number,
@@ -241,7 +254,7 @@ Rules for keywords:
 
 Respond with ONLY a JSON object (no markdown, no prose around it):
 {{
-  "narration": "160-200 word first-person present-tense horror narration",
+  "narration": "{word_min}-{word_max} word THIRD-PERSON STORYTELLER horror narration about a specific other person/place/event — NEVER first-person",
   "youtube_title": "...",
   "description": "150-200 word SEO description that hints at the hook",
   "tags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
@@ -281,9 +294,11 @@ def _build_messages(prompt, extra_messages=None):
         {
             "role": "system",
             "content": (
-                "You are an expert YouTube Shorts writer specializing in "
-                "gothic-horror narration. Respond with a single JSON object "
-                "only — no markdown fences, no preamble, no trailing text."
+                "You are an expert YouTube Shorts writer. For horror you write "
+                "as a THIRD-PERSON storyteller — chilling tales about specific "
+                "OTHER people/places/events, never 'I/me/my' personal accounts. "
+                "Respond with a single JSON object only — no markdown fences, "
+                "no preamble, no trailing text."
             ),
         },
         {"role": "user", "content": prompt},

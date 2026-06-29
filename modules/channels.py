@@ -49,10 +49,13 @@ CHANNEL_PRESETS: dict[str, dict] = {
     "horror": {
         "display_name":   "Horror stories",
         "tone":           "chilling, dread-first, atmospheric",
-        # First-person works HERE because the genre lives on lived
-        # dread. Most other niches should NOT use "I/me" — see how
-        # each preset below explicitly sets perspective.
-        "perspective":    "first_person_present — narrator IS in the story right now ('I hear', 'I see'). Specific, somatic, present-tense.",
+        # STORYTELLER voice — like a classic gothic narrator recounting
+        # a chilling tale that happened to OTHERS. Specific people,
+        # specific places, specific dates. NEVER 'this happened to me',
+        # 'I was walking' — that voice reads as fake autobiography
+        # and kills retention. The narrator is the disembodied teller
+        # of the legend, not a participant.
+        "perspective":    "third_person_storyteller — like a campfire / podcast host narrating a true horror story. Pick concrete subjects ('Sarah', 'the night nurse on ward 4', 'the workers in the abandoned mill'). Past tense or present-tense storytelling, NOT 'I/me'. The narrator describes events from outside, with chilling detachment. Banned openings: 'It happened to me', 'I was', 'Let me tell you about the time I'. Required: the protagonist is someone OTHER than the narrator. Vary characters across scripts — don't always be 'she'.",
         "voice":          "en-US-BrianMultilingualNeural",
         "rate":           "-5%",
         "pitch":          "-2Hz",

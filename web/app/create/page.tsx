@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import Link from "next/link";
 import clsx from "clsx";
 import {
   Wand2, FileText, Image as ImageIcon, X, Loader2, Send,
@@ -186,6 +187,12 @@ export default function CreatePage() {
           channel-appropriate hook, fills any missing visuals from stock
           providers, and renders the final Short.
         </p>
+        <Link
+          href="/create/wizard"
+          className="inline-flex items-center gap-1.5 text-xs text-accent hover:underline mt-2"
+        >
+          Or use the step-by-step wizard for full control →
+        </Link>
       </div>
 
       {/* Channel picker */}

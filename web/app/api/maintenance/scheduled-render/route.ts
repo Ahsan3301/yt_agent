@@ -52,80 +52,121 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const targets = (data.daily_targets || {}) as Record<string, number>;
     const publish = data.publish_default !== false;
     const dry_run = !publish;
+
+    // PRIMARY source of targets: the channels collection (per-channel
+    // niche + daily_count + enabled). Each enabled channel with
+    // daily_count > 0 contributes count jobs for its niche today.
+    //
+    // FALLBACK: the legacy schedules/default.daily_targets map (keyed
+    // by niche) — preserved for users who haven't migrated to the new
+    // channels page yet.
+    const targets: Record<string, number> = {};
+    const channelMeta: Array<{
+      niche: string;
+      channel_name: string;
+      web_research: boolean | null;
+    }> = [];
+    try {
+      const channelsSnap = await adminDb().collection("channels").get();
+      channelsSnap.forEach((doc) => {
+        const c = doc.data() as Record<string, unknown>;
+        if (!c.enabled) return;
+        const niche = String(c.niche || "").trim();
+        const count = Math.max(0, Math.min(10, Number(c.daily_count) || 0));
+        if (!niche || count === 0) return;
+        for (let i = 0; i < count; i++) {
+          channelMeta.push({
+            niche,
+            channel_name: String(c.name || doc.id),
+            web_research:
+              c.web_research === true ? true :
+              c.web_research === false ? false : null,
+          });
+        }
+        targets[niche] = (targets[niche] || 0) + count;
+      });
+    } catch (e) {
+      logRoute(reqId, "channels collection read failed (legacy path)", { err: String(e) });
+    }
+    // Legacy fallback when no channels are configured yet.
+    if (channelMeta.length === 0) {
+      const legacy = (data.daily_targets || {}) as Record<string, number>;
+      for (const [niche, count] of Object.entries(legacy)) {
+        const n = Math.max(0, Math.min(10, Number(count) || 0));
+        for (let i = 0; i < n; i++) {
+          channelMeta.push({ niche, channel_name: niche, web_research: null });
+        }
+        if (n > 0) targets[niche] = (targets[niche] || 0) + n;
+      }
+    }
 
     const workers = await pickWorkers();
     const targetWorker = workers[0];
 
     const queued: { job_id: string; channel: string; backend_url: string | null }[] = [];
     const skipped: { channel: string; reason: string }[] = [];
-    for (const [channel, count] of Object.entries(targets)) {
-      // Sanity-check the channel name. Reject empties / overlong /
-      // whitespace-only entries so an invalid Firestore edit doesn't
-      // queue garbage jobs.
-      const cleanChannel = String(channel || "").trim();
-      const safeCount = Math.max(0, Math.min(10, Number(count) || 0));
+    // Iterate channelMeta — each entry is ONE job slot (channel with
+    // daily_count=2 → 2 slots in this array). Each gets its own job
+    // id + Firestore doc + dispatch attempt.
+    for (const slot of channelMeta) {
+      const cleanChannel = String(slot.niche || "").trim();
       if (!cleanChannel || cleanChannel.length > 60) {
-        skipped.push({ channel, reason: "invalid channel name (empty / too long)" });
+        skipped.push({ channel: slot.niche, reason: "invalid niche name (empty / too long)" });
         continue;
       }
-      if (safeCount === 0) continue;
-      for (let i = 0; i < safeCount; i++) {
-        const jobId = _shortId();
-        // Status: "queued" with no backend until a worker actually
-        // accepts the dispatch. The optimistic "running" in the old
-        // code was misleading — workers may not actually be reachable.
-        const job = {
-          id: jobId,
-          status: "queued" as const,
-          channel: cleanChannel,
-          dry_run,
-          queued_at: Date.now() / 1000,
-          started_at: null,
-          finished_at: null,
-          percent: 0,
-          current_step: null,
-          current_step_label: null,
-          video_url: null,
-          public_url: null,
-          error: null,
-          run_id: null,
-          backend_instance_id: null,
-          backend_url: null,
-          created_by: "scheduled-render",
-          req_id: reqId,
-          // Scheduled renders inherit the channel's web_research default
-          // unless the schedule doc overrides it. Defaults to null →
-          // backend uses channel default.
-          web_research: data.web_research === true ? true
-                       : data.web_research === false ? false
-                       : null,
-          updated_at: FieldValue.serverTimestamp(),
-        };
-        await adminDb().collection("jobs").doc(jobId).set(job);
+      const jobId = _shortId();
+      // Status: "queued" with no backend until a worker actually
+      // accepts the dispatch. The optimistic "running" in the old
+      // code was misleading — workers may not actually be reachable.
+      const job = {
+        id: jobId,
+        status: "queued" as const,
+        channel: cleanChannel,
+        dry_run,
+        queued_at: Date.now() / 1000,
+        started_at: null,
+        finished_at: null,
+        percent: 0,
+        current_step: null,
+        current_step_label: null,
+        video_url: null,
+        public_url: null,
+        error: null,
+        run_id: null,
+        backend_instance_id: null,
+        backend_url: null,
+        created_by: "scheduled-render",
+        req_id: reqId,
+        // Per-channel web_research override (from channels collection).
+        // null = use the niche's default from modules/channels.py.
+        web_research: slot.web_research,
+        // Track which dashboard-channel this job belongs to so the
+        // /queue page can group jobs by channel later.
+        source_channel_name: slot.channel_name,
+        updated_at: FieldValue.serverTimestamp(),
+      };
+      await adminDb().collection("jobs").doc(jobId).set(job);
 
-        // Best-effort dispatch — workers will also pull from the queue
-        // via their claim loop. The dispatch tries the new manual-mode
-        // params too in case the schedule grew a topic seed later.
-        if (targetWorker) {
-          fetch(`${targetWorker.url.replace(/\/$/, "")}/api/jobs`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-Request-Id": reqId,
-              "X-Vercel-Gateway": "scheduled",
-            },
-            body: JSON.stringify({
-              channel: cleanChannel,
-              dry_run,
-              web_research: job.web_research,
-            }),
-          }).catch(() => {});
-        }
-        queued.push({ job_id: jobId, channel: cleanChannel, backend_url: targetWorker?.url || null });
+      // Best-effort dispatch — workers will also pull from the queue
+      // via their claim loop.
+      if (targetWorker) {
+        fetch(`${targetWorker.url.replace(/\/$/, "")}/api/jobs`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Request-Id": reqId,
+            "X-Vercel-Gateway": "scheduled",
+          },
+          body: JSON.stringify({
+            channel: cleanChannel,
+            dry_run,
+            web_research: slot.web_research,
+          }),
+        }).catch(() => {});
       }
+      queued.push({ job_id: jobId, channel: cleanChannel, backend_url: targetWorker?.url || null });
     }
 
     logRoute(reqId, "scheduled-render queued", { count: queued.length, skipped: skipped.length });
