@@ -1,29 +1,41 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { Terminal, Pause, Play, Trash2, ArrowDown } from "lucide-react";
+import { Terminal, Pause, Play, Trash2, ArrowDown, Radio } from "lucide-react";
 import clsx from "clsx";
 import { fetchLogs, clearLogs, type LogEntry } from "@/lib/api";
+import { getDb, isFirestoreConfigured } from "@/lib/firestore";
+import {
+  collection, query, orderBy, onSnapshot, Timestamp,
+} from "firebase/firestore";
 
 /**
- * Live backend logs streamed via /api/logs?since=<seq>.
+ * Live backend logs.
  *
- * - Polls fast (1.2s) while a run is in progress; slower (4s) when idle.
- * - Auto-scrolls to the bottom UNLESS the user has scrolled up — then it
- *   shows a "jump to latest" button instead.
- * - Filter input does a case-insensitive substring match on level/name/msg.
- * - Level filter chips: ALL / INFO / WARN / ERROR.
+ * Two streaming modes, picked at mount time:
  *
- * Designed to be embedded as a card on the dashboard while a job runs.
- * The panel is mounted with `active=true` when the dashboard has a
- * running/queued job and switches to slow polling when it doesn't.
+ *   • Firestore subcollection (PREFERRED when `runId` is provided AND
+ *     Firestore is configured). Subscribes to runs_index/<id>/logs via
+ *     onSnapshot — true realtime, survives worker tunnel hiccups, and
+ *     the trail persists even after the worker dies.
+ *
+ *   • Polling fallback — the original behaviour. Polls /api/logs on the
+ *     worker URL. Slower; depends on tunnel + worker liveness. Used
+ *     when no runId is available (legacy dashboard live-tail) or when
+ *     Firestore isn't reachable from the browser.
+ *
+ * Either way the UI is identical: filter, level chips, follow-tail
+ * with auto-scroll, pause, clear.
  */
 export default function LogsPanel({
   active,
   className,
+  runId,
 }: {
   active: boolean;
   className?: string;
+  /** When provided, switch to Firestore realtime subscription on this run. */
+  runId?: string;
 }) {
   const [entries, setEntries] = useState<LogEntry[]>([]);
   const [headSeq, setHeadSeq] = useState(0);
@@ -35,9 +47,66 @@ export default function LogsPanel({
   const scrollerRef = useRef<HTMLDivElement>(null);
   const lastSeqRef = useRef(0);
 
-  // Polling loop. Doesn't use setInterval — chains setTimeouts so we
-  // never have two requests in flight.
+  // Pick streaming mode at mount:
+  // Firestore realtime if we have a runId AND Firestore is configured;
+  // otherwise the polling fallback path.
+  const firestoreMode = !!(runId && isFirestoreConfigured());
+  const [streamingFrom, setStreamingFrom] = useState<"firestore" | "poll" | null>(null);
+
+  // Firestore branch — onSnapshot on runs_index/<runId>/logs.
   useEffect(() => {
+    if (!firestoreMode || paused || !runId) return;
+    const db = getDb();
+    if (!db) return;
+    const q = query(
+      collection(db, "runs_index", runId, "logs"),
+      orderBy("ts", "asc"),
+    );
+    let cancelled = false;
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        if (cancelled) return;
+        // Build the full list from Firestore — sink ships in batches
+        // (~50 lines each) so this is bounded.
+        const all: LogEntry[] = [];
+        snap.forEach((doc) => {
+          const d = doc.data() as Record<string, unknown>;
+          const ts = d.ts;
+          let epoch = 0;
+          if (typeof ts === "number") epoch = ts;
+          else if (ts instanceof Timestamp) epoch = ts.toMillis() / 1000;
+          else if (ts && typeof ts === "object" && "seconds" in (ts as object)) {
+            const t = ts as { seconds: number; nanoseconds?: number };
+            epoch = t.seconds + (t.nanoseconds ?? 0) / 1e9;
+          } else {
+            epoch = Date.now() / 1000;
+          }
+          all.push({
+            seq:   Number(d.seq ?? doc.id) || 0,
+            time:  epoch,
+            level: String(d.level || "INFO"),
+            name:  String(d.name || ""),
+            msg:   String(d.msg || ""),
+          });
+        });
+        setEntries(all.slice(-2000));
+        if (all.length > 0) setHeadSeq(all[all.length - 1].seq);
+        setStreamingFrom("firestore");
+      },
+      (err) => {
+        console.warn("LogsPanel firestore subscription error:", err);
+      },
+    );
+    return () => {
+      cancelled = true;
+      unsub();
+    };
+  }, [firestoreMode, runId, paused]);
+
+  // Polling fallback — runs only when NOT in firestoreMode.
+  useEffect(() => {
+    if (firestoreMode) return;
     let cancelled = false;
     const tick = async () => {
       if (cancelled) return;
@@ -55,6 +124,7 @@ export default function LogsPanel({
                 ? merged.slice(merged.length - 2000)
                 : merged;
             });
+            setStreamingFrom("poll");
           }
         } catch {
           // backend hiccup — try again next tick
@@ -66,7 +136,7 @@ export default function LogsPanel({
     return () => {
       cancelled = true;
     };
-  }, [active, paused]);
+  }, [firestoreMode, active, paused]);
 
   // Auto-scroll to bottom when new entries arrive AND user wants to follow.
   useEffect(() => {
@@ -120,6 +190,16 @@ export default function LogsPanel({
         <div className="flex items-center gap-2">
           <Terminal className="h-4 w-4 text-accent" />
           <span className="font-semibold">Live logs</span>
+          {streamingFrom === "firestore" && (
+            <span className="pill pill-success text-[10px]" title="Realtime via Firestore subscription">
+              <Radio className="h-3 w-3" /> live
+            </span>
+          )}
+          {streamingFrom === "poll" && (
+            <span className="pill pill-muted text-[10px]" title="Polling worker /api/logs">
+              poll
+            </span>
+          )}
           <span className="text-xs text-neutral-500">
             {entries.length} entries · seq {headSeq}
           </span>

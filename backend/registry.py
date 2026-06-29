@@ -162,26 +162,41 @@ def start():
 
     def _loop():
         from backend import jobs, jobs_db
+        # Adaptive cadence: heartbeat 15s while there's an active job,
+        # 60s when idle. Same total write budget over time (idle dominates),
+        # but the dashboard's Monitor card stays fresh during renders +
+        # the queue-claim loop polls 4x faster when actively serving.
+        busy_interval = 15
+        idle_interval = HEARTBEAT_INTERVAL  # respects env override (default 60s)
+
+        # First heartbeat fires IMMEDIATELY on worker startup so the
+        # dashboard's onSnapshot listener sees the card within ~1 sec
+        # instead of after the first sleep (was up to 60s wait).
+        first = True
         while _running:
             try:
                 depth = jobs.queue_depth()
-                new_status = "busy" if jobs.is_busy() else "available"
+                busy = jobs.is_busy()
+                new_status = "busy" if busy else "available"
                 if new_status != _status:
                     set_status(new_status)
                 push_now(queue_depth=depth)
-                # Queue-claim: if we're idle, look for a job that was
-                # submitted via Vercel while no worker was alive (or
-                # while we were busy). One job per cycle keeps load
-                # predictable.
-                if not jobs.is_busy() and public_url():
+                if not busy and public_url():
                     claimed = jobs_db.claim_queued(INSTANCE_ID, public_url())
                     if claimed:
                         jobs.adopt_remote(claimed)
             except Exception as e:
                 log.warning(f"heartbeat loop error: {e}")
-            time.sleep(HEARTBEAT_INTERVAL)
+            # Pick the next sleep based on current state.
+            sleep_for = busy_interval if jobs.is_busy() else idle_interval
+            # Don't sleep at startup — get the second heartbeat out
+            # quickly to confirm the worker is alive (timestamp fresh).
+            if first:
+                first = False
+                sleep_for = min(sleep_for, 3)
+            time.sleep(sleep_for)
 
     t = threading.Thread(target=_loop, daemon=True, name="registry-heartbeat")
     t.start()
     log.info(f"registry heartbeat started "
-             f"(every {HEARTBEAT_INTERVAL}s; instance_id={INSTANCE_ID})")
+             f"(idle={HEARTBEAT_INTERVAL}s, busy=15s; instance_id={INSTANCE_ID})")

@@ -176,8 +176,10 @@ except Exception:
     pass
 
 
-def _r2_put_file(key: str, local_path: str, content_type: str) -> str:
-    """Atomic upload: stage to a `.tmp` key, then server-side rename.
+def _r2_put_file(key: str, local_path: str, content_type: str,
+                 *, attempts: int = 3) -> str:
+    """Atomic + VERIFIED upload: stage to a `.tmp` key, server-side
+    rename, then HEAD-verify the final byte count matches the local file.
 
     Two upload paths chosen by file size:
 
@@ -186,75 +188,115 @@ def _r2_put_file(key: str, local_path: str, content_type: str) -> str:
         this is the path that dodges the boto3/urllib3 SSL recursion
         bug ("maximum recursion depth exceeded" on big chunk uploads).
 
-      • Larger files use upload_file which auto-chunks. Recursion bug
-        risk remains there but we accept it — at our scale (~5-20 MB
-        Shorts) we never hit this branch in practice.
+      • Larger files use upload_file which auto-chunks.
 
-    Atomicity: both paths upload to a hidden staging key first
-    (`{key}.tmp.{pid}.{epoch}`), then server-side copy to the final key,
-    then delete staging. Readers of `{key}` see either the complete
-    file or no file at all — never a partial.
+    Atomicity: both paths upload to a hidden staging key first, then
+    server-side copy to the final key, then delete staging.
+
+    VERIFICATION: after copy, head_object on the final key and confirm
+    ContentLength == local file size. If mismatch, delete final, retry
+    the whole flow up to `attempts` times with exponential backoff.
+    Catches silent put_object truncation that boto3 sometimes swallows
+    on flaky networks. Net: readers never see a corrupt/truncated file.
     """
     import time as _time
-    staging = f"{key}.tmp.{os.getpid()}.{int(_time.time())}"
-    client = _r2c()
-    size = 0
+    expected_size = 0
     try:
-        size = os.path.getsize(local_path)
+        expected_size = os.path.getsize(local_path)
     except OSError:
-        size = 0
-    try:
-        if 0 < size <= _SINGLE_PUT_MAX_BYTES:
-            # Single PUT — no multipart, no chunked stream, no recursion
-            # bug. Body=file-handle lets boto3 stream from disk without
-            # loading the whole thing into memory.
-            log.info(f"R2 single-PUT {size/1024/1024:.1f} MB -> {staging}")
-            with open(local_path, "rb") as f:
-                client.put_object(
-                    Bucket=R2_BUCKET,
-                    Key=staging,
-                    Body=f,
-                    ContentType=content_type,
+        pass
+
+    last_err: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        staging = f"{key}.tmp.{os.getpid()}.{int(_time.time())}.{attempt}"
+        client = _r2c()
+        try:
+            if 0 < expected_size <= _SINGLE_PUT_MAX_BYTES:
+                log.info(f"R2 single-PUT {expected_size/1024/1024:.1f} MB -> {staging} (try {attempt}/{attempts})")
+                with open(local_path, "rb") as f:
+                    client.put_object(
+                        Bucket=R2_BUCKET,
+                        Key=staging,
+                        Body=f,
+                        ContentType=content_type,
+                    )
+            else:
+                log.info(f"R2 multipart upload {expected_size/1024/1024:.1f} MB -> {staging} (try {attempt}/{attempts})")
+                client.upload_file(
+                    local_path, R2_BUCKET, staging,
+                    ExtraArgs={"ContentType": content_type},
                 )
-        else:
-            # Large file (>100 MB) or empty stat — fall back to
-            # upload_file which handles multipart. Recursion risk noted.
-            log.info(f"R2 multipart upload {size/1024/1024:.1f} MB -> {staging}")
-            client.upload_file(
-                local_path, R2_BUCKET, staging,
-                ExtraArgs={"ContentType": content_type},
+
+            # Server-side copy → final key (atomic; readers see the new object).
+            client.copy_object(
+                Bucket=R2_BUCKET,
+                Key=key,
+                CopySource={"Bucket": R2_BUCKET, "Key": staging},
+                ContentType=content_type,
+                MetadataDirective="REPLACE",
             )
 
-        # Server-side copy → final key (atomic; readers see the new object).
-        client.copy_object(
-            Bucket=R2_BUCKET,
-            Key=key,
-            CopySource={"Bucket": R2_BUCKET, "Key": staging},
-            ContentType=content_type,
-            MetadataDirective="REPLACE",
-        )
-        # Drop the staging key.
-        try:
-            client.delete_object(Bucket=R2_BUCKET, Key=staging)
-        except Exception as _e:
-            log.debug(f"r2 staging cleanup non-fatal: {_e}")
-        return f"{R2_PUBLIC_URL}/{key}"
+            # VERIFY: head_object on final key and confirm size. If
+            # the upstream silently truncated (network blip that
+            # boto3 didn't surface), this catches it.
+            if expected_size > 0:
+                try:
+                    head = client.head_object(Bucket=R2_BUCKET, Key=key)
+                    got = int(head.get("ContentLength") or 0)
+                    if got != expected_size:
+                        log.warning(
+                            f"R2 verify FAILED for {key}: expected {expected_size} bytes, "
+                            f"got {got}. Will retry."
+                        )
+                        # Delete the broken final + staging, then retry.
+                        try:
+                            client.delete_object(Bucket=R2_BUCKET, Key=key)
+                        except Exception:
+                            pass
+                        _r2_cleanup_staging(client, staging)
+                        last_err = RuntimeError(
+                            f"R2 verify failed: expected {expected_size} bytes, got {got}"
+                        )
+                        # Exponential backoff before next attempt.
+                        _time.sleep(min(8.0, 1.5 ** attempt))
+                        continue
+                    log.info(f"R2 verify OK: {got} bytes at {key}")
+                except Exception as e:
+                    # head_object failed — treat as verify failure too.
+                    log.warning(f"R2 verify HEAD failed for {key}: {e}. Will retry.")
+                    _r2_cleanup_staging(client, staging)
+                    last_err = e
+                    _time.sleep(min(8.0, 1.5 ** attempt))
+                    continue
 
-    except RecursionError as e:
-        # Specific case: the boto3/urllib3 SSL recursion bug. If we hit
-        # this on the single-PUT path something's deeply wrong; on the
-        # multipart path it's the known bug. Either way, clean up and
-        # surface clearly.
-        log.error(f"R2 upload hit RecursionError on {key} ({size/1024/1024:.1f} MB) — "
-                  f"likely urllib3/truststore SSL handshake recursion")
-        _r2_cleanup_staging(client, staging)
-        raise RuntimeError(
-            f"R2 upload failed for {key}: RecursionError "
-            f"(urllib3/SSL recursion). File was {size/1024/1024:.1f} MB."
-        ) from e
-    except Exception as e:
-        _r2_cleanup_staging(client, staging)
-        raise RuntimeError(f"R2 upload failed for {key}: {e}") from e
+            # Success — clean up staging and return the URL.
+            try:
+                client.delete_object(Bucket=R2_BUCKET, Key=staging)
+            except Exception as _e:
+                log.debug(f"r2 staging cleanup non-fatal: {_e}")
+            return f"{R2_PUBLIC_URL}/{key}"
+
+        except RecursionError as e:
+            log.error(f"R2 upload hit RecursionError on {key} ({expected_size/1024/1024:.1f} MB) — "
+                      f"likely urllib3/truststore SSL handshake recursion")
+            _r2_cleanup_staging(client, staging)
+            last_err = RuntimeError(
+                f"R2 upload failed for {key}: RecursionError "
+                f"(urllib3/SSL recursion). File was {expected_size/1024/1024:.1f} MB."
+            )
+            # Retry — sometimes the second attempt succeeds.
+            _time.sleep(min(8.0, 1.5 ** attempt))
+            continue
+        except Exception as e:
+            _r2_cleanup_staging(client, staging)
+            last_err = e
+            _time.sleep(min(8.0, 1.5 ** attempt))
+            continue
+
+    # Exhausted attempts.
+    raise RuntimeError(
+        f"R2 upload failed for {key} after {attempts} attempts: {last_err}"
+    ) from last_err
 
 
 def _r2_cleanup_staging(client, staging: str) -> None:

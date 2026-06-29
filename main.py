@@ -306,6 +306,15 @@ def run_pipeline(
     log.info("=" * 50)
 
     run_state.start(run_id=run_id, channel=channel_type, dry_run=dry_run)
+    # Stream this run's logs to Firestore runs_index/<id>/logs so the
+    # dashboard's LogsPanel can subscribe in real-time. Best-effort —
+    # if Firestore isn't configured the sink no-ops and we fall back
+    # to the worker's /api/logs polling path.
+    try:
+        from backend import logbuf as _logbuf
+        _logbuf.attach_run(run_id)
+    except Exception:
+        pass
 
     try:
         # ── STEP 1: Research (or manual topic) ───────────────────
