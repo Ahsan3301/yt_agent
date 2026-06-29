@@ -376,7 +376,13 @@ function JobRow({
         />
       </td>
       <td className="px-2 py-2">
-        <div className="font-mono text-xs text-neutral-300">{job.id.slice(0, 12)}</div>
+        <a
+          href={`/queue/${encodeURIComponent(job.id)}`}
+          className="font-mono text-xs text-accent hover:underline"
+          title="Open detail view"
+        >
+          {job.id.slice(0, 12)}
+        </a>
         {job.run_id && (
           <div className="font-mono text-[10px] text-neutral-500">
             run {job.run_id}
