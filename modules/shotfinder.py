@@ -343,6 +343,12 @@ def _score_local_image(path, visual, premise):
 # ── Per-shot finder ──────────────────────────────────────────
 
 def find_image_for_shot(shot, output_dir, used_ids, channel="horror"):
+    # Cancel check at entry — a user clicking Cancel between shots
+    # shouldn't have to wait for the current shot to fully resolve
+    # before the pipeline unwinds.
+    from modules import run_state as _rs
+    _rs.check_cancel()
+
     vid_cfg = load_settings().get("video", {})
     providers = load_settings().get("providers", {}) or {}
     threshold = int(vid_cfg.get("vision_judge_threshold", 4))
@@ -432,6 +438,7 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror"):
     if providers.get("huggingface", True) and os.getenv("HF_TOKEN", "").strip():
         ai_attempts = int(vid_cfg.get("ai_image_attempts_per_shot", 3))
         for trial in range(ai_attempts):
+            _rs.check_cancel()
             crafted = craft_image_prompt(
                 narration_excerpt=premise,
                 visual_description=visual,
@@ -465,6 +472,7 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror"):
     if providers.get("pollinations", False):
         ai_attempts = int(vid_cfg.get("ai_image_attempts_per_shot", 3))
         for trial in range(ai_attempts):
+            _rs.check_cancel()
             crafted = craft_image_prompt(
                 narration_excerpt=premise,
                 visual_description=visual,

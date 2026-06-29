@@ -166,3 +166,68 @@ def reset():
     """Clear the state file. Called by the GUI when the user dismisses a result."""
     if STATE_PATH.exists():
         STATE_PATH.unlink()
+
+
+def interruptible_sleep(seconds: float, *, poll_every: float = 0.5) -> None:
+    """Sleep for `seconds`, but check for cancel every `poll_every` seconds.
+
+    Replaces bare time.sleep() in pipeline modules so the user's cancel
+    button actually interrupts long waits (backoff loops, retry pauses,
+    rate-limit-imposed waits). Raises Cancelled mid-sleep if requested.
+    """
+    import time as _t
+    if seconds <= 0:
+        return
+    end = _t.monotonic() + seconds
+    while True:
+        remaining = end - _t.monotonic()
+        if remaining <= 0:
+            return
+        check_cancel()
+        _t.sleep(min(poll_every, remaining))
+
+
+def with_cancel_polling(call, *, every_seconds: float = 2.0, timeout: float = 120.0):
+    """Run `call` in a background thread, poll for cancel from the
+    foreground every `every_seconds`. If cancel arrives, raises
+    Cancelled IMMEDIATELY (the background thread will eventually
+    finish on its own but its result is discarded).
+
+    Use this to wrap blocking calls that can't otherwise be
+    interrupted — NIM chat completions, edge-tts synthesis, etc.
+
+    Returns whatever `call()` returns on success.
+
+    Caveat: the background work continues briefly after Cancelled —
+    we don't have a way to truly kill third-party SDK threads. This
+    is good enough: the foreground unwinds the pipeline immediately,
+    the worker process eventually reaps the thread.
+    """
+    import threading as _th
+    import queue as _q
+    import time as _t
+
+    out: _q.Queue = _q.Queue(maxsize=1)
+
+    def _runner():
+        try:
+            out.put(("ok", call()))
+        except BaseException as e:  # noqa: BLE001 — relay anything
+            out.put(("err", e))
+
+    th = _th.Thread(target=_runner, daemon=True, name="cancel-pollable")
+    th.start()
+
+    start = _t.monotonic()
+    while True:
+        try:
+            kind, val = out.get(timeout=every_seconds)
+            if kind == "ok":
+                return val
+            raise val  # type: ignore[misc]
+        except _q.Empty:
+            check_cancel()
+            if _t.monotonic() - start > timeout:
+                raise TimeoutError(
+                    f"with_cancel_polling: call exceeded {timeout}s"
+                )
