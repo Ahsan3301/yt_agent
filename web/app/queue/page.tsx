@@ -22,6 +22,14 @@ type Job = {
   error?: string | null;
   run_id?: string | null;
   public_url?: string | null;
+  // Manual-mode payload (any present = "manual mode" badge shows).
+  manual_topic?: string;
+  manual_script?: string;
+  manual_title?: string;
+  manual_images?: string[];
+  manual_channel_desc?: string;
+  // Tri-state: null/undefined = used channel default.
+  web_research?: boolean | null;
 };
 
 const STATUS_FILTERS = ["all", "queued", "running", "complete", "failed", "cancelled"] as const;
@@ -385,9 +393,35 @@ function JobRow({
       </td>
       <td className="px-2 py-2 text-neutral-300">
         {job.channel || "—"}
-        {job.dry_run && (
-          <span className="ml-1 text-[10px] text-neutral-500">(dry-run)</span>
-        )}
+        <div className="flex items-center gap-1 flex-wrap mt-0.5">
+          {job.dry_run && (
+            <span className="text-[10px] text-neutral-500">dry-run</span>
+          )}
+          {(job.manual_topic || job.manual_script || (job.manual_images && job.manual_images.length > 0)) && (
+            <span className="text-[10px] text-accent" title={
+              job.manual_script ? "user provided full script" :
+              job.manual_topic ? "user provided topic seed" :
+              "user uploaded images"
+            }>
+              manual
+            </span>
+          )}
+          {job.manual_channel_desc && (
+            <span className="text-[10px] text-amber-400" title={`custom niche: ${job.manual_channel_desc.slice(0, 80)}`}>
+              custom niche
+            </span>
+          )}
+          {job.web_research === true && (
+            <span className="text-[10px] text-sky-400" title="NIM browser agent ran">
+              web research
+            </span>
+          )}
+          {job.web_research === false && (
+            <span className="text-[10px] text-neutral-500" title="web research forced off">
+              no research
+            </span>
+          )}
+        </div>
       </td>
       <td className="px-2 py-2 text-xs text-neutral-400">
         {job.current_step_label || job.current_step || "—"}

@@ -1,15 +1,17 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import Link from "next/link";
 import {
   Play, Square, CheckCircle2, XCircle, Loader2, AlertTriangle,
-  Film, Sparkles, Clock,
+  Film, Sparkles, Clock, Wand2,
 } from "lucide-react";
 import clsx from "clsx";
 import {
   getSettings, getState, startRun, cancelRun, resetState, getPreflight,
   listRuns, type Settings, type RunState, type Run,
 } from "@/lib/api";
+import { PRESET_CHANNELS, loadCustomChannels, type ChannelPreset } from "@/lib/channels";
 import VideoPlayer from "@/components/VideoPlayer";
 import LogsPanel from "@/components/LogsPanel";
 
@@ -28,6 +30,10 @@ export default function Dashboard() {
   const [latest, setLatest] = useState<Run | null>(null);
   const [preflight, setPreflight] = useState<{ ok: boolean; error?: string } | null>(null);
   const [channel, setChannel] = useState<string>("horror");
+  const [savedChannels, setSavedChannels] = useState<ChannelPreset[]>([]);
+  useEffect(() => {
+    setSavedChannels(loadCustomChannels());
+  }, []);
   const [dry, setDry] = useState(true);
   const [starting, setStarting] = useState(false);
 
@@ -172,15 +178,33 @@ export default function Dashboard() {
       {/* Idle / done — run controls */}
       {!isRunning && (
         <div className="card space-y-4">
-          <div className="text-lg font-semibold flex items-center gap-2">
-            <Sparkles className="h-5 w-5 text-accent" /> Start a new run
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div className="text-lg font-semibold flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-accent" /> Start a new run
+            </div>
+            <Link
+              href="/create"
+              className="btn btn-ghost h-8 text-xs"
+              title="Open the full creator: topic/script input, image upload, custom niches, web research toggle"
+            >
+              <Wand2 className="h-3.5 w-3.5" />
+              Advanced create
+            </Link>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
             <div>
               <label className="label">Channel</label>
               <select className="select" value={channel} onChange={(e) => setChannel(e.target.value)}>
-                <option value="horror">Horror</option>
-                <option value="wisdom">Wisdom</option>
+                {PRESET_CHANNELS.map((c) => (
+                  <option key={c.name} value={c.name}>{c.label}</option>
+                ))}
+                {savedChannels.length > 0 && (
+                  <optgroup label="Your custom niches">
+                    {savedChannels.map((c) => (
+                      <option key={c.name} value={c.name}>{c.label}</option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
             </div>
             <label className="flex items-center gap-2 text-sm pt-6">
@@ -195,6 +219,11 @@ export default function Dashboard() {
               {starting ? "Starting…" : "Run pipeline now"}
             </button>
           </div>
+          <p className="text-xs text-neutral-500">
+            Quick run uses the channel&apos;s defaults (auto research + auto script).
+            For topic seeds, full scripts, image uploads or the web research toggle,
+            use <Link href="/create" className="text-accent hover:underline">Advanced create</Link>.
+          </p>
         </div>
       )}
 

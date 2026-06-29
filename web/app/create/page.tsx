@@ -7,21 +7,10 @@ import {
   Sparkles, Plus, AlertCircle, Globe,
 } from "lucide-react";
 
-// Built-in channel presets (must mirror modules/channels.py).
-// `webDefault` = whether NIM browser research defaults ON for this niche.
-// User can flip it per-job via the toggle below.
-const PRESET_CHANNELS = [
-  { name: "horror",   label: "Horror stories",         webDefault: false },
-  { name: "wisdom",   label: "Wisdom + motivation",    webDefault: false },
-  { name: "finance",  label: "Finance + business",     webDefault: true  },
-  { name: "fitness",  label: "Fitness + discipline",   webDefault: true  },
-  { name: "science",  label: "Science + tech",         webDefault: true  },
-  { name: "history",  label: "History + mythology",    webDefault: true  },
-  { name: "comedy",   label: "Comedy + observational", webDefault: false },
-  { name: "food",     label: "Food + cooking",         webDefault: false },
-  { name: "travel",   label: "Travel + culture",       webDefault: false },
-  { name: "gaming",   label: "Gaming + lore",          webDefault: false },
-];
+import {
+  PRESET_CHANNELS, loadCustomChannels, addCustomChannel, removeCustomChannel,
+  type ChannelPreset,
+} from "@/lib/channels";
 
 type UploadedImage = {
   url: string;
@@ -34,6 +23,12 @@ export default function CreatePage() {
   const [customChannel, setCustomChannel] = useState("");
   const [customDesc, setCustomDesc] = useState("");
   const [useCustom, setUseCustom] = useState(false);
+  // Saved user-defined niches load from localStorage on mount and
+  // refresh on submission. Built-in presets + these = full picker.
+  const [savedCustom, setSavedCustom] = useState<ChannelPreset[]>([]);
+  useEffect(() => {
+    setSavedCustom(loadCustomChannels());
+  }, []);
 
   const [mode, setMode] = useState<"topic" | "script">("topic");
   const [topic, setTopic] = useState("");
@@ -44,7 +39,8 @@ export default function CreatePage() {
   // channels resets to that channel's default unless the user has
   // already manually toggled it (the toggle below flips to a concrete
   // boolean, so we know not to override).
-  const channelMeta = PRESET_CHANNELS.find((c) => c.name === channel);
+  const allChannels = [...PRESET_CHANNELS, ...savedCustom];
+  const channelMeta = allChannels.find((c) => c.name === channel);
   const channelDefault = useCustom ? true : (channelMeta?.webDefault ?? false);
   const [webResearch, setWebResearch] = useState<boolean>(channelDefault);
   const [webResearchTouched, setWebResearchTouched] = useState(false);
@@ -141,12 +137,29 @@ export default function CreatePage() {
       if (!r.ok) {
         setError(d.error || `HTTP ${r.status}`);
       } else {
+        // If the user defined a custom niche, persist it so it appears
+        // in future channel pickers across the dashboard.
+        if (useCustom && customChannel.trim()) {
+          addCustomChannel({
+            name: customChannel.trim(),
+            description: customDesc.trim(),
+          });
+          setSavedCustom(loadCustomChannels());
+          // Switch the picker to the now-saved channel so the user sees
+          // their new niche selected for the next submission.
+          setChannel(customChannel.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, ""));
+        }
         setSuccess(`Job ${d.id?.slice(0, 8) || "submitted"} queued. Track it on the Job queue page.`);
         // Clear the form so the user can submit another.
         setTopic("");
         setScript("");
         setTitle("");
         setImages([]);
+        // Drop the custom-niche fields too — the channel is now saved
+        // to the picker; user shouldn't have to re-type the same name.
+        setCustomChannel("");
+        setCustomDesc("");
+        setUseCustom(false);
       }
     } catch (e) {
       setError(String(e));
@@ -182,22 +195,60 @@ export default function CreatePage() {
           Channel / niche
         </label>
         {!useCustom && (
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
-            {PRESET_CHANNELS.map((c) => (
-              <button
-                key={c.name}
-                onClick={() => setChannel(c.name)}
-                className={clsx(
-                  "px-2.5 h-9 rounded-md border text-xs text-left transition",
-                  channel === c.name
-                    ? "border-accent/50 bg-accent/10 text-white"
-                    : "border-line text-neutral-300 hover:border-neutral-500",
-                )}
-              >
-                {c.label}
-              </button>
-            ))}
-          </div>
+          <>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+              {PRESET_CHANNELS.map((c) => (
+                <button
+                  key={c.name}
+                  onClick={() => setChannel(c.name)}
+                  className={clsx(
+                    "px-2.5 h-9 rounded-md border text-xs text-left transition",
+                    channel === c.name
+                      ? "border-accent/50 bg-accent/10 text-white"
+                      : "border-line text-neutral-300 hover:border-neutral-500",
+                  )}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
+            {savedCustom.length > 0 && (
+              <div className="pt-2 space-y-1">
+                <div className="text-[10px] uppercase tracking-wider text-neutral-500">
+                  Your custom niches
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+                  {savedCustom.map((c) => (
+                    <div key={c.name} className="relative group">
+                      <button
+                        onClick={() => setChannel(c.name)}
+                        title={c.description || c.name}
+                        className={clsx(
+                          "w-full px-2.5 h-9 rounded-md border text-xs text-left transition truncate",
+                          channel === c.name
+                            ? "border-accent/50 bg-accent/10 text-white"
+                            : "border-dashed border-line text-neutral-300 hover:border-neutral-500",
+                        )}
+                      >
+                        {c.label}
+                      </button>
+                      <button
+                        onClick={() => {
+                          removeCustomChannel(c.name);
+                          setSavedCustom(loadCustomChannels());
+                          if (channel === c.name) setChannel("horror");
+                        }}
+                        className="absolute -top-1.5 -right-1.5 h-4 w-4 rounded-full bg-bg-1 border border-line text-[10px] text-neutral-500 hover:text-red-300 hover:border-red-500/40 opacity-0 group-hover:opacity-100 transition"
+                        title="Forget this niche"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
         )}
         <div className="flex items-center gap-2 pt-1">
           <button

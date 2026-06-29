@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Save, Loader2 } from "lucide-react";
 import clsx from "clsx";
 import { getSettings, putSettings, getEdgeVoices, type Settings } from "@/lib/api";
+import { PRESET_CHANNELS, loadCustomChannels, type ChannelPreset } from "@/lib/channels";
 
 const TABS = ["Content", "Voice", "Video", "Upload", "Keywords", "Automation"] as const;
 type Tab = typeof TABS[number];
@@ -12,7 +13,10 @@ const TONES = [
   "chilling", "extreme", "atmospheric", "dramatic",
   "educational", "sarcastic", "inspirational",
 ];
-const CHANNELS = ["horror", "wisdom"];
+// Channel slugs for the Content-tab "default channel" dropdown. Built
+// at module load so the Settings page can pick from every preset +
+// any user-saved custom niche.
+const CHANNEL_NAMES = PRESET_CHANNELS.map((c) => c.name);
 const PRIVACIES = ["public", "unlisted", "private"];
 const PRESETS = ["ultrafast", "fast", "medium", "slow"];
 const AUDIO_BITRATES = ["64k", "96k", "128k", "192k"];
@@ -105,7 +109,16 @@ export default function SettingsPage() {
               <label className="label">Channel</label>
               <select className="select" value={s.content.channel}
                       onChange={(e) => setContent("channel", e.target.value)}>
-                {CHANNELS.map(c => <option key={c} value={c}>{c}</option>)}
+                {PRESET_CHANNELS.map((c) => (
+                  <option key={c.name} value={c.name}>{c.label}</option>
+                ))}
+                {loadCustomChannels().length > 0 && (
+                  <optgroup label="Your custom niches">
+                    {loadCustomChannels().map((c) => (
+                      <option key={c.name} value={c.name}>{c.label}</option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
             </div>
             <div>
@@ -151,16 +164,23 @@ export default function SettingsPage() {
               <option value="kokoro">kokoro (local, more natural)</option>
             </select>
           </div>
-          {(["horror", "wisdom"] as const).map((ch) => (
+          <p className="text-xs text-neutral-500">
+            Per-channel voice settings. Leave blank to use the channel&apos;s default
+            from <code className="font-mono">modules/channels.py</code>.
+          </p>
+          {[...PRESET_CHANNELS, ...loadCustomChannels()].map((cc) => {
+            const ch = cc.name;
+            return (
             <div key={ch} className="card space-y-3">
-              <div className="font-medium capitalize">{ch}</div>
+              <div className="font-medium">{cc.label}</div>
               <div className="grid md:grid-cols-2 gap-4">
                 <div>
                   <label className="label">edge voice</label>
                   <select className="select" value={s.voice[`edge_voice_${ch}`] || ""}
                           onChange={(e) => setVoice(`edge_voice_${ch}`, e.target.value)}>
+                    <option value="">(use channel default)</option>
                     {voices.map(v => <option key={v} value={v}>{v}</option>)}
-                    {!voices.includes(s.voice[`edge_voice_${ch}`]) && (
+                    {s.voice[`edge_voice_${ch}`] && !voices.includes(s.voice[`edge_voice_${ch}`]) && (
                       <option value={s.voice[`edge_voice_${ch}`]}>{s.voice[`edge_voice_${ch}`]}</option>
                     )}
                   </select>
@@ -193,7 +213,8 @@ export default function SettingsPage() {
                 </div>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -379,9 +400,15 @@ export default function SettingsPage() {
       {/* KEYWORDS */}
       {tab === "Keywords" && (
         <div className="space-y-4">
-          {(["horror","wisdom"] as const).map((ch) => (
+          <p className="text-xs text-neutral-500">
+            Per-channel keyword + music overrides. Leave blank to use the
+            channel&apos;s defaults from <code className="font-mono">modules/channels.py</code>.
+          </p>
+          {[...PRESET_CHANNELS, ...loadCustomChannels()].map((cc) => {
+            const ch = cc.name;
+            return (
             <div key={ch} className="card space-y-3">
-              <div className="font-medium capitalize">{ch}</div>
+              <div className="font-medium">{cc.label}</div>
               <div>
                 <label className="label">Fallback keyword pool (one per line)</label>
                 <textarea className="textarea h-44"
@@ -394,7 +421,8 @@ export default function SettingsPage() {
                        onChange={(e) => setMusicKw(ch, e.target.value)} />
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -608,21 +636,26 @@ function AutomationTab() {
         {sched.enabled && (
           <>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {(["horror", "wisdom"] as const).map((ch) => (
+              {[...PRESET_CHANNELS, ...loadCustomChannels()].map((c) => (
                 <Slider
-                  key={ch}
-                  label={`${ch} videos / day`}
-                  v={sched.daily_targets[ch] ?? 0}
+                  key={c.name}
+                  label={`${c.label} videos / day`}
+                  v={sched.daily_targets[c.name] ?? 0}
                   min={0}
                   max={10}
                   step={1}
                   onChange={(v) => setSched({
                     ...sched,
-                    daily_targets: { ...sched.daily_targets, [ch]: v },
+                    daily_targets: { ...sched.daily_targets, [c.name]: v },
                   })}
                 />
               ))}
             </div>
+            <p className="text-xs text-neutral-500">
+              Sliders &gt; 0 queue that many renders per channel each
+              day at 09:00 UTC. Set to 0 to skip a channel. Custom
+              niches you saved from the Create page appear here too.
+            </p>
 
             <Toggle
               checked={sched.publish_default}
