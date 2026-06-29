@@ -31,7 +31,13 @@ from backend import db
 
 log = logging.getLogger(__name__)
 
-HEARTBEAT_INTERVAL = int(os.getenv("REGISTRY_HEARTBEAT_SECONDS", "30") or 30)
+# Heartbeat every 60s by default. Each beat writes one doc to Firestore
+# (which counts against the 20K/day free write quota) AND triggers an
+# onSnapshot fire on every connected dashboard (1 read per listener per
+# update against the 50K/day read quota). At 30s the math compounds
+# fast on long-lived sessions; 60s is a better default for free tier.
+# Override via REGISTRY_HEARTBEAT_SECONDS env var if needed.
+HEARTBEAT_INTERVAL = int(os.getenv("REGISTRY_HEARTBEAT_SECONDS", "60") or 60)
 
 
 def _detect_gpu_name() -> str:

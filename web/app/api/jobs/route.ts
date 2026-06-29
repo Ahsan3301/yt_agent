@@ -12,25 +12,53 @@ export const runtime = "nodejs";          // firebase-admin needs node runtime
  * GET /api/jobs — list recent jobs from Firestore (most-recent first).
  * Replaces the old behaviour of polling each backend for its local jobs.
  */
+// Module-level cache: serves identical responses to bursty polling
+// (the dashboard polls every 1-4 sec) without re-reading Firestore.
+// TTL is short enough that progress updates still feel live but long
+// enough to soak the polling spam from multiple browser tabs.
+//
+// Firestore free tier is 50K reads/day; the dashboard's old behaviour
+// was 50 reads * 50 polls/min = 150K reads/hour. This cache caps it
+// at 50 reads / 3 sec = 60K reads/hour worst-case, and in practice
+// far less because most polls hit the cache.
+const _CACHE_TTL_MS = 3000;
+const _LIST_LIMIT = 20;
+let _cachedList: { at: number; body: unknown[] } | null = null;
+
 export async function GET() {
   const reqId = newRequestId();
+  // Cache hit?
+  if (_cachedList && Date.now() - _cachedList.at < _CACHE_TTL_MS) {
+    return NextResponse.json(_cachedList.body, {
+      headers: { "X-Cache": "HIT", "Cache-Control": "no-store" },
+    });
+  }
   try {
     const snap = await adminDb()
       .collection("jobs")
       .orderBy("queued_at", "desc")
-      .limit(50)
+      .limit(_LIST_LIMIT)
       .get();
     const out: unknown[] = [];
     snap.forEach((doc) => {
       const d = doc.data();
       out.push({ ...d, id: d.id || doc.id });
     });
-    logRoute(reqId, "list jobs", { count: out.length });
-    return NextResponse.json(out);
+    _cachedList = { at: Date.now(), body: out };
+    logRoute(reqId, "list jobs", { count: out.length, cache: "MISS" });
+    return NextResponse.json(out, {
+      headers: { "X-Cache": "MISS", "Cache-Control": "no-store" },
+    });
   } catch (e) {
     logRoute(reqId, "list jobs failed", { err: String(e) });
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }
+}
+
+// Bust the cache when a POST/DELETE happens so the next GET reflects
+// the new state immediately. Exported so other route files can call it.
+export function _bustJobsCache() {
+  _cachedList = null;
 }
 
 /**
@@ -45,6 +73,7 @@ export async function GET() {
  * created job instead of creating a duplicate.
  */
 export async function POST(req: NextRequest) {
+  _bustJobsCache();   // any new job invalidates the list cache
   const reqId = newRequestId();
   try {
     const body = await req.json().catch(() => ({} as Record<string, unknown>));

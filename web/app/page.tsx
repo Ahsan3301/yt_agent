@@ -66,7 +66,12 @@ export default function Dashboard() {
         }
         lastStatus = s.status;
       } catch {}
-      const delay = state.status === "running" ? 1200 : 4000;
+      // Backed off from 1.2s / 4s to 3s / 10s. The server-side cache
+      // on /api/jobs is 3s, so polling faster than that just returned
+      // the same data and wasted Firestore reads. With the 50K/day
+      // free Firestore quota, even one user with one tab open at the
+      // old cadence could burn the entire daily budget in 2 hours.
+      const delay = state.status === "running" ? 3000 : 10_000;
       setTimeout(tick, delay);
     };
     tick();

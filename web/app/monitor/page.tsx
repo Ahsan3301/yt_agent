@@ -101,7 +101,11 @@ export default function MonitorPage() {
       } catch (e) {
         if (!cancelled) setRegistryError((e as Error).message || "registry fetch failed");
       }
-      if (!cancelled) setTimeout(tick, 4000);
+      // Backed off from 4s. The onSnapshot subscription further down
+      // delivers backend changes in real-time anyway; this poll is
+      // only a fallback in case onSnapshot drops. 15s keeps the
+      // fallback fresh without burning Firestore reads.
+      if (!cancelled) setTimeout(tick, 15_000);
     };
     tick();
     return () => { cancelled = true; };
