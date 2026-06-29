@@ -149,3 +149,91 @@ def warn(title: str, body: str = "", **kw) -> bool:
 
 def error(title: str, body: str = "", **kw) -> bool:
     return send("error", title, body, **kw)
+
+
+# ── Persistent error reporting ────────────────────────────────────
+#
+# Discord alerts are great for "look at this now" notifications but
+# they're ephemeral, deduped, and impossible to query later. The
+# /health page needs a paginated error log. So every fatal-ish event
+# also writes a doc to Firestore `errors/<auto-id>` with the full
+# traceback + context. The cleanup workflow prunes entries > 30 days.
+
+def report_error(
+    err: BaseException | str,
+    *,
+    title: str | None = None,
+    run_id: str | None = None,
+    req_id: str | None = None,
+    level: str = "error",
+    extra: dict | None = None,
+    fire_discord: bool = True,
+) -> bool:
+    """
+    Persist an error to Firestore + (optionally) fire a Discord embed.
+
+    `err` may be an Exception (we capture class + message + traceback)
+    or a plain string (just the message).
+
+    Returns True on at least one successful sink (Firestore OR Discord),
+    False if both failed. Best-effort overall — never raises.
+    """
+    import traceback as _tb
+    cls = ""
+    msg = ""
+    tb = ""
+    if isinstance(err, BaseException):
+        cls = err.__class__.__name__
+        msg = str(err)
+        try:
+            tb = "".join(_tb.format_exception(type(err), err, err.__traceback__))
+        except Exception:
+            tb = ""
+    else:
+        msg = str(err)
+
+    auto_title = title or (f"{cls}: {msg[:80]}" if cls else msg[:120]) or "(unknown error)"
+
+    # 1) Firestore sink (the source of truth for the /health page).
+    firestore_ok = False
+    try:
+        from backend import db
+        if db.is_configured():
+            doc = {
+                "ts":           time.time(),
+                "level":        level,
+                "class":        cls,
+                "msg":          msg[:2000],
+                "traceback":    tb[:8000] if tb else "",
+                "run_id":       run_id or "",
+                "req_id":       req_id or "",
+                "worker_label": os.getenv("INSTANCE_LABEL") or "",
+                "worker_id":    os.getenv("INSTANCE_ID") or "",
+                "extra":        (extra or {}),
+            }
+            db.client().collection("errors").document().set(doc)
+            firestore_ok = True
+    except Exception as _e:
+        log.debug(f"report_error firestore sink failed: {_e}")
+
+    # 2) Discord embed (the "look at this now" channel).
+    discord_ok = False
+    if fire_discord:
+        fields = []
+        if run_id: fields.append(("run_id", run_id, True))
+        if req_id: fields.append(("req_id", req_id, True))
+        worker = os.getenv("INSTANCE_LABEL")
+        if worker: fields.append(("worker", worker, True))
+        # First 1000 chars of traceback in the body for context.
+        body = msg
+        if tb:
+            body += "\n\n```\n" + tb[-1200:] + "\n```"
+        try:
+            discord_ok = send(level if level in _COLORS else "error",
+                              title=("❌ " + auto_title)[:240],
+                              body=body[:3500],
+                              fields=fields)
+        except Exception as _e:
+            log.debug(f"report_error discord sink failed: {_e}")
+
+    return firestore_ok or discord_ok

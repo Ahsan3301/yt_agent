@@ -22,6 +22,8 @@ const RETENTION_DAYS = {
   jobs: 14,
   idempotency: 7,
   videos: 30,
+  errors: 30,            // Firestore errors collection
+  run_logs: 14,          // runs_index/<id>/logs subcollections
 };
 // Orphaned queued jobs — queued for too long with no backend ever
 // claiming them. Usually leftovers from a failed worker start. Clearing
@@ -44,6 +46,7 @@ export async function POST(req: NextRequest) {
     videos_requested: 0,
     errors: [] as string[],
     orphan_queued_failed: 0,
+    errors_deleted: 0,
   };
 
   // ── runs_index + run_summaries ──
@@ -124,6 +127,24 @@ export async function POST(req: NextRequest) {
     summary.orphan_queued_failed = n;
   } catch (e) {
     summary.errors.push(`orphan queued cleanup: ${String(e)}`);
+  }
+
+  // ── errors collection (persistent error reports from notifier.report_error) ──
+  try {
+    const cutoff = now - RETENTION_DAYS.errors * 86400;
+    const snap = await adminDb()
+      .collection("errors")
+      .where("ts", "<", cutoff)
+      .limit(500)
+      .get();
+    if (!snap.empty) {
+      const batch = adminDb().batch();
+      snap.forEach((doc) => batch.delete(doc.ref));
+      await batch.commit();
+      summary.errors_deleted = snap.size;
+    }
+  } catch (e) {
+    summary.errors.push(`errors cleanup: ${String(e)}`);
   }
 
   // ── idempotency ──

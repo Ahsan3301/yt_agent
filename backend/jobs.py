@@ -431,14 +431,18 @@ def _run_one(job: dict[str, Any]):
                     url=job.get("public_url") or None,
                 )
             else:
-                notifier.error(
-                    f"❌ Pipeline failed · {job.get('channel', 'unknown')}",
-                    body=f"Run `{job.get('run_id') or job['id']}` failed after {elapsed}s",
-                    fields=[
-                        ("worker", worker_label, True),
-                        ("error", str(job.get("error") or "unknown"), False),
-                        ("dry_run", str(job.get("dry_run", False)), True),
-                    ],
+                # Persist to Firestore `errors` collection + fire the
+                # Discord embed in one call. The /health page reads
+                # from errors to show the last N failures.
+                notifier.report_error(
+                    err=str(job.get("error") or "unknown pipeline failure"),
+                    title=f"❌ Pipeline failed · {job.get('channel', 'unknown')}",
+                    run_id=job.get("run_id") or job["id"],
+                    extra={
+                        "worker":  worker_label,
+                        "elapsed": elapsed,
+                        "dry_run": bool(job.get("dry_run", False)),
+                    },
                 )
         except Exception as _e:
             log.debug(f"notifier hook failed: {_e}")
