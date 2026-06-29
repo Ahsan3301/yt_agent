@@ -36,6 +36,17 @@ export async function GET(req: NextRequest) {
   const origin = req.nextUrl.origin;
   const redirectUri = `${origin}/api/youtube/callback`;
 
+  // Optional `bind=<dashboardChannelId>` — when present, the callback
+  // will bind the newly connected YouTube account to that dashboard
+  // channel. Lets the /channels page Connect button per-channel be a
+  // one-click flow.
+  const bind = (req.nextUrl.searchParams.get("bind") || "")
+    .replace(/[^a-z0-9_-]/gi, "")
+    .slice(0, 60);
+
+  // CSRF state — encode origin + the optional bind hint.
+  const state = bind ? `${origin}|bind=${bind}` : origin;
+
   const consentUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   consentUrl.searchParams.set("client_id", clientId);
   consentUrl.searchParams.set("redirect_uri", redirectUri);
@@ -45,8 +56,7 @@ export async function GET(req: NextRequest) {
   // an access_token that expires in an hour).
   consentUrl.searchParams.set("access_type", "offline");
   consentUrl.searchParams.set("prompt", "consent");
-  // CSRF state — embed the origin so the callback can verify it.
-  consentUrl.searchParams.set("state", origin);
+  consentUrl.searchParams.set("state", state);
 
   return NextResponse.json({
     url: consentUrl.toString(),

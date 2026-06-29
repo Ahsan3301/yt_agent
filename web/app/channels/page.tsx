@@ -5,7 +5,7 @@ import Link from "next/link";
 import clsx from "clsx";
 import {
   Layers, Plus, Trash2, Globe, Loader2, Save, X as XIcon,
-  PauseCircle, PlayCircle, Edit3, Wand2,
+  PauseCircle, PlayCircle, Edit3, Wand2, Tv, Link2,
 } from "lucide-react";
 import { PRESET_CHANNELS } from "@/lib/channels";
 import { useToast } from "@/components/Toast";
@@ -35,6 +35,14 @@ type Channel = {
   real_events?: boolean | null;
   language?: string;
   voice?: string | null;
+  youtube_account_id?: string | null;
+};
+
+type YouTubeAccount = {
+  id: string;
+  youtube_channel_id: string;
+  title: string;
+  thumbnail: string;
 };
 
 // Stay in sync with web/app/create/wizard/page.tsx WIZARD_LANGUAGES.
@@ -67,6 +75,7 @@ const CHANNEL_VOICE_CATALOG: Record<string, Record<string, string[]>> = {
 export default function ChannelsPage() {
   const toast = useToast();
   const [channels, setChannels] = useState<Channel[]>([]);
+  const [ytAccounts, setYtAccounts] = useState<YouTubeAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Channel | null>(null);
   const [showNew, setShowNew] = useState(false);
@@ -74,9 +83,14 @@ export default function ChannelsPage() {
   const refresh = async () => {
     setLoading(true);
     try {
-      const r = await fetch("/api/channels", { cache: "no-store" });
-      const d = await r.json();
-      setChannels(Array.isArray(d) ? d : []);
+      const [chRes, accRes] = await Promise.all([
+        fetch("/api/channels", { cache: "no-store" }),
+        fetch("/api/youtube/accounts", { cache: "no-store" }),
+      ]);
+      const ch = await chRes.json();
+      const acc = await accRes.json();
+      setChannels(Array.isArray(ch) ? ch : []);
+      setYtAccounts(Array.isArray(acc) ? acc : []);
     } catch (e) {
       toast.error("Couldn't load channels", String(e));
     }
@@ -84,6 +98,58 @@ export default function ChannelsPage() {
   };
 
   useEffect(() => { refresh(); }, []);
+
+  // Detect post-OAuth redirect (`?youtube=connected[&bind=<id>]`) and
+  // show a toast confirming which account just connected.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const yt = params.get("youtube");
+    if (yt === "connected") {
+      const bind = params.get("bind");
+      toast.success(
+        "YouTube connected",
+        bind ? `Linked to channel "${bind}".` : "Account added.",
+      );
+      window.history.replaceState({}, "", "/channels");
+      refresh();
+    } else if (yt === "error") {
+      toast.error("YouTube OAuth failed", params.get("reason") || "");
+      window.history.replaceState({}, "", "/channels");
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const connectYouTube = async (channelId: string | null) => {
+    try {
+      const url = channelId
+        ? `/api/youtube/auth?bind=${encodeURIComponent(channelId)}`
+        : `/api/youtube/auth`;
+      const r = await fetch(url);
+      const d = await r.json();
+      if (!r.ok || !d.url) {
+        toast.error("Couldn't start OAuth", d.error || `HTTP ${r.status}`);
+        return;
+      }
+      window.location.href = d.url;
+    } catch (e) {
+      toast.error("Couldn't start OAuth", String(e));
+    }
+  };
+
+  const removeYouTubeAccount = async (acc: YouTubeAccount) => {
+    if (!confirm(`Remove "${acc.title}" (${acc.id})? Dashboard channels using it will be unbound.`)) return;
+    try {
+      const r = await fetch(`/api/youtube/accounts?id=${encodeURIComponent(acc.id)}`, { method: "DELETE" });
+      if (!r.ok) {
+        toast.error("Remove failed", `HTTP ${r.status}`);
+        return;
+      }
+      toast.info("Account removed", `"${acc.title}" unlinked.`);
+      await refresh();
+    } catch (e) {
+      toast.error("Remove failed", String(e));
+    }
+  };
 
   const save = async (c: Channel) => {
     try {
@@ -153,9 +219,61 @@ export default function ChannelsPage() {
         )}
       </div>
 
+      {/* Connected YouTube accounts — pre-OAuth = empty card with CTA. */}
+      <div className="card space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <div className="font-medium flex items-center gap-2">
+            <Tv className="h-4 w-4 text-red-400" />
+            Connected YouTube accounts
+            <span className="text-xs text-neutral-500">({ytAccounts.length})</span>
+          </div>
+          <button
+            onClick={() => connectYouTube(null)}
+            className="btn btn-ghost h-7 text-xs"
+          >
+            <Plus className="h-3 w-3" /> Connect another
+          </button>
+        </div>
+        {ytAccounts.length === 0 ? (
+          <div className="text-xs text-neutral-500">
+            No YouTube accounts connected yet. Click <b>Connect another</b> to
+            authorize your first account. Each dashboard channel can be bound
+            to a different YouTube account.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            {ytAccounts.map((acc) => (
+              <div key={acc.id} className="flex items-center gap-3 rounded-md border border-line bg-bg-2 px-3 py-2">
+                {acc.thumbnail ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={acc.thumbnail} alt="" className="h-8 w-8 rounded-full border border-line" />
+                ) : (
+                  <div className="h-8 w-8 rounded-full bg-neutral-800 flex items-center justify-center">
+                    <Tv className="h-4 w-4 text-red-400" />
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium truncate">{acc.title || "(unnamed)"}</div>
+                  <code className="text-[10px] text-neutral-500">{acc.id}</code>
+                </div>
+                <button
+                  onClick={() => removeYouTubeAccount(acc)}
+                  className="btn btn-ghost h-6 text-xs text-neutral-400 hover:text-red-300"
+                  title="Disconnect"
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {(showNew || editing) && (
         <ChannelForm
           initial={editing}
+          ytAccounts={ytAccounts}
+          onConnectYouTube={connectYouTube}
           onCancel={() => { setShowNew(false); setEditing(null); }}
           onSave={async (c) => {
             const ok = await save(c);
@@ -182,9 +300,11 @@ export default function ChannelsPage() {
             <ChannelCard
               key={c.id}
               channel={c}
+              ytAccount={ytAccounts.find((a) => a.id === c.youtube_account_id) || null}
               onEdit={() => setEditing(c)}
               onDelete={() => remove(c.id)}
               onTogglePause={() => togglePause(c)}
+              onConnectYouTube={() => connectYouTube(c.id)}
             />
           ))}
         </div>
@@ -208,12 +328,14 @@ export default function ChannelsPage() {
 }
 
 function ChannelCard({
-  channel: c, onEdit, onDelete, onTogglePause,
+  channel: c, ytAccount, onEdit, onDelete, onTogglePause, onConnectYouTube,
 }: {
   channel: Channel;
+  ytAccount: YouTubeAccount | null;
   onEdit: () => void;
   onDelete: () => void;
   onTogglePause: () => void;
+  onConnectYouTube: () => void;
 }) {
   const nichePreset = PRESET_CHANNELS.find((p) => p.name === c.niche);
   return (
@@ -235,6 +357,29 @@ function ChannelCard({
         <div className="text-xs text-neutral-400 mt-0.5">
           niche: <span className="text-neutral-200">{nichePreset?.label || c.niche}</span>
           {c.description && <span> · {c.description}</span>}
+        </div>
+        <div className="text-xs mt-1 flex items-center gap-1.5">
+          <Tv className="h-3 w-3 text-red-400" />
+          {ytAccount ? (
+            <>
+              {ytAccount.thumbnail && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={ytAccount.thumbnail} alt="" className="h-4 w-4 rounded-full" />
+              )}
+              <span className="text-neutral-200 truncate">{ytAccount.title}</span>
+            </>
+          ) : c.youtube_account_id ? (
+            <span className="text-amber-300">
+              bound to {c.youtube_account_id} (not in current account list)
+            </span>
+          ) : (
+            <button
+              onClick={onConnectYouTube}
+              className="text-accent hover:underline"
+            >
+              <Link2 className="h-3 w-3 inline mr-0.5" /> Connect YouTube
+            </button>
+          )}
         </div>
       </div>
       <div className="text-right">
@@ -261,11 +406,13 @@ function ChannelCard({
 }
 
 function ChannelForm({
-  initial, onSave, onCancel,
+  initial, ytAccounts, onSave, onCancel, onConnectYouTube,
 }: {
   initial: Channel | null;
+  ytAccounts: YouTubeAccount[];
   onSave: (c: Channel) => void;
   onCancel: () => void;
+  onConnectYouTube: (channelId: string | null) => void;
 }) {
   const [name, setName] = useState(initial?.name || "");
   const [niche, setNiche] = useState(initial?.niche || PRESET_CHANNELS[0].name);
@@ -285,6 +432,7 @@ function ChannelForm({
   );
   const [language, setLanguage] = useState(initial?.language || "en");
   const [voice, setVoice] = useState(initial?.voice || "");
+  const [youtubeAccountId, setTvAccountId] = useState(initial?.youtube_account_id || "");
 
   const submit = () => {
     if (!name.trim()) return;
@@ -303,6 +451,7 @@ function ChannelForm({
         realEvents === "off" ? false : null,
       language,
       voice: voice || null,
+      youtube_account_id: youtubeAccountId || null,
     });
   };
 
@@ -475,6 +624,40 @@ function ChannelForm({
           When ON, the script must be grounded in documented real events
           (or accurately retold mythology). Niche-aware framing — true
           horror story / real case study / documented experiment / etc.
+        </div>
+      </div>
+
+      <div>
+        <label className="label flex items-center gap-2">
+          <Tv className="h-3.5 w-3.5 text-red-400" />
+          YouTube account
+        </label>
+        <div className="flex gap-2">
+          <select
+            className="select flex-1"
+            value={youtubeAccountId}
+            onChange={(e) => setTvAccountId(e.target.value)}
+          >
+            <option value="">— not bound (uses legacy default) —</option>
+            {ytAccounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.title || "(unnamed)"} · {a.id.slice(0, 8)}…
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={() => onConnectYouTube(initial?.id || null)}
+            className="btn btn-ghost h-9 text-xs whitespace-nowrap"
+            title="Authorize a new YouTube account"
+          >
+            <Plus className="h-3 w-3" /> Connect new
+          </button>
+        </div>
+        <div className="text-[10px] text-neutral-500 mt-1">
+          Each dashboard channel publishes to ONE YouTube account.
+          Connect as many YouTube accounts as you want — pick a different
+          one per channel.
         </div>
       </div>
 

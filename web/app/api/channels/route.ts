@@ -39,6 +39,9 @@ type ChannelDoc = {
   language?: string;
   // Voice override — empty / null = niche default for that language.
   voice?: string | null;
+  // The YouTube channel id this dashboard channel uploads to. Null /
+  // unset = use whichever YouTube account is the legacy default.
+  youtube_account_id?: string | null;
 };
 
 /** GET /api/channels — list all channels. */
@@ -98,6 +101,9 @@ export async function POST(req: NextRequest) {
         : "en",
       voice: (typeof body.voice === "string" && body.voice.trim())
         ? body.voice.trim().slice(0, 80)
+        : null,
+      youtube_account_id: (typeof body.youtube_account_id === "string" && body.youtube_account_id.trim())
+        ? body.youtube_account_id.trim().slice(0, 80)
         : null,
       updated_at: FieldValue.serverTimestamp(),
       ...(existing.exists ? {} : { created_at: FieldValue.serverTimestamp() }),

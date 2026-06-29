@@ -139,6 +139,9 @@ def submit(payload: dict[str, Any]) -> dict[str, Any]:
         "language":            (str(payload.get("language") or "")[:5].lower() or None),
         # Voice override (one of the niche's voices_by_lang entries).
         "voice_override":      str(payload.get("voice_override") or "")[:80] or None,
+        # YouTube account id (multi-channel mode). None falls back to
+        # the legacy single api_keys/YOUTUBE_REFRESH_TOKEN credential.
+        "youtube_account_id":  str(payload.get("youtube_account_id") or "")[:80] or None,
     }
     with _lock:
         _jobs[jid] = job
@@ -183,6 +186,7 @@ def adopt_remote(remote_job: dict[str, Any]) -> bool:
         "real_events":         remote_job.get("real_events"),
         "language":            (str(remote_job.get("language") or "")[:5].lower() or None),
         "voice_override":      str(remote_job.get("voice_override") or "")[:80] or None,
+        "youtube_account_id":  str(remote_job.get("youtube_account_id") or "")[:80] or None,
     }
     with _lock:
         if jid in _jobs:
@@ -369,6 +373,7 @@ def _run_one(job: dict[str, Any]):
         real_events=job.get("real_events"),
         language=job.get("language"),
         voice_override=job.get("voice_override"),
+        youtube_account_id=job.get("youtube_account_id"),
     )
 
     # Pipeline finished — final state and (optionally) upload.

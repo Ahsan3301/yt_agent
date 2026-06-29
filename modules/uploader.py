@@ -45,13 +45,36 @@ CATEGORY_IDS = {
 }
 
 
-def _load_creds_from_firestore() -> Credentials | None:
-    """Load YouTube OAuth credentials from Firestore. Returns None if
-    the stored token can't be parsed or Firestore isn't configured."""
+def _load_creds_from_firestore(account_id: str | None = None) -> Credentials | None:
+    """Load YouTube OAuth credentials from Firestore.
+
+    Resolution order:
+      1. If `account_id` is given → youtube_accounts/<account_id>.credentials
+      2. Otherwise → legacy api_keys/YOUTUBE_REFRESH_TOKEN.value
+
+    Returns None if the stored token can't be parsed or Firestore
+    isn't configured.
+    """
     try:
         from backend import db
         if not db.is_configured():
             return None
+        import json as _json
+
+        # Per-account lookup (multi-channel mode).
+        if account_id:
+            snap = db.client().collection("youtube_accounts").document(account_id).get()
+            if not snap.exists:
+                log.warning(f"uploader: youtube_accounts/{account_id} missing")
+                return None
+            d = snap.to_dict() or {}
+            raw = d.get("credentials") or d.get("value")
+            if not raw:
+                return None
+            info = _json.loads(raw) if isinstance(raw, str) else raw
+            return Credentials.from_authorized_user_info(info, SCOPES)
+
+        # Legacy single-doc fallback.
         snap = db.client().collection("api_keys").document("YOUTUBE_REFRESH_TOKEN").get()
         if not snap.exists:
             return None
@@ -59,8 +82,6 @@ def _load_creds_from_firestore() -> Credentials | None:
         raw = d.get("value")
         if not raw:
             return None
-        # The stored value is the full credentials JSON (token + refresh_token + client_id + ...).
-        import json as _json
         info = _json.loads(raw) if isinstance(raw, str) else raw
         return Credentials.from_authorized_user_info(info, SCOPES)
     except Exception as e:
@@ -68,12 +89,20 @@ def _load_creds_from_firestore() -> Credentials | None:
         return None
 
 
-def _save_creds_to_firestore(creds: Credentials) -> bool:
-    """Persist YouTube OAuth credentials to Firestore so all backends share them."""
+def _save_creds_to_firestore(creds: Credentials, account_id: str | None = None) -> bool:
+    """Persist refreshed credentials. When `account_id` is given, writes
+    to youtube_accounts/<id>.credentials so the per-account doc stays
+    current; otherwise updates the legacy single-doc location."""
     try:
         from backend import db
         if not db.is_configured():
             return False
+        if account_id:
+            db.client().collection("youtube_accounts").document(account_id).set({
+                "credentials": creds.to_json(),
+                "updated_at": db.server_timestamp(),
+            }, merge=True)
+            return True
         db.client().collection("api_keys").document("YOUTUBE_REFRESH_TOKEN").set({
             "value": creds.to_json(),
             "updated_at": db.server_timestamp(),
@@ -84,14 +113,14 @@ def _save_creds_to_firestore(creds: Credentials) -> bool:
         return False
 
 
-def get_youtube_client():
+def get_youtube_client(account_id: str | None = None):
     """Get a YouTube API client. Resolution order:
         1. Firestore api_keys/YOUTUBE_REFRESH_TOKEN (production source of truth)
         2. Local TOKEN_FILE (dev fallback)
         3. Run the local-server OAuth flow (dev only — won't work on Colab/HF)
     """
-    creds = _load_creds_from_firestore()
-    source = "firestore"
+    creds = _load_creds_from_firestore(account_id=account_id)
+    source = f"firestore:{account_id or 'legacy'}"
 
     if not creds and os.path.exists(TOKEN_FILE):
         try:
@@ -104,10 +133,9 @@ def get_youtube_client():
         if creds and creds.expired and creds.refresh_token:
             log.info(f"Refreshing YouTube token (from {source})...")
             creds.refresh(Request())
-            # Persist the refreshed token back to whichever store we
-            # loaded from (and Firestore if available — that's where
-            # other workers will look next time).
-            _save_creds_to_firestore(creds)
+            # Persist refreshed token back to the same slot we loaded
+            # from (per-account doc OR legacy single doc).
+            _save_creds_to_firestore(creds, account_id=account_id)
         else:
             # Interactive OAuth — only works on a machine with a browser.
             # On Colab/HF Space this is impossible; the user must complete
@@ -152,16 +180,23 @@ def _resumable_upload(request, max_retries=5):
     return response
 
 
-def upload_video(video_path, script_data, channel_type="horror"):
+def upload_video(video_path, script_data, channel_type="horror", youtube_account_id=None):
     """
     Upload video to YouTube; return video ID on success, None on failure.
     Also generates and uploads a thumbnail (best-effort).
+
+    `youtube_account_id`: per-channel YouTube account id. When None, the
+    uploader falls back to the legacy single-doc credential. With
+    multi-account support each dashboard channel can target a different
+    YouTube channel.
     """
     if not os.path.exists(video_path):
         log.error(f"Video file not found: {video_path}")
         return None
 
-    youtube = get_youtube_client()
+    youtube = get_youtube_client(account_id=youtube_account_id)
+    if youtube_account_id:
+        log.info(f"Uploading via YouTube account {youtube_account_id}")
 
     s = load_settings()
     up = s.get("upload", {})

@@ -107,6 +107,10 @@ export async function POST(req: NextRequest) {
     const voice_override = (typeof body.voice_override === "string" && body.voice_override.trim())
       ? body.voice_override.trim().slice(0, 80)
       : null;
+    // YouTube account id — which connected account to upload to.
+    const youtube_account_id = (typeof body.youtube_account_id === "string" && body.youtube_account_id.trim())
+      ? body.youtube_account_id.trim().slice(0, 80)
+      : null;
 
     // Idempotency check.
     const idempKey = req.headers.get("Idempotency-Key") || "";
@@ -149,6 +153,7 @@ export async function POST(req: NextRequest) {
       real_events:  real_events  === undefined ? null : real_events,
       language,
       voice_override,
+      youtube_account_id,
     };
 
     // Pick a worker. If one is alive, dispatch immediately.
@@ -186,7 +191,7 @@ export async function POST(req: NextRequest) {
             channel, dry_run,
             manual_topic, manual_script, manual_title,
             manual_channel_desc, manual_images, web_research,
-            real_events, language, voice_override,
+            real_events, language, voice_override, youtube_account_id,
           }),
         });
         if (r.ok) {

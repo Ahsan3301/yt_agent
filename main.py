@@ -277,6 +277,10 @@ def run_pipeline(
     # niche catalog in the wizard, pass it here. Overrides the channel
     # preset's default voice but NOT the language-default fallback.
     voice_override: Optional[str] = None,
+    # Which YouTube account to publish to — id of the
+    # youtube_accounts/<id> doc. None falls back to the legacy single
+    # api_keys/YOUTUBE_REFRESH_TOKEN credential.
+    youtube_account_id: Optional[str] = None,
 ):
     """
     Execute the full automation pipeline for one video.
@@ -558,7 +562,10 @@ def run_pipeline(
                         script = _seo.borrow_seo(topic_seed, script)
             except Exception as e:
                 log.warning(f"SEO borrow skipped: {e}")
-            video_id = _step(summary, "upload", lambda: upload_video(final_video, script, channel_type), run_id=run_id)
+            video_id = _step(summary, "upload", lambda: upload_video(
+                final_video, script, channel_type,
+                youtube_account_id=youtube_account_id,
+            ), run_id=run_id)
             if video_id:
                 summary["video_id"] = video_id
                 summary["video_url"] = f"https://youtu.be/{video_id}"

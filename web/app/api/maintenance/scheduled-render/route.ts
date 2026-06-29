@@ -70,6 +70,7 @@ export async function POST(req: NextRequest) {
       real_events: boolean | null;
       language: string | null;
       voice: string | null;
+      youtube_account_id: string | null;
     }> = [];
     try {
       const channelsSnap = await adminDb().collection("channels").get();
@@ -91,6 +92,8 @@ export async function POST(req: NextRequest) {
               c.real_events === false ? false : null,
             language: (typeof c.language === "string" && c.language) ? String(c.language) : null,
             voice:    (typeof c.voice === "string" && c.voice) ? String(c.voice) : null,
+            youtube_account_id:
+              (typeof c.youtube_account_id === "string" && c.youtube_account_id) ? String(c.youtube_account_id) : null,
           });
         }
         targets[niche] = (targets[niche] || 0) + count;
@@ -107,6 +110,7 @@ export async function POST(req: NextRequest) {
           channelMeta.push({
             niche, channel_name: niche,
             web_research: null, real_events: null, language: null, voice: null,
+            youtube_account_id: null,
           });
         }
         if (n > 0) targets[niche] = (targets[niche] || 0) + n;
@@ -156,6 +160,7 @@ export async function POST(req: NextRequest) {
         real_events:  slot.real_events,
         language:     slot.language,
         voice_override: slot.voice,
+        youtube_account_id: slot.youtube_account_id,
         // Track which dashboard-channel this job belongs to so the
         // /queue page can group jobs by channel later.
         source_channel_name: slot.channel_name,
@@ -180,6 +185,7 @@ export async function POST(req: NextRequest) {
             real_events: slot.real_events,
             language: slot.language,
             voice_override: slot.voice,
+            youtube_account_id: slot.youtube_account_id,
           }),
         }).catch(() => {});
       }
