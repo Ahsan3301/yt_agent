@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Rocket, ExternalLink, Loader2, CheckCircle2 } from "lucide-react";
+import { Rocket, ExternalLink, Loader2, CheckCircle2, Cloud } from "lucide-react";
 import { fetchLiveBackends, COLAB_URL, type RegistryEntry } from "@/lib/api";
 import { getDb, isFirestoreConfigured } from "@/lib/firestore";
 import { collection, onSnapshot, Timestamp } from "firebase/firestore";
@@ -98,9 +98,12 @@ export default function LaunchBanner() {
                    className="text-accent underline">
                   Launch a Colab GPU
                 </a>{" "}
-                for ~10× faster renders.
+                for ~10× faster renders — or wake Kaggle GPU below.
               </>
             )}
+          </div>
+          <div className="mt-2">
+            <WakeKaggleButton compact />
           </div>
         </div>
       </div>
@@ -141,7 +144,7 @@ export default function LaunchBanner() {
             </ol>
           )}
 
-          <div className="flex flex-wrap gap-2 pt-1">
+          <div className="flex flex-wrap items-center gap-2 pt-1">
             {colabReady ? (
               <a
                 href={COLAB_URL} target="_blank" rel="noreferrer"
@@ -158,6 +161,8 @@ export default function LaunchBanner() {
                 environment variables to enable the launch button.
               </div>
             )}
+            <span className="text-xs text-neutral-500">or</span>
+            <WakeKaggleButton />
             {waitingForBoot && (
               <button onClick={() => setWaitingForBoot(false)} className="btn btn-ghost">
                 Stop polling
@@ -175,6 +180,55 @@ export default function LaunchBanner() {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * "Wake Kaggle" button — fires the kaggle-dispatch.yml workflow via the
+ * Vercel proxy. The Kaggle notebook boots ~90 sec later and starts
+ * heartbeating into Firestore. Useful when:
+ *   - Colab is down and the user wants GPU immediately
+ *   - Pre-warming Kaggle before submitting a render
+ *   - Testing the dispatch wiring without burning a render slot
+ */
+function WakeKaggleButton({ compact = false }: { compact?: boolean }) {
+  const [waking, setWaking] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+
+  const wake = async () => {
+    setWaking(true);
+    setResult(null);
+    try {
+      const r = await fetch("/api/backends/wake-kaggle", { method: "POST" });
+      const d = await r.json();
+      if (r.ok) {
+        setResult("✓ Kaggle dispatch fired — notebook boots in ~90 sec");
+      } else {
+        setResult(`✗ ${d.error || `HTTP ${r.status}`}${d.next_step ? " · " + d.next_step : ""}`);
+      }
+    } catch (e) {
+      setResult(`✗ ${String(e)}`);
+    }
+    setWaking(false);
+  };
+
+  return (
+    <div className={compact ? "inline-flex items-center gap-2" : "flex flex-col gap-1"}>
+      <button
+        onClick={wake}
+        disabled={waking}
+        className={compact ? "btn btn-ghost h-7 text-xs" : "btn btn-ghost"}
+        title="Spin up a Kaggle GPU notebook via GitHub Actions. Uses your free 30 GPU hr/week budget."
+      >
+        {waking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Cloud className="h-3.5 w-3.5" />}
+        Wake Kaggle (GPU)
+      </button>
+      {result && (
+        <span className={result.startsWith("✓") ? "text-xs text-emerald-300" : "text-xs text-amber-300"}>
+          {result}
+        </span>
+      )}
     </div>
   );
 }

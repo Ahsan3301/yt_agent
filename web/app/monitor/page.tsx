@@ -18,7 +18,7 @@ import { useEffect, useRef, useState } from "react";
 import clsx from "clsx";
 import {
   Cpu, MemoryStick, HardDrive, Activity, Zap, Wifi, WifiOff,
-  Server, Loader2, Box, Clock, Power,
+  Server, Loader2, Box, Clock, Power, Cloud,
 } from "lucide-react";
 import {
   fetchLiveBackends, fetchStatsFor, type RegistryEntry, type BackendStats,
@@ -182,7 +182,8 @@ export default function MonitorPage() {
             Real-time resource usage and job state across every connected backend.
           </p>
         </div>
-        <div className="flex items-center gap-2 text-sm">
+        <div className="flex items-center gap-2 text-sm flex-wrap">
+          <WakeKaggleQuickButton />
           <Pill icon={Wifi}        label={`${online} online`}        color="emerald" />
           <Pill icon={Loader2}     label={`${busy} busy`}             color="amber" />
           <Pill icon={Box}         label={`${totalQueue} queued`}     color="neutral" />
@@ -449,6 +450,56 @@ function fmtUptime(s: number) {
   if (s < 3600) return `${Math.floor(s / 60)}m`;
   if (s < 86400) return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
   return `${Math.floor(s / 86400)}d`;
+}
+
+/**
+ * Always-visible "Wake Kaggle" button in the Monitor header. Fires
+ * the kaggle-dispatch.yml workflow via POST /api/backends/wake-kaggle.
+ * Useful for pre-warming Kaggle, testing the dispatch wiring, or
+ * waking GPU on-demand without queueing a render first.
+ */
+function WakeKaggleQuickButton() {
+  const [waking, setWaking] = useState(false);
+  const [tip, setTip] = useState<string | null>(null);
+
+  const wake = async () => {
+    setWaking(true);
+    setTip(null);
+    try {
+      const r = await fetch("/api/backends/wake-kaggle", { method: "POST" });
+      const d = await r.json();
+      if (r.ok) {
+        setTip("Dispatch fired. Notebook boots in ~90 sec.");
+        setTimeout(() => setTip(null), 6000);
+      } else {
+        setTip(d.error || `HTTP ${r.status}`);
+        setTimeout(() => setTip(null), 8000);
+      }
+    } catch (e) {
+      setTip(String(e));
+      setTimeout(() => setTip(null), 8000);
+    }
+    setWaking(false);
+  };
+
+  return (
+    <div className="inline-flex items-center gap-2">
+      <button
+        onClick={wake}
+        disabled={waking}
+        className="inline-flex items-center gap-1 px-2 h-7 rounded-md border border-line text-neutral-300 hover:border-accent/40 hover:text-accent text-xs"
+        title="Spin up a Kaggle GPU notebook via GitHub Actions"
+      >
+        {waking ? <Loader2 className="h-3 w-3 animate-spin" /> : <Cloud className="h-3 w-3" />}
+        Wake Kaggle
+      </button>
+      {tip && (
+        <span className="text-[11px] text-neutral-400 max-w-[280px] truncate" title={tip}>
+          {tip}
+        </span>
+      )}
+    </div>
+  );
 }
 
 /**
