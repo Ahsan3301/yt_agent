@@ -49,6 +49,10 @@ CHANNEL_PRESETS: dict[str, dict] = {
     "horror": {
         "display_name":   "Horror stories",
         "tone":           "chilling, dread-first, atmospheric",
+        # First-person works HERE because the genre lives on lived
+        # dread. Most other niches should NOT use "I/me" — see how
+        # each preset below explicitly sets perspective.
+        "perspective":    "first_person_present — narrator IS in the story right now ('I hear', 'I see'). Specific, somatic, present-tense.",
         "voice":          "en-US-BrianMultilingualNeural",
         "rate":           "-5%",
         "pitch":          "-2Hz",
@@ -74,6 +78,7 @@ CHANNEL_PRESETS: dict[str, dict] = {
     "wisdom": {
         "display_name":   "Wisdom + motivation",
         "tone":           "inspirational, contemplative, clear",
+        "perspective":    "second_person_direct — talk TO the viewer ('you', 'your'). NEVER tell the script as a personal anecdote ('I did X, then Y happened'). The viewer is the subject.",
         "voice":          "en-US-AndrewMultilingualNeural",
         "rate":           "+0%",
         "pitch":          "+0Hz",
@@ -97,6 +102,7 @@ CHANNEL_PRESETS: dict[str, dict] = {
     "finance": {
         "display_name":   "Finance + business",
         "tone":           "confident, punchy, fact-driven",
+        "perspective":    "third_person_documentary — narrate ABOUT real companies / events / numbers ('In 2008, Lehman Brothers collapsed in...'). Use 'you' only when giving the viewer a takeaway. NEVER tell it as 'I lost money on...' — that's fake and untrustworthy for finance content.",
         "voice":          "en-US-GuyNeural",
         "rate":           "+3%",
         "pitch":          "+0Hz",
@@ -121,6 +127,7 @@ CHANNEL_PRESETS: dict[str, dict] = {
     "fitness": {
         "display_name":   "Fitness + discipline",
         "tone":           "energetic, commanding, no-nonsense",
+        "perspective":    "second_person_commanding — 'you walk into the gym', 'your form is wrong'. Direct address. Avoid first-person ('when I started lifting...') unless it's a genuine universal truth dressed as personal example.",
         "voice":          "en-US-DavisNeural",
         "rate":           "+5%",
         "pitch":          "+1Hz",
@@ -144,6 +151,7 @@ CHANNEL_PRESETS: dict[str, dict] = {
     "science": {
         "display_name":   "Science + tech explainers",
         "tone":           "curious, clear, building from familiar to surprising",
+        "perspective":    "third_person_explanatory — narrate the phenomenon itself ('A neutrino passes through your hand right now'). 'You' is fine when addressing the viewer's intuition; first-person is BANNED ('when I learned this...') — science isn't autobiography.",
         "voice":          "en-US-AriaNeural",
         "rate":           "+0%",
         "pitch":          "+0Hz",
@@ -167,6 +175,7 @@ CHANNEL_PRESETS: dict[str, dict] = {
     "history": {
         "display_name":   "History + mythology",
         "tone":           "dramatic narrator, immersive, slightly grave",
+        "perspective":    "third_person_omniscient_narrator — Ken Burns voice. Specific subjects ('Pliny the Younger', 'the Roman fleet') in past tense. NEVER 'this happened to me' or 'when I visited Pompeii' — historical events did not happen to the narrator.",
         "voice":          "en-US-ChristopherNeural",
         "rate":           "-3%",
         "pitch":          "-1Hz",
@@ -192,6 +201,7 @@ CHANNEL_PRESETS: dict[str, dict] = {
     "comedy": {
         "display_name":   "Comedy + observational",
         "tone":           "casual, sharp, dry wit",
+        "perspective":    "first_person_observational — 'I went to the DMV', 'I noticed' — this is the one channel where personal anecdote is the format. Specific, mundane, relatable. Avoid making the narrator the hero of the bit.",
         "voice":          "en-US-JennyNeural",
         "rate":           "+3%",
         "pitch":          "+0Hz",
@@ -212,6 +222,7 @@ CHANNEL_PRESETS: dict[str, dict] = {
     "food": {
         "display_name":   "Food + cooking",
         "tone":           "warm, inviting, sensory",
+        "perspective":    "second_person_invitational — 'you slice the onion', 'imagine the smell'. The viewer is doing/tasting/seeing. First-person ('I learned this recipe in Italy') is only OK as a brief credibility frame, never the whole script.",
         "voice":          "en-US-JaneNeural",
         "rate":           "+0%",
         "pitch":          "+0Hz",
@@ -234,6 +245,7 @@ CHANNEL_PRESETS: dict[str, dict] = {
     "travel": {
         "display_name":   "Travel + culture",
         "tone":           "wanderlust, sensory, slightly poetic",
+        "perspective":    "second_person_descriptive — 'you stand at the cliff edge', 'the salt hits the back of your throat'. Transport the viewer; don't recount a personal vacation. First-person travelogue ('when I visited Bali...') makes the script feel like a vlog instead of a Short.",
         "voice":          "en-US-EmmaNeural",
         "rate":           "+0%",
         "pitch":          "+0Hz",
@@ -256,6 +268,7 @@ CHANNEL_PRESETS: dict[str, dict] = {
     "gaming": {
         "display_name":   "Gaming + lore",
         "tone":           "enthusiast, fast, knowledgeable",
+        "perspective":    "third_person_enthusiast — 'the dev secretly added X', 'Cloud is actually...'. Narrate ABOUT the game world / community / hidden mechanic. First-person ('I was playing Elden Ring when...') sometimes works for reveals but should be the exception, not the default.",
         "voice":          "en-US-RogerNeural",
         "rate":           "+5%",
         "pitch":          "+0Hz",
@@ -332,6 +345,7 @@ def synthesize_custom(name: str, description: str = "", llm_call=None) -> dict:
         "name": key,
         "display_name": name.strip() or key,
         "tone": "engaging, clear, suited to the topic",
+        "perspective": "third_person_objective — narrate ABOUT the subject, not about the narrator. Use 'you' to address the viewer when giving takeaways. Avoid first-person ('I/me') unless the niche is clearly personal-anecdote-driven.",
         "voice": "en-US-AriaNeural",
         "rate": "+0%",
         "pitch": "+0Hz",

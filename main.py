@@ -79,12 +79,17 @@ def _refine_user_script(manual_script: str, manual_title: str, channel_cfg: dict
     channel_name = channel_cfg.get("display_name") or channel_cfg.get("name") or "video"
 
     image_style = channel_cfg.get("image_style", "professional photography")
+    perspective = channel_cfg.get(
+        "perspective",
+        "third_person_objective — narrate ABOUT the subject, not as personal anecdote.",
+    )
     prompt = f"""You are polishing a user-written script for a YouTube Shorts
 video. The script must hit hard — Shorts metrics live and die on the
 first 3 seconds and on completion rate.
 
 Channel: {channel_name}
 Tone target: {tone}
+Narrator perspective: {perspective}
 Hook guidance: {hook_style}
 
 User's draft script:
@@ -101,6 +106,13 @@ Your job — IN THIS ORDER:
    hook guidance above. The hook MUST be a pattern interrupt — drop
    the viewer mid-action, mid-claim, or mid-question. NEVER an intro.
    If the user's opening IS already a strong hook, leave it alone.
+
+1b. FIX THE PERSPECTIVE if it conflicts with the channel's narrator
+    perspective above. If the channel calls for third-person but the
+    user wrote first-person ("when I lost $40K..."), rewrite into the
+    correct perspective WHILE PRESERVING the facts and the user's
+    voice. The viewer should not feel like they're listening to a
+    single person's diary unless the channel explicitly calls for that.
 
 2. POLISH THE BODY. Tighten phrasing, vary sentence rhythm
    (short. then medium-length. then occasionally longer), inject

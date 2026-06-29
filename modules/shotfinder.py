@@ -424,48 +424,11 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror"):
                 return {"type": "image", "path": path,
                         "origin": "pexels_img", "score": -1}
 
-    # ── 3. Pollinations AI generation (crafted per-shot prompt) ──
-    if providers.get("pollinations", False):
-        # Generate up to N attempts. Each attempt asks NIM to craft a FRESH
-        # cinematic prompt for THIS shot with a different camera angle, so
-        # the AI gen doesn't repeat the same composition twice.
-        ai_attempts = int(vid_cfg.get("ai_image_attempts_per_shot", 3))
-        for trial in range(ai_attempts):
-            crafted = craft_image_prompt(
-                narration_excerpt=premise,
-                visual_description=visual,
-                channel=channel,
-                attempt=trial,
-            )
-            prompt_to_use = crafted or ai_prompt
-            if crafted:
-                log.info(f"  AI prompt (try {trial+1}): {crafted[:90]}...")
-            else:
-                log.info(f"  AI prompt (try {trial+1}, raw): {ai_prompt[:90]}...")
-            path, seed = _pollinations_generate(prompt_to_use, output_dir, trial)
-            if not path:
-                continue
-            if judge_on:
-                s = _score_local_image(path, visual, premise)
-                log.info(f"  Pollinations AI: {s}/10 (seed {seed})")
-                if s >= threshold:
-                    used_ids.add(f"pollinations:{seed}")
-                    F._remember_clip(f"pollinations:{seed}")
-                    return {"type": "image", "path": path,
-                            "origin": "pollinations", "score": s}
-                if s > 0:
-                    consider(s, {"type": "image", "path": path,
-                                 "origin": "pollinations", "score": s})
-            else:
-                used_ids.add(f"pollinations:{seed}")
-                F._remember_clip(f"pollinations:{seed}")
-                return {"type": "image", "path": path,
-                        "origin": "pollinations", "score": -1}
-
-    # ── 3b. HuggingFace Inference API — second free AI fallback ──
-    # Same per-shot prompt-crafting logic as Pollinations; just a
-    # different image-gen backend so we don't lose the whole shot when
-    # Pollinations is rate-limited or returning low-quality images.
+    # ── 3. HuggingFace Inference API — PRIMARY AI image gen ──
+    # SDXL via HF gives meaningfully higher quality than Pollinations:
+    # tighter prompt adherence, fewer mangled hands/faces, more
+    # consistent style. Promoted to primary when HF_TOKEN is set.
+    # Pollinations becomes the no-key fallback below.
     if providers.get("huggingface", True) and os.getenv("HF_TOKEN", "").strip():
         ai_attempts = int(vid_cfg.get("ai_image_attempts_per_shot", 3))
         for trial in range(ai_attempts):
@@ -473,7 +436,7 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror"):
                 narration_excerpt=premise,
                 visual_description=visual,
                 channel=channel,
-                attempt=trial + 100,  # different attempt seed than Pollinations
+                attempt=trial,
             )
             prompt_to_use = crafted or ai_prompt
             log.info(f"  HF prompt (try {trial+1}): {(crafted or ai_prompt)[:90]}...")
@@ -496,6 +459,42 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror"):
                 F._remember_clip(f"huggingface:{seed}")
                 return {"type": "image", "path": path,
                         "origin": "huggingface", "score": -1}
+
+    # ── 3b. Pollinations — no-key fallback when HF isn't configured ──
+    # or when HF returns nothing usable (rate-limited / off-topic).
+    if providers.get("pollinations", False):
+        ai_attempts = int(vid_cfg.get("ai_image_attempts_per_shot", 3))
+        for trial in range(ai_attempts):
+            crafted = craft_image_prompt(
+                narration_excerpt=premise,
+                visual_description=visual,
+                channel=channel,
+                attempt=trial + 100,  # different seed than HF's attempts
+            )
+            prompt_to_use = crafted or ai_prompt
+            if crafted:
+                log.info(f"  Pollinations prompt (try {trial+1}): {crafted[:90]}...")
+            else:
+                log.info(f"  Pollinations prompt (try {trial+1}, raw): {ai_prompt[:90]}...")
+            path, seed = _pollinations_generate(prompt_to_use, output_dir, trial)
+            if not path:
+                continue
+            if judge_on:
+                s = _score_local_image(path, visual, premise)
+                log.info(f"  Pollinations AI: {s}/10 (seed {seed})")
+                if s >= threshold:
+                    used_ids.add(f"pollinations:{seed}")
+                    F._remember_clip(f"pollinations:{seed}")
+                    return {"type": "image", "path": path,
+                            "origin": "pollinations", "score": s}
+                if s > 0:
+                    consider(s, {"type": "image", "path": path,
+                                 "origin": "pollinations", "score": s})
+            else:
+                used_ids.add(f"pollinations:{seed}")
+                F._remember_clip(f"pollinations:{seed}")
+                return {"type": "image", "path": path,
+                        "origin": "pollinations", "score": -1}
 
     # ── 4. Last-resort: license the best below-threshold candidate ──
     if best is not None:

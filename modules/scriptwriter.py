@@ -65,6 +65,11 @@ PREMISE (use this — do not invent a different topic):
 
 CHANNEL TONE: {tone}
 
+NARRATOR PERSPECTIVE (THIS IS CRITICAL — most scripts feel fake because
+they default to first-person "this happened to me" no matter the niche.
+Stick to the perspective below):
+  {perspective}
+
 HOOK STYLE (first 1-2 sentences are EVERYTHING — 60% of viewers leave
 in the first 3 seconds; the right hook flips that): {hook_style}
 
@@ -453,6 +458,8 @@ def write_script(research_data, max_attempts=3):
             title=research_data["raw_title"],
             channel_label=channel_cfg.get("display_name") or channel_type,
             tone=channel_cfg.get("tone") or tone_guidance,
+            perspective=channel_cfg.get("perspective")
+                or "third_person_objective — narrate ABOUT the subject, not as personal anecdote.",
             hook_style=channel_cfg.get("hook_style") or "open with the most surprising element of the topic",
             image_style=channel_cfg.get("image_style") or "professional photography, sharp focus",
             facts_block=facts_block,
