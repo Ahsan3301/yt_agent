@@ -21,6 +21,7 @@ import logging
 import argparse
 import datetime
 from pathlib import Path
+from typing import Optional
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -77,7 +78,10 @@ def _refine_user_script(manual_script: str, manual_title: str, channel_cfg: dict
     tone = channel_cfg.get("tone", "engaging")
     channel_name = channel_cfg.get("display_name") or channel_cfg.get("name") or "video"
 
-    prompt = f"""You are polishing a user-written script for a YouTube Shorts video.
+    image_style = channel_cfg.get("image_style", "professional photography")
+    prompt = f"""You are polishing a user-written script for a YouTube Shorts
+video. The script must hit hard — Shorts metrics live and die on the
+first 3 seconds and on completion rate.
 
 Channel: {channel_name}
 Tone target: {tone}
@@ -88,25 +92,54 @@ User's draft script:
 {body}
 \"\"\"
 
-Your job:
-1. Add a 1-2 sentence HOOK at the very start (first 3 seconds when spoken)
-   that matches the channel's hook style. Skip if the script already
-   opens with a strong hook.
-2. Lightly tighten the rest — fix awkward phrasing, cut filler — but
-   PRESERVE the user's content, claims, and voice. Do not invent new
-   facts.
-3. Generate a punchy YouTube title (under 60 chars).
-4. Generate a 1-2 sentence YouTube description.
-5. Generate 5-10 search keywords (single words or short phrases) that
-   describe the visuals needed for footage matching.
-6. Generate 8-12 YouTube tags.
+Your job — IN THIS ORDER:
 
-Return JSON with exactly these keys:
+1. EVALUATE THE OPENING. If the user's first sentence is an
+   introduction ("Today I'll talk about...", "Have you ever
+   wondered...", "Let me tell you about...", a greeting, or anything
+   slow), REPLACE IT with a 1-2 sentence hook that follows the channel's
+   hook guidance above. The hook MUST be a pattern interrupt — drop
+   the viewer mid-action, mid-claim, or mid-question. NEVER an intro.
+   If the user's opening IS already a strong hook, leave it alone.
+
+2. POLISH THE BODY. Tighten phrasing, vary sentence rhythm
+   (short. then medium-length. then occasionally longer), inject
+   specificity (replace vague words with concrete nouns/numbers when
+   the user's facts support it), cut filler phrases like "basically",
+   "in conclusion", "the fact is", "you see", "if you think about it",
+   "it's important to note".
+   CRITICAL: PRESERVE the user's content, claims, examples, and voice.
+   Do NOT invent new facts. Do NOT add claims the user didn't make.
+   Polish means SUBTRACT or REORDER, not ADD information.
+
+3. ADD AN OPEN-LOOP IF MISSING. If the script doesn't plant a
+   question or stakes early that the body resolves, weave one into
+   the second sentence using only the user's existing material.
+
+4. PUNCH THE ENDING. The last sentence must land — a memorable
+   one-liner, a callback to the hook, or a flip of framing. NEVER
+   "thanks for watching" or "subscribe". If the user's ending is
+   limp, rewrite it using ideas from the script itself.
+
+5. METADATA:
+   - youtube_title:   under 60 chars. Curiosity gap, not hype. Strong
+                       nouns, numbers, or questions. No ALL CAPS,
+                       no emoji, no "you won't believe" / "shocked".
+   - description:     150-200 words. First 2 sentences re-hook the
+                       click. Previews value without spoiling. Natural
+                       keyword density.
+   - search_keywords: 5-8 phrases, 4-7 words each. Each phrase
+                       describes a SHOT (subject + lighting/mood +
+                       setting). Visual style for this channel:
+                       {image_style}.
+   - tags:            8-12 YouTube tags, mix of specific + broad.
+
+Return ONLY this JSON (no markdown fences):
 {{
-  "narration":       "<polished script with hook>",
-  "youtube_title":   "<title under 60 chars>",
-  "description":     "<1-2 sentence description>",
-  "search_keywords": ["kw1", "kw2", ...],
+  "narration":       "<polished script>",
+  "youtube_title":   "<under 60 chars>",
+  "description":     "<150-200 words>",
+  "search_keywords": ["visual phrase 1", "visual phrase 2", ...],
   "tags":            ["tag1", "tag2", ...]
 }}"""
 
@@ -203,6 +236,12 @@ def run_pipeline(
     manual_title: str = "",
     manual_images: list | None = None,
     manual_channel_desc: str = "",
+    # Tri-state web research override:
+    #   None  -> use the channel's web_research_enabled default
+    #   True  -> force ON
+    #   False -> force OFF
+    # Lets the dashboard's per-job toggle override channel defaults.
+    web_research: Optional[bool] = None,
 ):
     """
     Execute the full automation pipeline for one video.
@@ -269,13 +308,15 @@ def run_pipeline(
             summary["steps"]["research"] = {"ok": True, "seconds": 0.0, "skipped_manual": True}
         elif manual_topic:
             log.info(f"[1/6] Manual topic: {manual_topic[:80]} — building research bundle.")
-            # If the channel is configured for fact_research AND the
-            # NIM-controlled browser agent is available on this worker,
-            # run a real research loop to gather verified facts + images.
-            # Otherwise we just pass the topic through and let the
-            # scriptwriter LLM generate from prior knowledge.
+            # Decide whether to run the NIM-controlled browser agent.
+            # Per-job override (web_research=) takes precedence; else
+            # the channel's web_research_enabled default.
+            if web_research is None:
+                want_research = bool(channel_cfg.get("web_research_enabled"))
+            else:
+                want_research = bool(web_research)
             research_bundle = None
-            if channel_cfg.get("research_mode") == "fact_research":
+            if want_research:
                 try:
                     from modules import research_agent as _ra
                     if _ra.is_available():
@@ -287,9 +328,11 @@ def run_pipeline(
                             overall_timeout_sec=180,
                         )
                     else:
-                        log.info("  research_agent: not available (playwright missing) — skipping")
+                        log.info("  research_agent: requested but playwright unavailable — skipping")
                 except Exception as e:
                     log.warning(f"  research_agent failed: {e} — continuing without research")
+            else:
+                log.info("  research_agent: disabled for this job")
             content = {
                 "raw_title": manual_topic.strip(),
                 "type":      channel_type,

@@ -296,8 +296,19 @@ def get_channel(name: str) -> dict:
     in for a never-seen-before niche."""
     key = _normalise(name)
     if key in CHANNEL_PRESETS:
-        return {"name": key, **CHANNEL_PRESETS[key]}
-    return {"name": key, "_unknown": True, **CHANNEL_PRESETS["horror"]}
+        cfg = {"name": key, **CHANNEL_PRESETS[key]}
+    else:
+        cfg = {"name": key, "_unknown": True, **CHANNEL_PRESETS["horror"]}
+    # Default web_research_enabled = (channel benefits from facts).
+    # Preset can override by setting an explicit value.
+    cfg.setdefault("web_research_enabled", cfg.get("research_mode") == "fact_research")
+    return cfg
+
+
+def web_research_default(name: str) -> bool:
+    """Cheap accessor for the dashboard's Create page so the toggle
+    can be initialised correctly per channel selection."""
+    return bool(get_channel(name).get("web_research_enabled"))
 
 
 def is_known(name: str) -> bool:

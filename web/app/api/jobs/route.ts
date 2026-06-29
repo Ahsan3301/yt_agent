@@ -87,6 +87,11 @@ export async function POST(req: NextRequest) {
     const manual_images       = Array.isArray(body.manual_images)
       ? (body.manual_images as unknown[]).slice(0, 32).map((u) => String(u))
       : [];
+    // Tri-state: undefined = use channel default; true/false = override.
+    const web_research =
+      body.web_research === true ? true :
+      body.web_research === false ? false :
+      undefined;
 
     // Idempotency check.
     const idempKey = req.headers.get("Idempotency-Key") || "";
@@ -124,6 +129,8 @@ export async function POST(req: NextRequest) {
       // Manual-mode payload propagated to the worker via adopt_remote.
       manual_topic, manual_script, manual_title,
       manual_channel_desc, manual_images,
+      // null in Firestore is fine; backend reads it as Python None.
+      web_research: web_research === undefined ? null : web_research,
     };
 
     // Pick a worker. If one is alive, dispatch immediately.
@@ -160,7 +167,7 @@ export async function POST(req: NextRequest) {
           body: JSON.stringify({
             channel, dry_run,
             manual_topic, manual_script, manual_title,
-            manual_channel_desc, manual_images,
+            manual_channel_desc, manual_images, web_research,
           }),
         });
         if (r.ok) {

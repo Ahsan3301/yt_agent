@@ -130,6 +130,8 @@ def submit(payload: dict[str, Any]) -> dict[str, Any]:
         "manual_title":        str(payload.get("manual_title") or "")[:200],
         "manual_images":       list(payload.get("manual_images") or [])[:32],
         "manual_channel_desc": str(payload.get("manual_channel_desc") or "")[:500],
+        # tri-state: None = use channel default; True/False = override.
+        "web_research":        payload.get("web_research"),
     }
     with _lock:
         _jobs[jid] = job
@@ -170,6 +172,7 @@ def adopt_remote(remote_job: dict[str, Any]) -> bool:
         "manual_title":        str(remote_job.get("manual_title") or "")[:200],
         "manual_images":       list(remote_job.get("manual_images") or [])[:32],
         "manual_channel_desc": str(remote_job.get("manual_channel_desc") or "")[:500],
+        "web_research":        remote_job.get("web_research"),
     }
     with _lock:
         if jid in _jobs:
@@ -343,6 +346,7 @@ def _run_one(job: dict[str, Any]):
         manual_title=job.get("manual_title", ""),
         manual_images=job.get("manual_images") or [],
         manual_channel_desc=job.get("manual_channel_desc", ""),
+        web_research=job.get("web_research"),
     )
 
     # Pipeline finished — final state and (optionally) upload.

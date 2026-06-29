@@ -1,25 +1,26 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import clsx from "clsx";
 import {
   Wand2, FileText, Image as ImageIcon, X, Loader2, Send,
-  Sparkles, Plus, AlertCircle,
+  Sparkles, Plus, AlertCircle, Globe,
 } from "lucide-react";
 
 // Built-in channel presets (must mirror modules/channels.py).
-// Custom channels go through the description field below.
+// `webDefault` = whether NIM browser research defaults ON for this niche.
+// User can flip it per-job via the toggle below.
 const PRESET_CHANNELS = [
-  { name: "horror",   label: "Horror stories" },
-  { name: "wisdom",   label: "Wisdom + motivation" },
-  { name: "finance",  label: "Finance + business" },
-  { name: "fitness",  label: "Fitness + discipline" },
-  { name: "science",  label: "Science + tech" },
-  { name: "history",  label: "History + mythology" },
-  { name: "comedy",   label: "Comedy + observational" },
-  { name: "food",     label: "Food + cooking" },
-  { name: "travel",   label: "Travel + culture" },
-  { name: "gaming",   label: "Gaming + lore" },
+  { name: "horror",   label: "Horror stories",         webDefault: false },
+  { name: "wisdom",   label: "Wisdom + motivation",    webDefault: false },
+  { name: "finance",  label: "Finance + business",     webDefault: true  },
+  { name: "fitness",  label: "Fitness + discipline",   webDefault: true  },
+  { name: "science",  label: "Science + tech",         webDefault: true  },
+  { name: "history",  label: "History + mythology",    webDefault: true  },
+  { name: "comedy",   label: "Comedy + observational", webDefault: false },
+  { name: "food",     label: "Food + cooking",         webDefault: false },
+  { name: "travel",   label: "Travel + culture",       webDefault: false },
+  { name: "gaming",   label: "Gaming + lore",          webDefault: false },
 ];
 
 type UploadedImage = {
@@ -39,6 +40,22 @@ export default function CreatePage() {
   const [script, setScript] = useState("");
   const [title, setTitle] = useState("");
   const [dryRun, setDryRun] = useState(true);
+  // Web research override. `null` = use channel default. Switching
+  // channels resets to that channel's default unless the user has
+  // already manually toggled it (the toggle below flips to a concrete
+  // boolean, so we know not to override).
+  const channelMeta = PRESET_CHANNELS.find((c) => c.name === channel);
+  const channelDefault = useCustom ? true : (channelMeta?.webDefault ?? false);
+  const [webResearch, setWebResearch] = useState<boolean>(channelDefault);
+  const [webResearchTouched, setWebResearchTouched] = useState(false);
+
+  // When channel changes (and user hasn't manually overridden), sync
+  // to that channel's default.
+  useEffect(() => {
+    if (!webResearchTouched) {
+      setWebResearch(channelDefault);
+    }
+  }, [channel, useCustom, channelDefault, webResearchTouched]);
 
   const [images, setImages] = useState<UploadedImage[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -97,6 +114,9 @@ export default function CreatePage() {
       const body: Record<string, unknown> = {
         channel: finalChannel,
         dry_run: dryRun,
+        // Only send the override if the user actually touched the toggle —
+        // otherwise let the backend use the channel's default.
+        ...(webResearchTouched ? { web_research: webResearch } : {}),
       };
       if (useCustom && customDesc.trim()) {
         body.manual_channel_desc = customDesc.trim();
@@ -339,6 +359,34 @@ export default function CreatePage() {
 
       {/* Options + submit */}
       <div className="card space-y-3">
+        <label className="flex items-start gap-2 text-sm cursor-pointer">
+          <input
+            type="checkbox"
+            className="accent-accent mt-1"
+            checked={webResearch}
+            onChange={(e) => {
+              setWebResearch(e.target.checked);
+              setWebResearchTouched(true);
+            }}
+          />
+          <span className="flex-1">
+            <span className="flex items-center gap-1.5">
+              <Globe className="h-3.5 w-3.5 text-accent" />
+              Web research (NIM browser agent)
+              {!webResearchTouched && (
+                <span className="text-[10px] text-neutral-500">
+                  default for {channelMeta?.label || "this channel"}: {channelDefault ? "ON" : "OFF"}
+                </span>
+              )}
+            </span>
+            <span className="block text-xs text-neutral-500 mt-0.5">
+              When ON: NIM controls a headless Chromium to fact-check the
+              topic and pull real hero images. Adds ~30-60 sec to the run.
+              When OFF: the script LLM works from prior knowledge only.
+            </span>
+          </span>
+        </label>
+
         <label className="flex items-center gap-2 text-sm cursor-pointer">
           <input
             type="checkbox"

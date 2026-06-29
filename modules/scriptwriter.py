@@ -22,7 +22,113 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
-PROMPT_VERSION = "v7"
+PROMPT_VERSION = "v8"
+
+
+# ── Universal retention-focused prompt ───────────────────────────
+#
+# Why this exists:
+#   The old code branched into HORROR_PROMPT vs WISDOM_PROMPT. Horror
+#   got 80+ lines of cinematic guidance; everything else got a generic
+#   "make a hook + insight + takeaway" template. Result: finance,
+#   fitness, science scripts read like a 2014 motivational LinkedIn
+#   post — robotic, no real hook, no curiosity gap, no retention.
+#
+#   This template is channel-driven: tone, hook style, banned words,
+#   structure all come from modules.channels.CHANNEL_PRESETS so adding
+#   a new niche means editing ONE dict, not editing this prompt.
+#
+#   Retention principles baked in (these are the difference between
+#   1k views and 100k views on a Short):
+#     * First 3 seconds: pattern-interrupt or curiosity gap. Never an
+#       introduction. Drop the viewer into the most surprising claim.
+#     * Specificity over abstraction: numbers, names, dates, concrete
+#       nouns. "He lost $47K in 14 days" beats "He lost a lot of money."
+#     * Open loops every 3-4 sentences: tease a payoff that resolves
+#       later. Most viewers leave at the 5-second mark; one good loop
+#       gets them to 15 seconds; two gets them to the end.
+#     * Sentence rhythm: vary length aggressively. Short. Then medium.
+#       Then a longer line that breathes. Predictable cadence kills it.
+#     * Stakes: even on a "fun fact" video, every claim should imply
+#       why-the-viewer-should-care. Stakes can be tiny ("you've been
+#       doing this wrong") or huge ("this will outlive everyone alive").
+#     * End on a punch, not a summary. "Subscribe for more" is forbidden.
+
+UNIVERSAL_PROMPT = """You are writing a YouTube Shorts narration for the
+"{channel_label}" channel. The script must HOLD VIEWER RETENTION for
+the full 30-60 seconds — Shorts metrics live and die on completion rate.
+
+PREMISE (use this — do not invent a different topic):
+  {title}
+
+{facts_block}
+
+CHANNEL TONE: {tone}
+
+HOOK STYLE (first 1-2 sentences are EVERYTHING — 60% of viewers leave
+in the first 3 seconds; the right hook flips that): {hook_style}
+
+NON-NEGOTIABLE RETENTION RULES:
+  1. SPECIFICITY OVER ABSTRACTION. Use numbers, names, dates, exact
+     places. "Lost $47K in 14 days" beats "Lost a lot of money."
+     "The 1816 year without a summer" beats "centuries ago".
+  2. FIRST LINE = pattern interrupt. Start mid-action, mid-revelation,
+     mid-question — never with "Today I'll explain", "Let me tell
+     you", "Have you ever wondered", or any greeting. The viewer must
+     not realize they're being introduced to a topic.
+  3. OPEN LOOPS. Plant a question or stakes in the first 5 seconds
+     that the body of the script answers/resolves. The viewer should
+     keep watching to find out the payoff.
+  4. SENTENCE RHYTHM. Vary length aggressively. Short. Then medium-
+     length. Then occasionally a longer sentence that lets the listener
+     breathe a moment. Predictable cadence kills retention.
+  5. STAKES IN EVERY BEAT. Imply what's at risk, what changes, what
+     the listener now sees differently. Even "fun fact" scripts need
+     micro-stakes — give the viewer a reason to care line by line.
+  6. ZERO FILLER PHRASES. Banned: "in this video", "let's dive in",
+     "stay tuned", "without further ado", "subscribe for more", "hit
+     the like button", "make sure to", "as you can see", "interestingly
+     enough", "the fact of the matter is", "at the end of the day".
+     If you write any of these, the script fails review.
+  7. END ON A PUNCH. Last sentence either (a) reveals the answer to
+     the open loop, (b) lands a memorable one-liner the viewer
+     re-shares, or (c) flips the framing of everything just said.
+     Never a "thanks for watching" or summary.
+  8. WORD COUNT: {word_min}-{word_max} words. Hard ceiling — a {hard_cap}-
+     word response gets rejected. Cut connective tissue, never imagery.
+  9. STRICTLY NO sexual / romantic / intimate content. No explicit
+     violence beyond what the channel naturally requires (e.g. mild
+     dread for horror). No content targeting minors as a subject.
+
+YOUTUBE TITLE (under 60 chars):
+  Curiosity gap, not hype. Strong nouns beat adjectives. Numbers and
+  questions outperform statements. NO ALL CAPS, NO emoji, NO clickbait
+  ("you won't believe", "shocked everyone", etc).
+
+DESCRIPTION (150-200 words, SEO-aware):
+  First two sentences re-hook the click. Then briefly previews the
+  video's value WITHOUT spoiling the payoff. Natural keyword density —
+  no keyword stuffing.
+
+SEARCH_KEYWORDS (5-8 phrases, 4-7 words each):
+  These feed a stock-footage / image search. Each phrase must describe
+  a SHOT — subject + lighting/mood + setting in one. Visual style
+  target for this channel: {image_style}.
+  Bad: "money", "office", "nature". Good: "stock chart green spike
+  monitor close up", "ancient cathedral candlelight stone arches".
+
+TAGS (5-10 YouTube tags, short):
+  Mix specific (the actual topic) + broad (the niche).
+
+Respond with ONLY this JSON object — no markdown fences, no prose
+around it:
+{{
+  "narration":       "{word_min}-{word_max} word narration meeting EVERY rule above",
+  "youtube_title":   "title under 60 chars",
+  "description":     "150-200 word SEO description",
+  "tags":            ["tag1", "tag2", ...],
+  "search_keywords": ["visual phrase 1", "visual phrase 2", ...]
+}}"""
 
 # Per-tone style guidance appended to the base prompt. Keep each entry short:
 # the base prompt does the heavy lifting; tone just colors the voice.
@@ -303,27 +409,54 @@ def write_script(research_data, max_attempts=3):
     Takes research_data dict, returns script dict. Retries on:
       - network/Groq HTTP errors (handled by retry())
       - invalid JSON or schema violations (re-prompts the model with the error)
+
+    Channel dispatch:
+      - horror: keeps the cinematic HORROR_PROMPT (high-effort genre-
+        specific guidance the LLM is calibrated against).
+      - everything else: UNIVERSAL_PROMPT — channel-driven, retention-
+        focused, pulls tone/hook_style/image_style from
+        modules.channels.CHANNEL_PRESETS so every niche gets a hook
+        and structural pressure, not a generic motivational template.
     """
+    from modules import channels as _ch
+
     s = load_settings()
     tone = s["content"].get("tone", "atmospheric")
     word_min = int(s["content"].get("target_word_min", 160))
     word_max = int(s["content"].get("target_word_max", 200))
     tone_guidance = TONE_GUIDANCE.get(tone, TONE_GUIDANCE["atmospheric"])
+    hard_cap = word_max + 100
 
     channel_type = research_data.get("type", "horror")
-    # hard_cap = the rejection ceiling. Putting this into the prompt lets
-    # the LLM self-police; matching exactly the validator's bound means
-    # the model won't be surprised by rejections.
-    hard_cap = word_max + 100
-    fmt = dict(tone_guidance=tone_guidance, word_min=word_min,
-               word_max=word_max, hard_cap=hard_cap)
+    channel_cfg = _ch.get_channel(channel_type)
+
+    # Optional facts block when the browser research agent ran upstream.
+    facts = research_data.get("facts") or []
+    sources = research_data.get("sources") or []
+    facts_block = ""
+    if facts:
+        facts_block = (
+            "VERIFIED RESEARCH (use these facts — invent nothing beyond them):\n"
+            + "\n".join(f"  - {f}" for f in facts[:8])
+            + (f"\nSources: {', '.join(sources[:4])}" if sources else "")
+            + "\n"
+        )
+
     if channel_type == "horror":
-        prompt = HORROR_PROMPT.format(title=research_data["raw_title"], **fmt)
-    else:
-        prompt = WISDOM_PROMPT.format(
+        prompt = HORROR_PROMPT.format(
             title=research_data["raw_title"],
-            keywords=", ".join(research_data.get("keywords", [])),
-            **fmt,
+            tone_guidance=tone_guidance,
+            word_min=word_min, word_max=word_max, hard_cap=hard_cap,
+        )
+    else:
+        prompt = UNIVERSAL_PROMPT.format(
+            title=research_data["raw_title"],
+            channel_label=channel_cfg.get("display_name") or channel_type,
+            tone=channel_cfg.get("tone") or tone_guidance,
+            hook_style=channel_cfg.get("hook_style") or "open with the most surprising element of the topic",
+            image_style=channel_cfg.get("image_style") or "professional photography, sharp focus",
+            facts_block=facts_block,
+            word_min=word_min, word_max=word_max, hard_cap=hard_cap,
         )
 
     primary = "NIM (" + nim.TEXT_MODEL + ")" if nim.is_available() else f"Groq ({GROQ_MODEL})"
