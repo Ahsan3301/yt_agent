@@ -5,12 +5,13 @@ import { usePathname } from "next/navigation";
 import { useState, useEffect } from "react";
 import {
   Clapperboard, Settings, History, KeyRound, LayoutDashboard, Activity,
-  ListChecks, Menu, X,
+  ListChecks, Wand2, Menu, X,
 } from "lucide-react";
 import clsx from "clsx";
 
 const NAV = [
   { href: "/",         label: "Dashboard",   icon: LayoutDashboard },
+  { href: "/create",   label: "Create",      icon: Wand2           },
   { href: "/queue",    label: "Job queue",   icon: ListChecks      },
   { href: "/monitor",  label: "Monitor",     icon: Activity        },
   { href: "/settings", label: "Settings",    icon: Settings        },

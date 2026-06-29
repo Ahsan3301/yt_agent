@@ -61,6 +61,84 @@ from modules.editor       import assemble_video
 from modules.uploader     import upload_video
 
 
+def _refine_user_script(manual_script: str, manual_title: str, channel_cfg: dict) -> dict:
+    """Take a user-pasted script and polish it: tighten phrasing, add a
+    punchy first-3-second hook in the channel's style, generate a
+    YouTube title + description + tags.
+
+    The user's words are PRESERVED — we don't rewrite them away. The hook
+    is prepended only if the script doesn't already open with one.
+
+    Falls back to using the raw script as-is if NIM is unreachable.
+    """
+    from modules import nim as _nim
+    body = manual_script.strip()
+    hook_style = channel_cfg.get("hook_style", "open with the most surprising claim")
+    tone = channel_cfg.get("tone", "engaging")
+    channel_name = channel_cfg.get("display_name") or channel_cfg.get("name") or "video"
+
+    prompt = f"""You are polishing a user-written script for a YouTube Shorts video.
+
+Channel: {channel_name}
+Tone target: {tone}
+Hook guidance: {hook_style}
+
+User's draft script:
+\"\"\"
+{body}
+\"\"\"
+
+Your job:
+1. Add a 1-2 sentence HOOK at the very start (first 3 seconds when spoken)
+   that matches the channel's hook style. Skip if the script already
+   opens with a strong hook.
+2. Lightly tighten the rest — fix awkward phrasing, cut filler — but
+   PRESERVE the user's content, claims, and voice. Do not invent new
+   facts.
+3. Generate a punchy YouTube title (under 60 chars).
+4. Generate a 1-2 sentence YouTube description.
+5. Generate 5-10 search keywords (single words or short phrases) that
+   describe the visuals needed for footage matching.
+6. Generate 8-12 YouTube tags.
+
+Return JSON with exactly these keys:
+{{
+  "narration":       "<polished script with hook>",
+  "youtube_title":   "<title under 60 chars>",
+  "description":     "<1-2 sentence description>",
+  "search_keywords": ["kw1", "kw2", ...],
+  "tags":            ["tag1", "tag2", ...]
+}}"""
+
+    try:
+        raw = _nim.chat(
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+            max_tokens=1800,
+            temperature=0.4,
+        )
+        import json as _json
+        data = _json.loads(raw) if isinstance(raw, str) else (raw if isinstance(raw, dict) else _json.loads(str(raw)))
+        # Sanity defaults — never let a missing field break downstream.
+        if not data.get("narration"):
+            data["narration"] = body
+        if manual_title and not data.get("youtube_title"):
+            data["youtube_title"] = manual_title.strip()[:100]
+        data.setdefault("description", "")
+        data.setdefault("search_keywords", [])
+        data.setdefault("tags", [])
+        return data
+    except Exception as e:
+        log.warning(f"_refine_user_script: NIM call failed ({e}); using script verbatim")
+        return {
+            "narration":       body,
+            "youtube_title":   (manual_title or body.split(".")[0])[:100],
+            "description":     "",
+            "search_keywords": [],
+            "tags":            [],
+        }
+
+
 def _step(summary, name, fn, *, run_id: str = "", checkpoint_payload=None):
     """Time a pipeline step, record it in summary, and emit progress to run_state.
 
@@ -111,7 +189,21 @@ def _step(summary, name, fn, *, run_id: str = "", checkpoint_payload=None):
         raise
 
 
-def run_pipeline(channel_type=None, dry_run=False, resume_run_id: str = ""):
+def run_pipeline(
+    channel_type=None,
+    dry_run=False,
+    resume_run_id: str = "",
+    # ── Manual mode params ─────────────────────────────────────
+    # When any of these are set, the pipeline skips the auto-generated
+    # equivalent. Topic-only: skip research. Full script: skip research +
+    # script. Images: feed straight into shotfinder, fetch only what's
+    # not covered.
+    manual_topic: str = "",
+    manual_script: str = "",
+    manual_title: str = "",
+    manual_images: list | None = None,
+    manual_channel_desc: str = "",
+):
     """
     Execute the full automation pipeline for one video.
 
@@ -121,18 +213,39 @@ def run_pipeline(channel_type=None, dry_run=False, resume_run_id: str = ""):
     checkpoint says they're complete. Used by the job worker when a
     previous render of this run died mid-pipeline (e.g. worker crashed
     in edit stage; we resume from edit instead of redoing research).
+
+    Manual mode (all optional):
+      manual_topic       — a topic seed; replaces research's auto-pick.
+      manual_script      — a full narration; replaces research+script
+                            entirely.
+      manual_title       — overrides the LLM-generated YouTube title.
+      manual_images      — list of public URLs (R2 staging) to use as
+                            shot footage. Pipeline fills any remaining
+                            slots from the normal footage providers.
+      manual_channel_desc — used for custom (unknown) channels;
+                            channels.synthesize_custom() uses this to
+                            build a preset on the fly.
     """
+    from modules import channels as _ch
+
     channel_type = channel_type or config.CHANNEL_TYPE
+    # Resolve the channel config UP FRONT — every later step reads from it.
+    channel_cfg = _ch.resolve(channel_type, manual_channel_desc)
     run_id = resume_run_id or datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     if resume_run_id:
         log.info(f"resume mode: run_id={run_id} — completed stages will be skipped")
     work_dir = os.path.join("output", "videos", run_id)
     Path(work_dir).mkdir(parents=True, exist_ok=True)
 
+    manual_images = list(manual_images or [])
+    manual_mode = bool(manual_topic or manual_script or manual_images)
+
     summary = {
         "run_id": run_id,
         "channel": channel_type,
+        "channel_cfg": {k: channel_cfg.get(k) for k in ("display_name", "tone", "color_grade")},
         "dry_run": dry_run,
+        "manual_mode": manual_mode,
         "started_at": datetime.datetime.now().isoformat(timespec="seconds"),
         "steps": {},
     }
@@ -144,20 +257,82 @@ def run_pipeline(channel_type=None, dry_run=False, resume_run_id: str = ""):
     run_state.start(run_id=run_id, channel=channel_type, dry_run=dry_run)
 
     try:
-        # ── STEP 1: Research ──────────────────────────────────────
-        log.info("[1/6] Researching content...")
-        content = _step(summary, "research", lambda: research(channel_type), run_id=run_id)
-        if not content:
-            log.error("Research failed. Aborting.")
-            return _finish(summary, work_dir, False)
+        # ── STEP 1: Research (or manual topic) ───────────────────
+        if manual_script:
+            log.info("[1/6] Manual script provided — skipping research.")
+            content = {
+                "raw_title": manual_title or (manual_topic[:80] if manual_topic else "user-provided script"),
+                "type":      channel_type,
+                "keywords":  [],
+                "manual":    True,
+            }
+            summary["steps"]["research"] = {"ok": True, "seconds": 0.0, "skipped_manual": True}
+        elif manual_topic:
+            log.info(f"[1/6] Manual topic: {manual_topic[:80]} — building research bundle.")
+            # If the channel is configured for fact_research AND the
+            # NIM-controlled browser agent is available on this worker,
+            # run a real research loop to gather verified facts + images.
+            # Otherwise we just pass the topic through and let the
+            # scriptwriter LLM generate from prior knowledge.
+            research_bundle = None
+            if channel_cfg.get("research_mode") == "fact_research":
+                try:
+                    from modules import research_agent as _ra
+                    if _ra.is_available():
+                        log.info("  research_agent: starting NIM-driven browser research")
+                        research_bundle = _ra.research_topic(
+                            topic=manual_topic,
+                            max_steps=6,
+                            channel_cfg=channel_cfg,
+                            overall_timeout_sec=180,
+                        )
+                    else:
+                        log.info("  research_agent: not available (playwright missing) — skipping")
+                except Exception as e:
+                    log.warning(f"  research_agent failed: {e} — continuing without research")
+            content = {
+                "raw_title": manual_topic.strip(),
+                "type":      channel_type,
+                "keywords":  (research_bundle or {}).get("search_keywords") or [],
+                "facts":     (research_bundle or {}).get("facts") or [],
+                "sources":   (research_bundle or {}).get("sources") or [],
+                "manual":    True,
+            }
+            # If the agent surfaced hero images and the user didn't
+            # supply their own, feed them into the manual_images slot.
+            agent_imgs = (research_bundle or {}).get("image_urls") or []
+            if agent_imgs and not manual_images:
+                manual_images = agent_imgs[:8]
+                log.info(f"  research_agent contributed {len(manual_images)} hero images")
+            summary["steps"]["research"] = {
+                "ok": True, "seconds": 0.0, "skipped_manual": True,
+                "agent_used": bool(research_bundle),
+                "agent_facts": len((research_bundle or {}).get("facts") or []),
+            }
+        else:
+            log.info("[1/6] Researching content...")
+            content = _step(summary, "research", lambda: research(channel_type), run_id=run_id)
+            if not content:
+                log.error("Research failed. Aborting.")
+                return _finish(summary, work_dir, False)
         log.info(f"Topic: {content['raw_title'][:80]}")
 
-        # ── STEP 2: Script ────────────────────────────────────────
-        log.info("[2/6] Writing script with LLM...")
-        script = _step(summary, "script", lambda: write_script(content), run_id=run_id)
+        # ── STEP 2: Script (or manual + refine) ──────────────────
+        if manual_script:
+            log.info("[2/6] Refining user-provided script (hook + polish)...")
+            script = _step(summary, "script", lambda: _refine_user_script(
+                manual_script=manual_script,
+                manual_title=manual_title,
+                channel_cfg=channel_cfg,
+            ), run_id=run_id)
+        else:
+            log.info("[2/6] Writing script with LLM...")
+            script = _step(summary, "script", lambda: write_script(content), run_id=run_id)
         if not script:
             log.error("Script generation failed. Aborting.")
             return _finish(summary, work_dir, False)
+        if manual_title:
+            script["youtube_title"] = manual_title.strip()[:100]
         log.info(f"Title: {script.get('youtube_title')}")
         log.info(f"Script length: {len(script.get('narration','').split())} words")
 
@@ -189,8 +364,34 @@ def run_pipeline(channel_type=None, dry_run=False, resume_run_id: str = ""):
                 log.info(f"  shot {i+1}: [{sh['start']:.1f}-{sh['end']:.1f}s] "
                          f"{sh['search_query']!r}")
             summary["shots"] = shots
+
+            # ── Manual images: download user-provided URLs into clips_dir,
+            #    fan them across the EARLIEST shots, let fetch_shots fill
+            #    the rest. The user's images are treated as preferred —
+            #    we never throw any away.
+            preset_sources: list[dict] = []
+            if manual_images:
+                Path(clips_dir).mkdir(parents=True, exist_ok=True)
+                import requests as _rq
+                for idx, src_url in enumerate(manual_images):
+                    try:
+                        r = _rq.get(src_url, timeout=30, stream=True)
+                        r.raise_for_status()
+                        ext = ".jpg"
+                        if "png" in (r.headers.get("content-type") or "").lower():
+                            ext = ".png"
+                        path = os.path.join(clips_dir, f"manual_{idx:02d}{ext}")
+                        with open(path, "wb") as f:
+                            for chunk in r.iter_content(64 * 1024):
+                                f.write(chunk)
+                        preset_sources.append({"type": "image", "path": path, "origin": "manual_upload"})
+                        log.info(f"  manual image {idx+1}/{len(manual_images)}: downloaded → {path}")
+                    except Exception as e:
+                        log.warning(f"  manual image {idx+1} failed to download ({src_url}): {e}")
+
             sources = _step(summary, "footage", lambda: fetch_shots(
                 shots, clips_dir, channel=channel_type,
+                preset_sources=preset_sources,
             ), run_id=run_id)
             # Music separately — same provider chain as before, just no images.
             from modules.footage import get_music, MUSIC_KEYWORDS

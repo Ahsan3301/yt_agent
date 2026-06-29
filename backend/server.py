@@ -28,7 +28,7 @@ import threading
 from pathlib import Path
 from typing import Optional, Any
 
-from fastapi import FastAPI, HTTPException, Body
+from fastapi import FastAPI, HTTPException, Body, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
@@ -281,6 +281,53 @@ def reload_keys():
     another backend updated the central store."""
     applied = keys_sync.pull_into_env()
     return {"ok": True, "applied": list(applied.keys())}
+
+
+@app.post("/api/upload-image")
+async def upload_image(file: UploadFile = File(...)):
+    """Accept a user-uploaded image (multipart), stage it on R2, return
+    the public URL. Used by the dashboard's manual-mode 'Create' dialog
+    so the worker can pull it later when the job claims.
+
+    R2 staging key: staging/<uuid>.<ext>
+    The cleanup workflow prunes staging/* older than 7 days.
+    """
+    if not storage.is_configured():
+        raise HTTPException(503, "storage not configured (need R2 creds)")
+    # Validate it's an image and < 8 MB.
+    ct = (file.content_type or "").lower()
+    if not ct.startswith("image/"):
+        raise HTTPException(400, f"expected image/*, got {ct!r}")
+    ext = ".jpg"
+    if "png" in ct: ext = ".png"
+    elif "webp" in ct: ext = ".webp"
+    elif "gif" in ct: ext = ".gif"
+
+    import tempfile, uuid as _uuid
+    with tempfile.NamedTemporaryFile("wb", delete=False, suffix=ext) as tmp:
+        size = 0
+        while True:
+            chunk = await file.read(64 * 1024)
+            if not chunk:
+                break
+            size += len(chunk)
+            if size > 8 * 1024 * 1024:
+                tmp.close()
+                os.unlink(tmp.name)
+                raise HTTPException(413, "image must be < 8 MB")
+            tmp.write(chunk)
+        tmp_path = tmp.name
+
+    try:
+        key = f"staging/{_uuid.uuid4().hex}{ext}"
+        url = storage._r2_put_file(key, tmp_path, ct)
+        log.info(f"staged user image: {key} ({size} bytes) → {url}")
+        return {"ok": True, "url": url, "key": key, "size": size}
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
 
 
 @app.post("/api/shutdown")

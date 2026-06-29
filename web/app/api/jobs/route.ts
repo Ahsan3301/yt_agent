@@ -79,6 +79,14 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({} as Record<string, unknown>));
     const channel = String(body.channel || "horror");
     const dry_run = body.dry_run !== false; // default true (dry run)
+    // Manual mode passthrough — forwarded to backend/jobs.submit().
+    const manual_topic        = String(body.manual_topic || "").slice(0, 1000);
+    const manual_script       = String(body.manual_script || "").slice(0, 20_000);
+    const manual_title        = String(body.manual_title || "").slice(0, 200);
+    const manual_channel_desc = String(body.manual_channel_desc || "").slice(0, 500);
+    const manual_images       = Array.isArray(body.manual_images)
+      ? (body.manual_images as unknown[]).slice(0, 32).map((u) => String(u))
+      : [];
 
     // Idempotency check.
     const idempKey = req.headers.get("Idempotency-Key") || "";
@@ -113,6 +121,9 @@ export async function POST(req: NextRequest) {
       backend_url: null,
       created_by: "vercel-gateway",
       req_id: reqId,
+      // Manual-mode payload propagated to the worker via adopt_remote.
+      manual_topic, manual_script, manual_title,
+      manual_channel_desc, manual_images,
     };
 
     // Pick a worker. If one is alive, dispatch immediately.
@@ -146,7 +157,11 @@ export async function POST(req: NextRequest) {
             "X-Request-Id": reqId,
             "X-Vercel-Gateway": "1",
           },
-          body: JSON.stringify({ channel, dry_run }),
+          body: JSON.stringify({
+            channel, dry_run,
+            manual_topic, manual_script, manual_title,
+            manual_channel_desc, manual_images,
+          }),
         });
         if (r.ok) {
           const workerJob = await r.json();

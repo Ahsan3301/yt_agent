@@ -97,7 +97,17 @@ def _load_persisted():
 # ── Public API ───────────────────────────────────────────────
 def submit(payload: dict[str, Any]) -> dict[str, Any]:
     """Enqueue a new job. `payload` should have at least `channel` and
-    `dry_run`. Returns the new job record."""
+    `dry_run`. Returns the new job record.
+
+    Manual-mode params (all optional):
+      manual_topic        — seed topic; replaces auto-research's pick.
+      manual_script       — full narration; replaces research + script.
+      manual_title        — overrides the auto-generated YouTube title.
+      manual_images       — list of public URLs to use as shot footage.
+      manual_channel_desc — for custom (unknown) channel names: a brief
+                            description the channel-config synthesizer
+                            can use to build a preset on the fly.
+    """
     jid = uuid.uuid4().hex[:12]
     job = {
         "id": jid,
@@ -114,6 +124,12 @@ def submit(payload: dict[str, Any]) -> dict[str, Any]:
         "public_url": None,
         "error": None,
         "run_id": None,            # filled when the run starts (matches output/videos/<run_id>)
+        # Manual-mode payload (all default to falsy → standard pipeline).
+        "manual_topic":        str(payload.get("manual_topic") or "")[:1000],
+        "manual_script":       str(payload.get("manual_script") or "")[:20_000],
+        "manual_title":        str(payload.get("manual_title") or "")[:200],
+        "manual_images":       list(payload.get("manual_images") or [])[:32],
+        "manual_channel_desc": str(payload.get("manual_channel_desc") or "")[:500],
     }
     with _lock:
         _jobs[jid] = job
@@ -148,6 +164,12 @@ def adopt_remote(remote_job: dict[str, Any]) -> bool:
         "public_url": None,
         "error": None,
         "run_id": None,
+        # Manual-mode payload propagated from the Vercel-queued job doc.
+        "manual_topic":        str(remote_job.get("manual_topic") or "")[:1000],
+        "manual_script":       str(remote_job.get("manual_script") or "")[:20_000],
+        "manual_title":        str(remote_job.get("manual_title") or "")[:200],
+        "manual_images":       list(remote_job.get("manual_images") or [])[:32],
+        "manual_channel_desc": str(remote_job.get("manual_channel_desc") or "")[:500],
     }
     with _lock:
         if jid in _jobs:
@@ -313,7 +335,15 @@ def _run_one(job: dict[str, Any]):
     pt = threading.Thread(target=progress_bridge, daemon=True)
     pt.start()
 
-    ok = run_pipeline(channel_type=job["channel"], dry_run=job["dry_run"])
+    ok = run_pipeline(
+        channel_type=job["channel"],
+        dry_run=job["dry_run"],
+        manual_topic=job.get("manual_topic", ""),
+        manual_script=job.get("manual_script", ""),
+        manual_title=job.get("manual_title", ""),
+        manual_images=job.get("manual_images") or [],
+        manual_channel_desc=job.get("manual_channel_desc", ""),
+    )
 
     # Pipeline finished — final state and (optionally) upload.
     final_state = run_state.read()

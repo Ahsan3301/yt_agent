@@ -174,7 +174,8 @@ def _stream_once(payload, headers, read_timeout, total_timeout):
 
 
 def chat(messages, model=None, max_tokens=2048, temperature=0.7,
-         response_format=None, timeout=60, stream=None, thinking=False):
+         response_format=None, timeout=60, stream=None, thinking=False,
+         tools=None, tool_choice=None):
     """
     OpenAI-compatible chat completion. Returns the assistant message string.
 
@@ -186,6 +187,11 @@ def chat(messages, model=None, max_tokens=2048, temperature=0.7,
     so Nemotron-class reasoning models skip the verbose think-trace and
     produce the final answer directly. Set thinking=True only when you
     actually want the reasoning trace (debugging, transparency).
+
+    tools=None / tool_choice=None: standard chat. To enable function-
+    calling agentic loops use chat_with_tools() instead — it parses
+    tool_calls from the response. Passing tools= directly here also
+    works but you get the raw string and must parse yourself.
     """
     payload = {
         "model": model or TEXT_MODEL,
@@ -195,6 +201,12 @@ def chat(messages, model=None, max_tokens=2048, temperature=0.7,
     }
     if response_format:
         payload["response_format"] = response_format
+    if tools:
+        payload["tools"] = tools
+        # Force tool-calling on if requested. Streaming gets disabled
+        # automatically below because tool-call responses are non-text.
+        if tool_choice is not None:
+            payload["tool_choice"] = tool_choice
     if not thinking:
         # Reasoning models eat the entire token budget on internal
         # monologue otherwise. With thinking off they go straight to
@@ -202,7 +214,8 @@ def chat(messages, model=None, max_tokens=2048, temperature=0.7,
         payload["chat_template_kwargs"] = {"thinking": False}
 
     if stream is None:
-        stream = max_tokens > 1024
+        # Tools responses are JSON, not text — streaming would garble them.
+        stream = (max_tokens > 1024) and not tools
 
     if stream:
         content, reasoning = _post_chat_streamed_pair(
@@ -226,6 +239,44 @@ def chat(messages, model=None, max_tokens=2048, temperature=0.7,
         )
         return reasoning
     return ""
+
+
+def chat_with_tools(messages, tools, model=None, max_tokens=2048,
+                    temperature=0.4, timeout=60, tool_choice="auto"):
+    """
+    Function-calling variant of chat(). Returns the full assistant message
+    dict (with `content` AND `tool_calls` keys) so the caller can route
+    tool_calls into actual function invocations.
+
+    Used by modules/research_agent.py to drive a multi-step browser
+    research loop with the tool defs in modules/browser_agent.TOOL_DEFS.
+
+    Returns:
+        {
+          "content":    str | None,
+          "tool_calls": [{
+              "id":       "call_xxx",
+              "function": {"name": "search", "arguments": "{...}"},
+              "type":     "function",
+          }, ...] | None,
+        }
+    """
+    payload = {
+        "model": model or TEXT_MODEL,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "tools": tools,
+        "tool_choice": tool_choice,
+        # thinking=False — let the model commit to a tool call quickly.
+        "chat_template_kwargs": {"thinking": False},
+    }
+    data = _post_chat(payload, timeout=timeout)
+    msg = data["choices"][0]["message"]
+    return {
+        "content":    msg.get("content"),
+        "tool_calls": msg.get("tool_calls") or None,
+    }
 
 
 # ── Vision judge ──────────────────────────────────────────────

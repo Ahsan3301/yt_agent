@@ -1,0 +1,19 @@
+# Optional extras for the NIM-controlled browser research agent.
+#
+# Why split out from requirements.txt:
+#   playwright + its Chromium download adds ~400 MB to the worker image.
+#   On HF Space (CPU container, slow builds) that's painful. Only Colab
+#   and Kaggle workers need this; they pull it in their bootstrap notebook.
+#
+# Installs:
+#   playwright           — Python bindings for headless Chromium
+#   beautifulsoup4       — robust HTML parsing for read_text() tool
+#   pillow               — already in base requirements; listed here for completeness
+#
+# After pip install, you MUST also run:
+#   playwright install --with-deps chromium
+# to download the Chromium binary (~150 MB). The Colab + Kaggle notebook
+# cells run this automatically.
+
+playwright>=1.48
+beautifulsoup4>=4.12

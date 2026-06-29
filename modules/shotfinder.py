@@ -527,9 +527,14 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror"):
     return None
 
 
-def fetch_shots(shots, output_dir, channel="horror"):
+def fetch_shots(shots, output_dir, channel="horror", preset_sources=None):
     """For each shot, fetch one image (with vision validation). Returns the
     list of source dicts in shot order. Missing shots are simply skipped.
+
+    `preset_sources`: when the user provided their own images via manual
+    mode, drop them into the EARLIEST shots first (one per shot) and
+    only call the provider chain for the remaining shots. Lets the user
+    seed the story visually without throwing away the auto-fetcher.
 
     Reports per-shot progress to run_state so the dashboard bar moves
     smoothly during this long step (the footage stage owns 30%..60% of
@@ -541,15 +546,21 @@ def fetch_shots(shots, output_dir, channel="horror"):
     reset_hf_breaker()
     used_ids = set(F._load_used_clips())
     sources = []
+    presets = list(preset_sources or [])
     total = max(1, len(shots))
     for i, shot in enumerate(shots, 1):
         run_state.check_cancel()
         log.info(f"Shot {i}/{total}")
-        src = find_image_for_shot(shot, output_dir, used_ids, channel=channel)
+        if presets:
+            src = presets.pop(0)
+            log.info(f"  using preset image: {src.get('path')}")
+        else:
+            src = find_image_for_shot(shot, output_dir, used_ids, channel=channel)
         if src:
             src["start"] = float(shot.get("start", 0.0))
             src["end"]   = float(shot.get("end", 0.0))
             sources.append(src)
         run_state.tick("footage", i / total)
-    log.info(f"Storyboard fetch: {len(sources)}/{len(shots)} shots filled")
+    log.info(f"Storyboard fetch: {len(sources)}/{len(shots)} shots filled "
+             f"({sum(1 for s in sources if s.get('origin') == 'manual_upload')} from user upload)")
     return sources
