@@ -8,6 +8,10 @@
 # migration files at the standard /pb_migrations location and rely on
 # Pocketbase's auto-apply-on-boot behaviour.
 
-FROM ghcr.io/muchobien/pocketbase:latest
+# Pinned to v0.22.x because our migrations use the legacy `Dao`-style
+# JSVM API (`new Dao(db).findCollectionByNameOrId(...)`). Pocketbase
+# v0.23+ removed `Dao` in favor of an `$app`-based API. We can migrate
+# the schema file later; for now pinning is the lowest-risk fix.
+FROM ghcr.io/muchobien/pocketbase:0.22.21
 # pb_migrations/ is the build-context root (./coolify/pocketbase/).
 COPY pb_migrations /pb_migrations

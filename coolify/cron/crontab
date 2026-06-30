@@ -15,7 +15,9 @@
 0 5 * * *  curl -fsS -X POST -H "X-API-Key: $RENDER_TRIGGER_KEY" "$DASHBOARD_INTERNAL_URL/api/maintenance/cleanup" >> /proc/1/fd/1 2>&1
 
 # Every 5 min — wake a Kaggle worker if the queue has work + no GPU.
-*/5 * * * *  curl -fsS -X POST -H "X-API-Key: $RENDER_TRIGGER_KEY" "$DASHBOARD_INTERNAL_URL/api/maintenance/needs-worker" >> /proc/1/fd/1 2>&1
+# This route is GET (not POST) — it's a read-only probe that returns
+# {needs_worker: bool} and (optionally) fires a Kaggle dispatch.
+*/5 * * * *  curl -fsS -H "X-API-Key: $RENDER_TRIGGER_KEY" "$DASHBOARD_INTERNAL_URL/api/maintenance/needs-worker" >> /proc/1/fd/1 2>&1
 
 # Trailing newline is required — Linux crontab silently ignores the last
 # line if it doesn't end with one.
