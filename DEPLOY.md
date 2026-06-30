@@ -1,6 +1,45 @@
 # Deploying YT Agent
 
-This is the production layout described in your spec:
+Two supported deployments:
+
+1. **Self-hosted via Coolify** (recommended) — full self-host on a VPS
+   with Pocketbase + MinIO + Next.js dashboard in one Coolify application.
+   See `coolify/README.md` for step-by-step setup.
+2. **Vercel + Firebase + Cloudflare R2** (legacy) — covered below.
+
+GPU rendering stays on Colab + Kaggle in both layouts.
+
+---
+
+## Option A — Self-hosted on Coolify (recommended)
+
+Everything you need is in `coolify/`:
+
+```
+coolify/
+├── docker-compose.yml          Coolify app entry point
+├── Caddyfile                   TLS + subpath routing
+├── Dockerfile.dashboard        ARM-aware Next.js standalone image
+├── cron/                       Replaces GitHub Actions cron
+├── pocketbase/pb_migrations/   Auto-applied schema
+├── .env.example                Every env var with comments
+└── README.md                   Full step-by-step setup
+```
+
+Quick version: in Coolify create a new application from your fork, set
+`coolify/docker-compose.yml` as the compose file, paste env vars from
+`.env.example`, point your domain, deploy. The single 5-service stack
+gives you dashboard + DB + storage + cron in one redeploy unit.
+
+**Migration from the Vercel layout**: see
+`scripts/firestore_to_pocketbase.py` (idempotent — safe to re-run as a
+delta sync before final DNS cutover).
+
+---
+
+## Option B — Legacy Vercel + Firebase + R2
+
+This is the original production layout:
 
 - **Frontend** on Vercel (auto-deploy from GitHub)
 - **Backend** on Google Colab free GPU tier (Cloudflare quick tunnel)

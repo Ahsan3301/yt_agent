@@ -89,6 +89,16 @@ else:
 # Back-compat — used by /api/debug/heartbeat in server.py.
 REGISTRY_FILENAME = "backends"   # now a Firestore collection name
 
+# Worker connection mode.
+#   "tunnel"        — legacy: expose inbound cloudflared, dashboard
+#                     polls our URL. PUBLIC_BACKEND_URL must be set.
+#   "outbound_poll" — Coolify-friendly: NO public URL. We register
+#                     ourselves via HTTPS POST to COOLIFY_BASE_URL +
+#                     poll /api/jobs/claim instead of being polled.
+WORKER_MODE = (os.getenv("WORKER_MODE") or "tunnel").strip().lower()
+COOLIFY_BASE_URL = (os.getenv("COOLIFY_BASE_URL") or "").rstrip("/")
+RENDER_TRIGGER_KEY = os.getenv("RENDER_TRIGGER_KEY") or ""
+
 _status = "available"
 _running = False
 _startup_epoch = time.time()
@@ -96,6 +106,10 @@ _startup_epoch = time.time()
 
 def public_url() -> str:
     return os.getenv("PUBLIC_BACKEND_URL", PUBLIC_URL)
+
+
+def _is_outbound_poll() -> bool:
+    return WORKER_MODE == "outbound_poll" and bool(COOLIFY_BASE_URL)
 
 
 def set_status(status: str):
@@ -122,7 +136,11 @@ def _self_payload(queue_depth: int) -> dict:
 
 
 def push_now(queue_depth: int = 0):
-    """Publish a heartbeat immediately."""
+    """Publish a heartbeat immediately. Goes via HTTPS in outbound-
+    poll mode, direct DB write in tunnel mode."""
+    if _is_outbound_poll():
+        _push_outbound(queue_depth)
+        return
     if not db.is_configured():
         return
     if not public_url():
@@ -135,6 +153,62 @@ def push_now(queue_depth: int = 0):
         log.debug(f"heartbeat ok ({_status}, depth={queue_depth})")
     except Exception as e:
         log.warning(f"heartbeat write failed: {e}")
+
+
+def _push_outbound(queue_depth: int):
+    """Heartbeat via the Coolify dashboard's /api/workers/register
+    endpoint. The dashboard is the only thing that talks to the DB —
+    the worker never needs creds for it."""
+    if not COOLIFY_BASE_URL or not RENDER_TRIGGER_KEY:
+        log.debug("outbound-poll heartbeat skipped: COOLIFY_BASE_URL/RENDER_TRIGGER_KEY not set")
+        return
+    import requests
+    payload = _self_payload(queue_depth)
+    # Strip the server_timestamp sentinel (it's a Firestore object that
+    # JSON can't serialise — the route generates its own timestamp).
+    payload.pop("last_seen", None)
+    payload["queue_depth"] = int(queue_depth)
+    try:
+        r = requests.post(
+            f"{COOLIFY_BASE_URL}/api/workers/register",
+            json=payload,
+            headers={"X-API-Key": RENDER_TRIGGER_KEY},
+            timeout=10,
+        )
+        if r.ok:
+            log.debug(f"outbound-poll heartbeat ok ({_status}, depth={queue_depth})")
+        else:
+            log.warning(f"outbound-poll heartbeat HTTP {r.status_code}: {r.text[:100]}")
+    except Exception as e:
+        log.warning(f"outbound-poll heartbeat failed: {e}")
+
+
+def _claim_outbound() -> dict | None:
+    """Poll the dashboard for a queued job. Returns the job payload or
+    None when nothing's queued. Used by the loop in outbound-poll mode
+    instead of jobs_db.claim_queued (which goes via the DB client and
+    requires Firestore creds we don't have)."""
+    if not COOLIFY_BASE_URL or not RENDER_TRIGGER_KEY:
+        return None
+    import requests
+    try:
+        r = requests.post(
+            f"{COOLIFY_BASE_URL}/api/jobs/claim",
+            json={
+                "instance_id": INSTANCE_ID,
+                "tier": INSTANCE_TIER,
+            },
+            headers={"X-API-Key": RENDER_TRIGGER_KEY},
+            timeout=10,
+        )
+        if r.status_code == 204:
+            return None
+        if r.ok:
+            return (r.json() or {}).get("job")
+        log.warning(f"outbound-poll claim HTTP {r.status_code}: {r.text[:100]}")
+    except Exception as e:
+        log.warning(f"outbound-poll claim failed: {e}")
+    return None
 
 
 def deregister():
@@ -154,8 +228,16 @@ def start():
     global _running, _startup_epoch
     if _running:
         return
-    if not db.is_configured():
-        log.info("registry: Firestore not configured — skipping heartbeat")
+    # In tunnel mode we need DB creds. In outbound-poll mode we don't
+    # (the dashboard is the only thing that talks to the DB).
+    if not _is_outbound_poll() and not db.is_configured():
+        log.info("registry: DB not configured + not in outbound-poll mode — skipping heartbeat")
+        return
+    if _is_outbound_poll() and (not COOLIFY_BASE_URL or not RENDER_TRIGGER_KEY):
+        log.warning(
+            "registry: WORKER_MODE=outbound_poll but COOLIFY_BASE_URL/"
+            "RENDER_TRIGGER_KEY not set — heartbeat disabled"
+        )
         return
     _running = True
     _startup_epoch = time.time()
@@ -169,6 +251,11 @@ def start():
         busy_interval = 15
         idle_interval = HEARTBEAT_INTERVAL  # respects env override (default 60s)
 
+        # In outbound-poll mode the worker is responsible for *finding*
+        # jobs (vs being-pushed-to in tunnel mode), so we poll the claim
+        # endpoint every 5 sec when idle.
+        outbound_claim_interval = 5
+
         # First heartbeat fires IMMEDIATELY on worker startup so the
         # dashboard's onSnapshot listener sees the card within ~1 sec
         # instead of after the first sleep (was up to 60s wait).
@@ -181,14 +268,30 @@ def start():
                 if new_status != _status:
                     set_status(new_status)
                 push_now(queue_depth=depth)
-                if not busy and public_url():
-                    claimed = jobs_db.claim_queued(INSTANCE_ID, public_url())
+
+                if not busy:
+                    if _is_outbound_poll():
+                        # Outbound-poll: pull a job from the dashboard.
+                        claimed = _claim_outbound()
+                    elif public_url():
+                        # Tunnel: legacy DB-side claim.
+                        claimed = jobs_db.claim_queued(INSTANCE_ID, public_url())
+                    else:
+                        claimed = None
                     if claimed:
                         jobs.adopt_remote(claimed)
             except Exception as e:
                 log.warning(f"heartbeat loop error: {e}")
             # Pick the next sleep based on current state.
-            sleep_for = busy_interval if jobs.is_busy() else idle_interval
+            if jobs.is_busy():
+                sleep_for = busy_interval
+            elif _is_outbound_poll():
+                # Idle + outbound-poll: poll the claim endpoint often
+                # so users see jobs picked up within seconds of
+                # submitting.
+                sleep_for = outbound_claim_interval
+            else:
+                sleep_for = idle_interval
             # Don't sleep at startup — get the second heartbeat out
             # quickly to confirm the worker is alive (timestamp fresh).
             if first:
