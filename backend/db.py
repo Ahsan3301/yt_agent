@@ -76,10 +76,13 @@ def is_configured() -> bool:
     """True if the active backend's env vars are set. Doesn't init
     the client — call client() for that."""
     if _BACKEND == "pocketbase":
-        return bool(
-            (os.getenv(_PB_URL_INT_ENV) or os.getenv(_PB_URL_ENV) or "").strip()
-            and os.getenv(_PB_TOKEN_ENV, "").strip()
+        has_url = bool((os.getenv(_PB_URL_INT_ENV) or os.getenv(_PB_URL_ENV) or "").strip())
+        has_admin = bool(
+            os.getenv("POCKETBASE_ADMIN_EMAIL", "").strip()
+            and os.getenv("POCKETBASE_ADMIN_PASSWORD", "").strip()
         )
+        has_token = bool(os.getenv(_PB_TOKEN_ENV, "").strip())
+        return has_url and (has_admin or has_token)
     return bool(
         os.getenv(_SERVICE_ACCOUNT_ENV, "").strip()
         or os.getenv(_SERVICE_ACCOUNT_B64_ENV, "").strip()
@@ -120,9 +123,17 @@ def _init_pocketbase():
         raise RuntimeError(
             f"DB_BACKEND=pocketbase but {_PB_URL_INT_ENV}/{_PB_URL_ENV} not set"
         )
-    if not token:
+    # Token OR admin creds — PB has no static service-token concept yet,
+    # so admin creds are the practical path; PB_SERVER_TOKEN kept for
+    # future API parity.
+    has_admin = bool(
+        os.getenv("POCKETBASE_ADMIN_EMAIL", "").strip()
+        and os.getenv("POCKETBASE_ADMIN_PASSWORD", "").strip()
+    )
+    if not token and not has_admin:
         raise RuntimeError(
-            f"DB_BACKEND=pocketbase but {_PB_TOKEN_ENV} not set"
+            "DB_BACKEND=pocketbase needs either PB_SERVER_TOKEN OR "
+            "POCKETBASE_ADMIN_EMAIL + POCKETBASE_ADMIN_PASSWORD"
         )
     from backend.db_pocketbase import PocketBaseClient
     _client = PocketBaseClient(url=url, token=token)

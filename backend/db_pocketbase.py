@@ -283,17 +283,54 @@ class CollectionReference(_Query):
 
 class PocketBaseClient:
     """Surface matches what google.cloud.firestore.Client exposes for
-    the operations our codebase actually uses."""
+    the operations our codebase actually uses.
+
+    Auth: superuser login via POCKETBASE_ADMIN_EMAIL/PASSWORD on first
+    use, cached for 1 hour (PB tokens last ~30 days; refresh hourly to
+    be safe). PB doesn't support pre-issued static service tokens.
+    """
 
     def __init__(self, url: str, token: str):
         self._url = url.rstrip("/")
-        self._token = token
+        # token kept for future API parity but unused — PB has no
+        # static service-token concept yet.
+        self._unused_token = token
         self._session = requests.Session()
+        self._auth_token: Optional[str] = None
+        self._auth_expires_at: float = 0.0
+        self._admin_email = os.getenv("POCKETBASE_ADMIN_EMAIL", "")
+        self._admin_password = os.getenv("POCKETBASE_ADMIN_PASSWORD", "")
+
+    def _get_auth_token(self) -> str:
+        import time as _time
+        if self._auth_token and _time.time() < self._auth_expires_at:
+            return self._auth_token
+        if not self._admin_email or not self._admin_password:
+            raise RuntimeError(
+                "Pocketbase auth not configured — set "
+                "POCKETBASE_ADMIN_EMAIL + POCKETBASE_ADMIN_PASSWORD"
+            )
+        r = self._session.post(
+            f"{self._url}/api/collections/_superusers/auth-with-password",
+            json={"identity": self._admin_email, "password": self._admin_password},
+            timeout=15,
+        )
+        if not r.ok:
+            raise RuntimeError(
+                f"Pocketbase superuser auth failed: HTTP {r.status_code} — {r.text[:200]}"
+            )
+        token = (r.json() or {}).get("token") or ""
+        if not token:
+            raise RuntimeError("Pocketbase auth response missing token")
+        self._auth_token = token
+        # 30-day token; refresh hourly to be safe.
+        self._auth_expires_at = _time.time() + 3600
+        return token
 
     def _http(self, method: str, path: str, **kwargs) -> requests.Response:
         kwargs.setdefault("timeout", 30)
         headers = kwargs.pop("headers", None) or {}
-        headers.setdefault("Authorization", self._token)
+        headers.setdefault("Authorization", self._get_auth_token())
         return self._session.request(method, f"{self._url}{path}", headers=headers, **kwargs)
 
     def collection(self, name: str) -> CollectionReference:

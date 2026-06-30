@@ -22,6 +22,54 @@
 
 const PB_URL = (process.env.PB_URL_INTERNAL || process.env.NEXT_PUBLIC_PB_URL || "").replace(/\/$/, "");
 const PB_TOKEN = process.env.PB_SERVER_TOKEN || "";
+const PB_ADMIN_EMAIL = process.env.POCKETBASE_ADMIN_EMAIL || "";
+const PB_ADMIN_PASSWORD = process.env.POCKETBASE_ADMIN_PASSWORD || "";
+
+// Cached superuser auth token. Pocketbase's _superusers auth-with-password
+// endpoint returns a token good for ~30 days; we refresh hourly to be
+// safe. PB_SERVER_TOKEN, if set, is preferred (lets you rotate a static
+// long-lived superuser token without rebooting the dashboard).
+let _authToken: string | null = null;
+let _authExpiresAt = 0;
+
+async function _ensureAuthToken(): Promise<string> {
+  // Cached login token still good?
+  if (_authToken && Date.now() < _authExpiresAt) return _authToken;
+  // Pocketbase doesn't support pre-issued static service tokens — the
+  // only valid auth is a fresh JWT from auth-with-password. So
+  // PB_SERVER_TOKEN is currently unused; we keep the env var for
+  // future-proofing in case PB adds opaque tokens.
+  void PB_TOKEN;
+  // Admin (superuser) login.
+  if (!PB_ADMIN_EMAIL || !PB_ADMIN_PASSWORD) {
+    throw new Error(
+      "Pocketbase auth not configured — set PB_SERVER_TOKEN OR " +
+      "POCKETBASE_ADMIN_EMAIL + POCKETBASE_ADMIN_PASSWORD",
+    );
+  }
+  const r = await fetch(
+    `${PB_URL}/api/collections/_superusers/auth-with-password`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        identity: PB_ADMIN_EMAIL,
+        password: PB_ADMIN_PASSWORD,
+      }),
+    },
+  );
+  if (!r.ok) {
+    throw new Error(
+      `Pocketbase superuser auth failed: HTTP ${r.status} — ${await r.text().catch(() => "")}`,
+    );
+  }
+  const j = await r.json();
+  _authToken = String(j.token || "");
+  // 30-day token; refresh every hour to be safe.
+  _authExpiresAt = Date.now() + 60 * 60 * 1000;
+  if (!_authToken) throw new Error("Pocketbase auth response missing token");
+  return _authToken;
+}
 
 // Sentinel for server timestamp — recognised by the upsert path which
 // substitutes the current epoch seconds on the server side.
@@ -36,9 +84,10 @@ export const PBFieldValue = {
 
 // ── Internal helpers ──────────────────────────────────────────────
 
-function _headers(): HeadersInit {
+async function _headers(): Promise<HeadersInit> {
+  const token = await _ensureAuthToken();
   return {
-    "Authorization": PB_TOKEN,
+    "Authorization": token,
     "Content-Type": "application/json",
   };
 }
@@ -134,7 +183,7 @@ class DocRef {
     const pbId = _pbId(this.id);
     const r = await fetch(
       `${PB_URL}/api/collections/${this.collection}/records/${pbId}`,
-      { headers: _headers(), cache: "no-store" },
+      { headers: await _headers(), cache: "no-store" },
     );
     if (r.status === 404) {
       return { exists: false, id: this.id, data: () => undefined, ref: this };
@@ -158,7 +207,7 @@ class DocRef {
     if (opts?.merge !== false) {
       const r = await fetch(
         `${PB_URL}/api/collections/${this.collection}/records/${pbId}`,
-        { method: "PATCH", headers: _headers(), body: JSON.stringify(body) },
+        { method: "PATCH", headers: await _headers(), body: JSON.stringify(body) },
       );
       if (r.ok) return;
       if (r.status !== 404) {
@@ -168,7 +217,7 @@ class DocRef {
     // CREATE.
     const r = await fetch(
       `${PB_URL}/api/collections/${this.collection}/records`,
-      { method: "POST", headers: _headers(), body: JSON.stringify(body) },
+      { method: "POST", headers: await _headers(), body: JSON.stringify(body) },
     );
     if (!r.ok) {
       throw new Error(`PB create ${this.path}: HTTP ${r.status}: ${await r.text()}`);
@@ -180,7 +229,7 @@ class DocRef {
     const body = _serialise(data);
     const r = await fetch(
       `${PB_URL}/api/collections/${this.collection}/records/${pbId}`,
-      { method: "PATCH", headers: _headers(), body: JSON.stringify(body) },
+      { method: "PATCH", headers: await _headers(), body: JSON.stringify(body) },
     );
     if (!r.ok) {
       throw new Error(`PB update ${this.path}: HTTP ${r.status}: ${await r.text()}`);
@@ -191,7 +240,7 @@ class DocRef {
     const pbId = _pbId(this.id);
     const r = await fetch(
       `${PB_URL}/api/collections/${this.collection}/records/${pbId}`,
-      { method: "DELETE", headers: _headers() },
+      { method: "DELETE", headers: await _headers() },
     );
     if (!r.ok && r.status !== 404) {
       throw new Error(`PB delete ${this.path}: HTTP ${r.status}`);
@@ -228,7 +277,7 @@ class Query {
     params.set("perPage", String(this._limit || 200));
     const r = await fetch(
       `${PB_URL}/api/collections/${this.collection}/records?${params.toString()}`,
-      { headers: _headers(), cache: "no-store" },
+      { headers: await _headers(), cache: "no-store" },
     );
     if (!r.ok) throw new Error(`PB query ${this.collection}: HTTP ${r.status}`);
     const data = await r.json();
@@ -326,13 +375,16 @@ export function pbAdminDb(): PocketBaseAdminClient {
   if (!PB_URL) {
     throw new Error("PB_URL or PB_URL_INTERNAL must be set for Pocketbase backend");
   }
-  if (!PB_TOKEN) {
-    throw new Error("PB_SERVER_TOKEN must be set for Pocketbase backend");
+  if (!PB_TOKEN && !(PB_ADMIN_EMAIL && PB_ADMIN_PASSWORD)) {
+    throw new Error(
+      "Pocketbase auth not configured — set PB_SERVER_TOKEN OR " +
+      "POCKETBASE_ADMIN_EMAIL + POCKETBASE_ADMIN_PASSWORD",
+    );
   }
   if (!_client) _client = new PocketBaseAdminClient();
   return _client;
 }
 
 export function isPocketbaseConfigured(): boolean {
-  return !!(PB_URL && PB_TOKEN);
+  return !!(PB_URL && (PB_TOKEN || (PB_ADMIN_EMAIL && PB_ADMIN_PASSWORD)));
 }

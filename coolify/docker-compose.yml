@@ -74,9 +74,16 @@ services:
       # Server-side Next.js code uses PB_URL_INTERNAL to hit Pocketbase
       # directly inside the docker network. The browser uses
       # NEXT_PUBLIC_PB_URL which goes through Caddy.
+      # Tell the dashboard to use Pocketbase (not Firestore).
+      DB_BACKEND: pocketbase
       PB_URL_INTERNAL: http://pocketbase:8090
       NEXT_PUBLIC_PB_URL: ${NEXT_PUBLIC_PB_URL:-/pb}
+      # PB_SERVER_TOKEN is optional — if blank, the dashboard logs in
+      # as the superuser with POCKETBASE_ADMIN_EMAIL/PASSWORD and caches
+      # the token.
       PB_SERVER_TOKEN: ${PB_SERVER_TOKEN}
+      POCKETBASE_ADMIN_EMAIL: ${POCKETBASE_ADMIN_EMAIL}
+      POCKETBASE_ADMIN_PASSWORD: ${POCKETBASE_ADMIN_PASSWORD}
       # ── Storage (default: MinIO via internal hostname) ──
       # First-deploy fallback. Once the user configures providers via
       # the /storage page, the storage registry takes over.
