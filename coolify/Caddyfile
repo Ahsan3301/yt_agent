@@ -1,32 +1,37 @@
-# Caddy config — single domain, subpath routing.
+# Internal Caddy — sits BEHIND Coolify's Traefik.
 #
-# Caddy auto-issues Let's Encrypt certs for {$DOMAIN} on first request.
-# All four services live behind the same TLS cert so cookies + CORS
-# stay simple.
+# Traefik handles public TLS at the edge (Coolify auto-issues
+# Let's Encrypt for the application domain). This Caddy listens on
+# plain HTTP and does path-based routing only:
+#   /pb/     → Pocketbase (admin UI + REST + realtime SSE)
+#   /s3/     → MinIO S3 API (public video URLs, boto3)
+#   /minio/  → MinIO admin console
+#   /        → Next.js dashboard
 #
-# Path ordering matters: the more-specific /pb/ and /s3/ and /minio/
-# matchers come first; the catch-all reverse_proxy to dashboard:3000
-# is the fallback.
+# Routing on the same origin keeps cookies + CORS dead simple — the
+# browser sees one domain, no preflight, no cross-origin auth.
+#
+# `{$DOMAIN}` resolves to:
+#   - Coolify: SERVICE_FQDN_CADDY (e.g. yt-agent.thyker.online)
+#   - Local: whatever you set as DOMAIN in your .env
 
-{$DOMAIN} {
+{
+	# Disable automatic HTTPS — Coolify's Traefik terminates TLS for us.
+	auto_https off
+	admin off
+}
+
+:80 {
 	encode gzip zstd
 
 	# ── Pocketbase: admin UI, REST, realtime SSE ──────────────
-	# PB exposes /api, /_, /health on its root. We strip the /pb
-	# prefix before forwarding so its routes work as-is.
 	handle_path /pb/* {
 		reverse_proxy pocketbase:8090
 	}
 
-	# ── MinIO S3 API: public video URLs + boto3 calls ─────────
-	# Path-style addressing → /s3/<bucket>/<key> reaches MinIO as
-	# /<bucket>/<key>. boto3 uses path-style when configured (see
-	# backend/storage/providers/minio.py).
+	# ── MinIO S3 API ──────────────────────────────────────────
 	handle_path /s3/* {
 		reverse_proxy minio:9000 {
-			# MinIO sometimes returns redirects pointing at its
-			# internal hostname; rewrite the Host header so it
-			# generates URLs with our public domain.
 			header_up Host {host}
 			header_up X-Forwarded-Proto {scheme}
 		}
@@ -46,7 +51,7 @@
 		reverse_proxy dashboard:3000
 	}
 
-	# Health endpoint Coolify can hit
+	# Health endpoint Coolify can hit.
 	respond /healthz 200 {
 		body "ok"
 		close

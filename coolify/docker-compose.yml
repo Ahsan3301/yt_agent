@@ -28,15 +28,20 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
+    # NO host port bindings — Coolify's Traefik handles public
+    # 80/443. Coolify routes the application's domain to caddy:80
+    # automatically when SERVICE_FQDN_CADDY is set in the env.
+    expose:
+      - "80"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - /data/caddy/data:/data
       - /data/caddy/config:/config
     environment:
-      DOMAIN: ${DOMAIN}
+      # SERVICE_FQDN_CADDY is auto-substituted by Coolify with the
+      # application's primary domain. Caddy uses it as `{$DOMAIN}` in
+      # the Caddyfile. Local docker-compose users set DOMAIN explicitly.
+      DOMAIN: ${SERVICE_FQDN_CADDY:-${DOMAIN}}
     depends_on:
       - dashboard
       - pocketbase
