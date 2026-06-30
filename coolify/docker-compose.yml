@@ -34,7 +34,7 @@ services:
     expose:
       - "80"
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./coolify/Caddyfile:/etc/caddy/Caddyfile:ro
       - /data/caddy/data:/data
       - /data/caddy/config:/config
     environment:
@@ -53,7 +53,12 @@ services:
   # produces a slim standalone server (next.config -> output: 'standalone').
   dashboard:
     build:
-      context: ..
+      # Coolify sets --project-directory to the repo root, so ALL
+      # relative paths (build contexts, volume bind mounts) are resolved
+      # from there — NOT from this compose file's location. So we use
+      # "." for the repo root and "./coolify/..." for everything inside
+      # this subfolder.
+      context: .
       dockerfile: coolify/Dockerfile.dashboard
     restart: unless-stopped
     expose:
@@ -108,7 +113,7 @@ services:
       - "8090"
     volumes:
       - /data/pocketbase:/pb_data
-      - ./pocketbase/pb_migrations:/pb_migrations:ro
+      - ./coolify/pocketbase/pb_migrations:/pb_migrations:ro
     environment:
       # First-boot admin creation (idempotent — only fires when the
       # admins table is empty).
@@ -177,7 +182,7 @@ services:
   # cleanup @ 05:00 UTC, /api/maintenance/needs-worker every 5 min.
   cron-sidecar:
     build:
-      context: ./cron
+      context: ./coolify/cron
       dockerfile: Dockerfile
     restart: unless-stopped
     environment:
