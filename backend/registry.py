@@ -131,7 +131,7 @@ def _self_payload(queue_depth: int) -> dict:
         "gpu_name":     GPU_NAME or None,
         "version":      "2.0",
         "started_at":   _startup_epoch,
-        "last_seen":    db.server_timestamp(),
+        "last_seen_at": db.server_timestamp(),
     }
 
 
@@ -166,7 +166,8 @@ def _push_outbound(queue_depth: int):
     payload = _self_payload(queue_depth)
     # Strip the server_timestamp sentinel (it's a Firestore object that
     # JSON can't serialise — the route generates its own timestamp).
-    payload.pop("last_seen", None)
+    payload.pop("last_seen_at", None)
+    payload.pop("last_seen", None)  # legacy field name; safety belt
     payload["queue_depth"] = int(queue_depth)
     try:
         r = requests.post(

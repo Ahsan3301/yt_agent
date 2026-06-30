@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase-admin";
+import { toEpochMs } from "@/lib/timestamps";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -38,7 +39,9 @@ export async function GET() {
     const cutoff90s = now - 90;
     const cutoff24h = now - 86400;
 
-    // Workers — read backends + filter by last_seen freshness.
+    // Workers — read backends + filter by freshness. The schema uses
+    // `last_seen_at` but legacy registry.py writes `last_seen`; accept
+    // either so both code paths render.
     const workersSnap = await db.collection("backends").limit(50).get();
     let online = 0;
     let gpu_alive = false;
@@ -46,8 +49,8 @@ export async function GET() {
     const cards: Array<Record<string, unknown>> = [];
     workersSnap.forEach((doc) => {
       const d = doc.data() as Record<string, unknown>;
-      const lastSeen = d.last_seen as { toMillis?: () => number } | undefined;
-      const lastEpoch = lastSeen?.toMillis?.() ? lastSeen.toMillis()! / 1000 : 0;
+      const lastEpochMs = toEpochMs(d.last_seen_at ?? d.last_seen);
+      const lastEpoch = lastEpochMs ? lastEpochMs / 1000 : 0;
       const alive = lastEpoch >= cutoff90s;
       if (alive) {
         online += 1;

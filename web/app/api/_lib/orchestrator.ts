@@ -47,7 +47,7 @@ export async function pickWorkers(): Promise<WorkerEntry[]> {
     const live: WorkerEntry[] = [];
     snap.forEach((doc) => {
       const d = doc.data() as Record<string, unknown>;
-      const last = _toEpoch(d.last_seen);
+      const last = _toEpoch(d.last_seen_at ?? d.last_seen);
       if (last !== null && last < cutoff) return;
       const url = String(d.url || "");
       if (!url) return;

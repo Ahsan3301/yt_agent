@@ -6,8 +6,22 @@ import clsx from "clsx";
 import { fetchLogs, clearLogs, type LogEntry } from "@/lib/api";
 import { getDb, isFirestoreConfigured } from "@/lib/firestore";
 import {
-  collection, query, orderBy, onSnapshot, Timestamp,
+  collection, query, orderBy, onSnapshot,
 } from "firebase/firestore";
+
+/** Normalize any timestamp shape to epoch ms. */
+function _toMs(v: unknown): number | null {
+  if (v == null) return null;
+  if (typeof v === "number") return v > 1e11 ? v : v * 1000;
+  if (typeof v === "string") {
+    if (/^-?\d+(\.\d+)?$/.test(v)) return _toMs(parseFloat(v));
+    const p = Date.parse(v); return isNaN(p) ? null : p;
+  }
+  const t = v as { toMillis?: () => number; seconds?: number; nanoseconds?: number };
+  if (typeof t.toMillis === "function") { try { return t.toMillis(); } catch { return null; } }
+  if (typeof t.seconds === "number") return t.seconds * 1000 + (t.nanoseconds || 0) / 1e6;
+  return null;
+}
 
 /**
  * Live backend logs.
@@ -72,16 +86,8 @@ export default function LogsPanel({
         const all: LogEntry[] = [];
         snap.forEach((doc) => {
           const d = doc.data() as Record<string, unknown>;
-          const ts = d.ts;
-          let epoch = 0;
-          if (typeof ts === "number") epoch = ts;
-          else if (ts instanceof Timestamp) epoch = ts.toMillis() / 1000;
-          else if (ts && typeof ts === "object" && "seconds" in (ts as object)) {
-            const t = ts as { seconds: number; nanoseconds?: number };
-            epoch = t.seconds + (t.nanoseconds ?? 0) / 1e9;
-          } else {
-            epoch = Date.now() / 1000;
-          }
+          const ms = _toMs(d.ts);
+          const epoch = ms != null ? ms / 1000 : Date.now() / 1000;
           all.push({
             seq:   Number(d.seq ?? doc.id) || 0,
             time:  epoch,

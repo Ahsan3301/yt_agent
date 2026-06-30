@@ -66,7 +66,7 @@ export default function MonitorPage() {
             const list: RegistryEntry[] = [];
             snap.forEach((doc) => {
               const d = doc.data() as Record<string, unknown>;
-              const last = _firestoreEpoch(d.last_seen);
+              const last = _firestoreEpoch(d.last_seen_at ?? d.last_seen);
               if (last !== null && last < cutoff) return;
               const url = String(d.url || "");
               if (!url) return;
@@ -432,12 +432,17 @@ function appendTrim(arr: number[], v: number): number[] {
 
 function _firestoreEpoch(v: unknown): number | null {
   if (v == null) return null;
-  if (typeof v === "number") return v;
-  if (typeof v === "object" && v !== null && "seconds" in v) {
-    const t = v as { seconds: number; nanoseconds?: number };
-    return t.seconds + (t.nanoseconds ?? 0) / 1e9;
+  if (typeof v === "number") {
+    if (!isFinite(v) || v <= 0) return null;
+    return v > 1e11 ? v / 1000 : v;
   }
-  if (v instanceof Timestamp) return v.toMillis() / 1000;
+  if (typeof v === "string") {
+    if (/^-?\d+(\.\d+)?$/.test(v)) return _firestoreEpoch(parseFloat(v));
+    const p = Date.parse(v); return isNaN(p) ? null : p / 1000;
+  }
+  const t = v as { toMillis?: () => number; seconds?: number; nanoseconds?: number };
+  if (typeof t.toMillis === "function") { try { return t.toMillis() / 1000; } catch { return null; } }
+  if (typeof t.seconds === "number") return t.seconds + (t.nanoseconds ?? 0) / 1e9;
   return null;
 }
 

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase-admin";
 import { requireMaintenanceKey } from "@/app/api/_lib/auth";
+import { toEpochMs as _toEpochMs } from "@/lib/timestamps";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -53,9 +54,9 @@ export async function GET(req: NextRequest) {
   try {
     const snap = await db.collection("backends").limit(50).get();
     for (const d of snap.docs) {
-      const v = d.data() as { tier?: string; last_seen?: { toMillis?: () => number } };
-      const ms = v.last_seen?.toMillis?.() ?? 0;
-      if (ms < cutoff) continue;
+      const v = d.data() as { tier?: string; last_seen?: unknown; last_seen_at?: unknown };
+      const ms = _toEpochMs(v.last_seen_at ?? v.last_seen);
+      if (ms == null || ms < cutoff) continue;
       any_alive = true;
       if (v.tier === "gpu") gpu_alive = true;
     }
