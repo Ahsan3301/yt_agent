@@ -64,48 +64,90 @@ kaggle kernels push
 This creates the `yt-agent-worker` notebook on your Kaggle account.
 You'll be able to see it at `https://www.kaggle.com/<username>/code`.
 
-### 6. Add Kaggle Secrets to the notebook
+### 6. Ship credentials — Dataset is RECOMMENDED over Secrets
 
-On Kaggle: open your `yt-agent-worker` notebook → **Add-ons →
-Secrets** → click **Add a new secret**.
+Every `kaggle kernels push` creates a new kernel **version**. The
+Secrets panel doesn't always carry over reliably across versions, so
+the production path is:
 
-#### Coolify + Pocketbase deployment (recommended)
+1. Create a **private** Kaggle Dataset called `yt-agent-secrets`
+   (https://www.kaggle.com/datasets → New Dataset → uncheck "Public")
+2. Upload **one file** called `secrets.env` containing:
 
-| Required | Value |
-|---|---|
-| `COOLIFY_BASE_URL` | Your dashboard URL, e.g. `https://yt-agent.thyker.online` |
-| `PB_URL` | `COOLIFY_BASE_URL + /pb`, e.g. `https://yt-agent.thyker.online/pb` |
-| `POCKETBASE_ADMIN_EMAIL` | Email you set in the PB install form |
-| `POCKETBASE_ADMIN_PASSWORD` | Password you set in the PB install form |
-| `RENDER_TRIGGER_KEY` | Same 32-byte hex as your Coolify env var |
-| `STORAGE_PROVIDERS_ENC_KEY` | Same 32-byte hex as your Coolify env var |
+   ```
+   COOLIFY_BASE_URL=https://yt-agent.thyker.online
+   PB_URL=https://yt-agent.thyker.online/pb
+   POCKETBASE_ADMIN_EMAIL=admin@yt-agent.thyker.online
+   POCKETBASE_ADMIN_PASSWORD=your-strong-password
+   RENDER_TRIGGER_KEY=<same 32-byte hex as Coolify>
+   STORAGE_PROVIDERS_ENC_KEY=<same 32-byte hex as Coolify>
+   ```
 
-The worker connects OUTBOUND to your dashboard — no public Kaggle URL,
-no cloudflared tunnel. Storage credentials (MinIO/R2/AWS S3) are
-encrypted in Pocketbase and decrypted at upload time using
-`STORAGE_PROVIDERS_ENC_KEY`.
+3. Confirm `kaggle/kernel-metadata.json` lists the dataset under
+   `dataset_sources`:
 
-#### Legacy Vercel + Firestore + R2 deployment
+   ```json
+   "dataset_sources": ["<your-kaggle-username>/yt-agent-secrets"]
+   ```
 
-| Required | Value |
-|---|---|
-| `GOOGLE_APPLICATION_CREDENTIALS_JSON_B64` | Base64-encoded service-account JSON (Kaggle truncates multi-line secrets) |
+   Kaggle auto-attaches this dataset to every kernel version, so the
+   notebook always sees `/kaggle/input/yt-agent-secrets/secrets.env`.
 
-Optional storage env vars (R2, SFTP) work the same as before.
+The notebook reads `secrets.env` at boot — no manual re-attach after
+each auto-trigger.
+
+#### Alternative: Kaggle Secrets panel (works but flaky on auto-dispatch)
+
+Add-ons → Secrets → same key names as the .env file. Useful for
+interactive testing; less reliable for the auto-trigger workflow.
+
+#### Legacy Vercel + Firestore deployment
+
+Add `GOOGLE_APPLICATION_CREDENTIALS_JSON_B64` (base64-encoded JSON —
+Kaggle truncates multi-line secrets) to either the Dataset .env OR
+the Secrets panel.
 
 That's it.
 
 ---
 
-## How it runs
+## Auto-trigger from the dashboard
+
+You DON'T have to run the Kaggle notebook manually. A GitHub Actions
+cron (`.github/workflows/kaggle-dispatch.yml`) runs every 5 minutes
+and:
+
+1. Calls `${DASHBOARD_BASE_URL}/api/maintenance/needs-worker` on your
+   dashboard
+2. If response says `needs_worker: true` → runs `kaggle kernels push`
+   to spin up a fresh GPU notebook
+3. The pushed kernel boots, attaches the `yt-agent-secrets` Dataset,
+   and the worker registers in the dashboard within ~60 sec
+
+**One-time setup on the GitHub repo side** (Settings → Secrets and
+variables → Actions):
+
+| Type | Name | Value |
+|---|---|---|
+| Variable | `DASHBOARD_BASE_URL` | `https://yt-agent.thyker.online` *(falls back to `VERCEL_BASE_URL` if you only set that one)* |
+| Variable | `VERCEL_BASE_URL` | Same value as above — kept as alias for legacy users |
+| Secret | `RENDER_TRIGGER_KEY` | Same 32-byte hex as your Coolify env var |
+| Secret | `KAGGLE_USERNAME` | From `kaggle.json` |
+| Secret | `KAGGLE_KEY` | From `kaggle.json` |
+
+The dashboard's "Auto-wake Kaggle" toggle lives at
+**/settings → Schedule** — turn it off if you want to manage GPU
+sessions manually.
+
+## Render-trigger flow
 
 ```
- 09:00 UTC               Vercel queues a render in Firestore
+ 09:00 UTC               Dashboard cron queues today's jobs
    │                          │
    ▼                          ▼
  scheduled-render.yml      jobs/<id> { status: queued, backend_instance_id: null }
                               │
- every 10 min                 │
+ every 5 min                  │
    ▼                          ▼
  kaggle-dispatch.yml ───── GET /api/maintenance/needs-worker
                               │
