@@ -1,0 +1,21 @@
+# Cron schedule for yt-agent maintenance hits.
+# All times UTC (set by Dockerfile).
+#
+# DASHBOARD_INTERNAL_URL is the docker-network hostname of the Next.js
+# service — we don't bounce through the public domain because there's
+# no need to incur TLS + Caddy hop overhead for internal cron pokes.
+#
+# RENDER_TRIGGER_KEY is the shared secret the maintenance routes check
+# (existing convention from the GitHub Actions workflows).
+
+# 09:00 UTC daily — queue the day's jobs from the channels collection.
+0 9 * * *  curl -fsS -X POST -H "X-API-Key: $RENDER_TRIGGER_KEY" "$DASHBOARD_INTERNAL_URL/api/maintenance/scheduled-render" >> /proc/1/fd/1 2>&1
+
+# 05:00 UTC daily — clean up old runs/logs/errors per retention rules.
+0 5 * * *  curl -fsS -X POST -H "X-API-Key: $RENDER_TRIGGER_KEY" "$DASHBOARD_INTERNAL_URL/api/maintenance/cleanup" >> /proc/1/fd/1 2>&1
+
+# Every 5 min — wake a Kaggle worker if the queue has work + no GPU.
+*/5 * * * *  curl -fsS -X POST -H "X-API-Key: $RENDER_TRIGGER_KEY" "$DASHBOARD_INTERNAL_URL/api/maintenance/needs-worker" >> /proc/1/fd/1 2>&1
+
+# Trailing newline is required — Linux crontab silently ignores the last
+# line if it doesn't end with one.

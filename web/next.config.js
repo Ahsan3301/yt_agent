@@ -2,6 +2,13 @@
 const nextConfig = {
   reactStrictMode: true,
 
+  // Coolify deployment uses Next.js standalone output — produces a
+  // self-contained server.js + minimal node_modules under
+  // .next/standalone, ~150 MB Docker image instead of ~800 MB. Vercel
+  // ignores this setting (its build infra makes its own choices), so
+  // toggling it here is safe for both deployments.
+  output: "standalone",
+
   // firebase-admin uses native deps that need real Node resolution.
   serverExternalPackages: ["firebase-admin"],
 

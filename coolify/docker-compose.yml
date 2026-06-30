@@ -1,0 +1,187 @@
+# Coolify deployment stack — one application, four services.
+#
+# Why a compose stack instead of a single image with supervisord:
+#   - Coolify treats this stack as ONE application (single panel of logs,
+#     one redeploy button, one set of env vars), which is the management
+#     experience the user actually asked for.
+#   - Each service can be restarted/rebuilt independently. Restarting
+#     Pocketbase doesn't restart Next.js. Pulling a new dashboard image
+#     doesn't disturb MinIO.
+#   - ARM-native images for every piece (Pocketbase, MinIO, Caddy,
+#     Alpine cron all publish linux/arm64). Tested on Oracle Ampere A1.
+#
+# Volumes are bind-mounted to /data/* on the host so Coolify's snapshot
+# tooling can back up the whole VPS at once. Adjust paths if your
+# Coolify install uses a different convention.
+
+services:
+
+  # ── Reverse proxy + TLS ──────────────────────────────────────────
+  # Caddy fronts everything on the public domain. Subpath routing keeps
+  # cookies/CORS on the single origin so the dashboard, Pocketbase, and
+  # MinIO can talk over `fetch()` without preflight headaches.
+  #
+  # In Coolify's default install the platform-level Traefik proxy will
+  # also be in front of this — that's fine; Caddy here just handles
+  # the internal routing and lets Coolify route the public domain to
+  # port 80 of this container.
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - /data/caddy/data:/data
+      - /data/caddy/config:/config
+    environment:
+      DOMAIN: ${DOMAIN}
+    depends_on:
+      - dashboard
+      - pocketbase
+      - minio
+    networks: [yt_agent_net]
+
+  # ── Next.js dashboard ────────────────────────────────────────────
+  # Built from the project's web/ directory. Multi-stage Dockerfile
+  # produces a slim standalone server (next.config -> output: 'standalone').
+  dashboard:
+    build:
+      context: ..
+      dockerfile: coolify/Dockerfile.dashboard
+    restart: unless-stopped
+    expose:
+      - "3000"
+    environment:
+      # ── Pocketbase connection (internal hostname; not exposed) ──
+      # Server-side Next.js code uses PB_URL_INTERNAL to hit Pocketbase
+      # directly inside the docker network. The browser uses
+      # NEXT_PUBLIC_PB_URL which goes through Caddy.
+      PB_URL_INTERNAL: http://pocketbase:8090
+      NEXT_PUBLIC_PB_URL: ${NEXT_PUBLIC_PB_URL:-/pb}
+      PB_SERVER_TOKEN: ${PB_SERVER_TOKEN}
+      # ── Storage (default: MinIO via internal hostname) ──
+      # First-deploy fallback. Once the user configures providers via
+      # the /storage page, the storage registry takes over.
+      S3_ENDPOINT_INTERNAL: http://minio:9000
+      NEXT_PUBLIC_S3_PUBLIC_BASE: ${NEXT_PUBLIC_S3_PUBLIC_BASE}
+      S3_BUCKET: ${S3_BUCKET:-yt-agent-videos}
+      S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      # ── OAuth ──
+      YOUTUBE_OAUTH_CLIENT_ID: ${YOUTUBE_OAUTH_CLIENT_ID}
+      YOUTUBE_OAUTH_CLIENT_SECRET: ${YOUTUBE_OAUTH_CLIENT_SECRET}
+      GITHUB_OAUTH_CLIENT_ID: ${GITHUB_OAUTH_CLIENT_ID:-}
+      GITHUB_OAUTH_CLIENT_SECRET: ${GITHUB_OAUTH_CLIENT_SECRET:-}
+      HUGGINGFACE_OAUTH_CLIENT_ID: ${HUGGINGFACE_OAUTH_CLIENT_ID:-}
+      HUGGINGFACE_OAUTH_CLIENT_SECRET: ${HUGGINGFACE_OAUTH_CLIENT_SECRET:-}
+      # ── Cron + worker auth ──
+      RENDER_TRIGGER_KEY: ${RENDER_TRIGGER_KEY}
+      # ── Storage provider credential encryption ──
+      STORAGE_PROVIDERS_ENC_KEY: ${STORAGE_PROVIDERS_ENC_KEY}
+      # ── External launch URLs ──
+      NEXT_PUBLIC_COLAB_URL: ${NEXT_PUBLIC_COLAB_URL:-}
+      NEXT_PUBLIC_HF_SPACE_URL: ${NEXT_PUBLIC_HF_SPACE_URL:-}
+      # ── Node ──
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: "0.0.0.0"
+    depends_on:
+      - pocketbase
+      - minio
+    networks: [yt_agent_net]
+
+  # ── Pocketbase ───────────────────────────────────────────────────
+  # SQLite-backed DB with realtime SSE + admin UI + auth, all in one
+  # ~30 MB binary. Migrations in coolify/pocketbase/pb_migrations/ are
+  # auto-applied on boot.
+  pocketbase:
+    image: ghcr.io/muchobien/pocketbase:latest  # multi-arch, ARM-ready
+    restart: unless-stopped
+    expose:
+      - "8090"
+    volumes:
+      - /data/pocketbase:/pb_data
+      - ./pocketbase/pb_migrations:/pb_migrations:ro
+    environment:
+      # First-boot admin creation (idempotent — only fires when the
+      # admins table is empty).
+      POCKETBASE_ADMIN_EMAIL: ${POCKETBASE_ADMIN_EMAIL}
+      POCKETBASE_ADMIN_PASSWORD: ${POCKETBASE_ADMIN_PASSWORD}
+    command:
+      - "serve"
+      - "--http=0.0.0.0:8090"
+      - "--dir=/pb_data"
+      - "--migrationsDir=/pb_migrations"
+    networks: [yt_agent_net]
+
+  # ── MinIO ────────────────────────────────────────────────────────
+  # S3-compatible object store. We serve the API on :9000 (proxied at
+  # /s3/) and the admin console on :9001 (proxied at /minio/).
+  #
+  # Bucket creation + public-read policy on yt-agent-videos happens
+  # in the minio-init one-shot below — MinIO doesn't ship a way to
+  # declare buckets at boot natively.
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    expose:
+      - "9000"
+      - "9001"
+    volumes:
+      - /data/minio:/data
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      # Console served on its own port so the API stays clean.
+      MINIO_BROWSER_REDIRECT_URL: https://${DOMAIN}/minio/
+    command: ["server", "/data", "--console-address", ":9001"]
+    networks: [yt_agent_net]
+
+  # ── One-shot: create bucket + public-read policy ─────────────────
+  # Runs once on stack-up, exits 0 when the bucket already exists.
+  # Idempotent across redeploys.
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      - minio
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        until /usr/bin/mc alias set local http://minio:9000 \
+            "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null 2>&1; do
+          echo "waiting for minio..."; sleep 2;
+        done
+        /usr/bin/mc mb --ignore-existing local/$$S3_BUCKET
+        /usr/bin/mc anonymous set download local/$$S3_BUCKET
+        echo "minio-init: bucket $$S3_BUCKET ready"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      S3_BUCKET: ${S3_BUCKET:-yt-agent-videos}
+    restart: "no"
+    networks: [yt_agent_net]
+
+  # ── Cron sidecar ─────────────────────────────────────────────────
+  # Replaces the GitHub Actions cron triggers — same HTTP calls, just
+  # fired from inside the stack instead of GitHub's servers.
+  # Hit /api/maintenance/scheduled-render @ 09:00 UTC, /api/maintenance/
+  # cleanup @ 05:00 UTC, /api/maintenance/needs-worker every 5 min.
+  cron-sidecar:
+    build:
+      context: ./cron
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      DASHBOARD_INTERNAL_URL: http://dashboard:3000
+      RENDER_TRIGGER_KEY: ${RENDER_TRIGGER_KEY}
+    depends_on:
+      - dashboard
+    networks: [yt_agent_net]
+
+networks:
+  yt_agent_net:
+    driver: bridge

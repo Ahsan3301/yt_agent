@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { useState, useEffect } from "react";
 import {
   Clapperboard, Settings, History, KeyRound, LayoutDashboard, Activity,
-  ListChecks, Wand2, HeartPulse, Layers, Menu, X,
+  ListChecks, Wand2, HeartPulse, Layers, Menu, X, HardDrive,
 } from "lucide-react";
 import clsx from "clsx";
 
@@ -15,6 +15,7 @@ const NAV = [
   { href: "/channels", label: "Channels",    icon: Layers          },
   { href: "/queue",    label: "Job queue",   icon: ListChecks      },
   { href: "/monitor",  label: "Workers",     icon: Activity        },
+  { href: "/storage",  label: "Storage",     icon: HardDrive       },
   { href: "/health",   label: "Health",      icon: HeartPulse      },
   { href: "/history",  label: "Library",     icon: History         },
   { href: "/settings", label: "Settings",    icon: Settings        },

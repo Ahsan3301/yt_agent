@@ -1,0 +1,53 @@
+# Multi-stage Next.js production image.
+#
+# Stage 1 (deps): install npm deps under /app/web/node_modules.
+# Stage 2 (build): copy source + run `next build`. Produces .next/.
+# Stage 3 (runner): slim Alpine image, copies only the build artefacts.
+#
+# Output mode: we rely on Next.js's `output: 'standalone'` setting
+# (added to web/next.config.js as part of the migration) which produces
+# a self-contained server.js + minimal node_modules under .next/standalone.
+# That gets us a ~150 MB final image instead of ~800 MB.
+#
+# ARM target: node:20-alpine ships linux/arm64 — works on Oracle Ampere.
+#
+# Build context: PROJECT ROOT (not web/). compose.yml sets `context: ..`.
+
+# ── Stage 1: deps ──────────────────────────────────────────────────
+FROM node:20-alpine AS deps
+WORKDIR /app/web
+
+# Install only manifest first so the layer caches when deps don't change.
+COPY web/package.json web/package-lock.json* ./
+# CI-mode install: fail if lockfile out of sync; no postinstall scripts.
+RUN npm ci --omit=dev=false --ignore-scripts
+
+# ── Stage 2: build ─────────────────────────────────────────────────
+FROM node:20-alpine AS builder
+WORKDIR /app/web
+COPY web/ .
+COPY --from=deps /app/web/node_modules ./node_modules
+# Next.js needs to be able to write the .next/cache during build —
+# nothing fancy here.
+RUN npm run build
+
+# ── Stage 3: runner ────────────────────────────────────────────────
+FROM node:20-alpine AS runner
+WORKDIR /app/web
+
+# Drop privileges. Next.js standalone needs read access to .next only.
+RUN addgroup -g 1001 nodejs && adduser -u 1001 -G nodejs -s /bin/sh -D nextjs
+ENV NODE_ENV=production
+ENV HOSTNAME=0.0.0.0
+ENV PORT=3000
+
+# Standalone output bundles server.js + minimal node_modules. We also
+# need public/ and .next/static (those aren't included in standalone).
+COPY --from=builder --chown=nextjs:nodejs /app/web/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/web/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/web/.next/static ./.next/static
+
+USER nextjs
+EXPOSE 3000
+# server.js is the standalone entry point Next.js generates.
+CMD ["node", "server.js"]
