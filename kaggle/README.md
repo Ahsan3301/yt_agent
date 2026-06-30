@@ -2,9 +2,9 @@
 
 This directory contains the Kaggle Notebook that acts as a free GPU
 fallback when Colab is offline. It is **NOT always-on** — a GitHub
-Actions workflow (`.github/workflows/kaggle-dispatch.yml`) wakes it
-on demand whenever a render is queued in Firestore and no GPU worker
-is alive.
+Actions workflow (`.github/workflows/kaggle-dispatch.yml`) OR the
+in-cluster cron sidecar wakes it on demand whenever a render is
+queued and no GPU worker is alive.
 
 After the queued render(s) complete and the worker has been idle for
 ~10 min, `backend/idle_watchdog.py` calls `os._exit(0)` to release the
@@ -69,20 +69,29 @@ You'll be able to see it at `https://www.kaggle.com/<username>/code`.
 On Kaggle: open your `yt-agent-worker` notebook → **Add-ons →
 Secrets** → click **Add a new secret**.
 
-Add the same `GOOGLE_APPLICATION_CREDENTIALS_JSON` value you set on
-Colab/HF Space (the full Firebase service-account JSON, multi-line OK).
+#### Coolify + Pocketbase deployment (recommended)
 
-Optionally add R2 + SFTP secrets if you want THIS worker to upload
-videos (recommended).
-
-| Required | |
+| Required | Value |
 |---|---|
-| `GOOGLE_APPLICATION_CREDENTIALS_JSON` | Full Firebase service-account JSON |
+| `COOLIFY_BASE_URL` | Your dashboard URL, e.g. `https://yt-agent.thyker.online` |
+| `PB_URL` | `COOLIFY_BASE_URL + /pb`, e.g. `https://yt-agent.thyker.online/pb` |
+| `POCKETBASE_ADMIN_EMAIL` | Email you set in the PB install form |
+| `POCKETBASE_ADMIN_PASSWORD` | Password you set in the PB install form |
+| `RENDER_TRIGGER_KEY` | Same 32-byte hex as your Coolify env var |
+| `STORAGE_PROVIDERS_ENC_KEY` | Same 32-byte hex as your Coolify env var |
 
-| Optional (only if Kaggle uploads videos) | |
+The worker connects OUTBOUND to your dashboard — no public Kaggle URL,
+no cloudflared tunnel. Storage credentials (MinIO/R2/AWS S3) are
+encrypted in Pocketbase and decrypted at upload time using
+`STORAGE_PROVIDERS_ENC_KEY`.
+
+#### Legacy Vercel + Firestore + R2 deployment
+
+| Required | Value |
 |---|---|
-| `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_PUBLIC_URL` | Cloudflare R2 |
-| `SFTP_HOST`, `SFTP_PORT`, `SFTP_USER`, `SFTP_PASS`, `SFTP_BASE_DIR`, `PUBLIC_BASE_URL` | Hostinger SFTP overflow |
+| `GOOGLE_APPLICATION_CREDENTIALS_JSON_B64` | Base64-encoded service-account JSON (Kaggle truncates multi-line secrets) |
+
+Optional storage env vars (R2, SFTP) work the same as before.
 
 That's it.
 
