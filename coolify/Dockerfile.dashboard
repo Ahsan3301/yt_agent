@@ -42,8 +42,10 @@ ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
 
 # Standalone output bundles server.js + minimal node_modules. We also
-# need public/ and .next/static (those aren't included in standalone).
-COPY --from=builder --chown=nextjs:nodejs /app/web/public ./public
+# need .next/static (not included in standalone). public/ is optional —
+# this project doesn't ship static assets, so we don't COPY it (would
+# fail when the dir is absent). If you ever add web/public, restore:
+#   COPY --from=builder --chown=nextjs:nodejs /app/web/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/web/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/web/.next/static ./.next/static
 
