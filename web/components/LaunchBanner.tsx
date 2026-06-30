@@ -11,7 +11,7 @@ import { collection, onSnapshot, Timestamp } from "firebase/firestore";
  * registered. As soon as a backend boots and starts heartbeating into the
  * registry, the banner disappears automatically.
  *
- * Set NEXT_PUBLIC_COLAB_URL in Vercel to the Colab notebook URL you want
+ * Set NEXT_PUBLIC_COLAB_URL in your dashboard env vars to the Colab notebook URL you want
  * the button to open — e.g. `https://colab.research.google.com/github/
  * <you>/yt_agent/blob/main/colab/yt_agent_colab.ipynb`.
  */
@@ -157,7 +157,7 @@ export default function LaunchBanner() {
               </a>
             ) : (
               <div className="text-xs text-amber-300">
-                Set <code className="font-mono">NEXT_PUBLIC_COLAB_URL</code> in your Vercel
+                Set <code className="font-mono">NEXT_PUBLIC_COLAB_URL</code> in your dashboard
                 environment variables to enable the launch button.
               </div>
             )}

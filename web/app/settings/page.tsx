@@ -559,7 +559,7 @@ function AutomationTab() {
       )}
       {oauthResult && oauthResult !== "connected" && (
         <div className="card border-red-500/30 bg-red-500/5 text-sm text-red-200">
-          YouTube connection failed: <code>{oauthResult}</code>. Check Vercel env vars
+          YouTube connection failed: <code>{oauthResult}</code>. Check dashboard env vars
           (YOUTUBE_OAUTH_CLIENT_ID + YOUTUBE_OAUTH_CLIENT_SECRET) and the authorised
           redirect URI in Google Cloud Console.
         </div>
@@ -617,7 +617,7 @@ function AutomationTab() {
           <div>
             <div className="font-semibold">Scheduled renders</div>
             <div className="text-xs text-neutral-500">
-              GitHub Actions cron fires daily at 09:00 UTC and calls the Vercel
+              The cron sidecar (or GitHub Actions) fires daily at 09:00 UTC and calls the dashboard
               gateway. Toggle on to start daily renders.
             </div>
           </div>

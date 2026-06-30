@@ -136,7 +136,7 @@ const SECTIONS: Array<{
     section: "Alerts & Automation",
     icon: Bell,
     blurb:
-      "Webhook for Discord notifications + shared secret that authenticates GitHub Actions cron triggers to the Vercel gateway.",
+      "Webhook for Discord notifications + shared secret that authenticates GitHub Actions cron triggers to the dashboard gateway.",
     keys: [
       {
         name: "DISCORD_WEBHOOK_URL",
@@ -151,7 +151,7 @@ const SECTIONS: Array<{
         name: "RENDER_TRIGGER_KEY",
         label: "GitHub Actions shared secret",
         description:
-          "Random string. The SAME value must be set as a GitHub repo secret so the daily cron can call your Vercel maintenance routes. Click Generate to get a fresh value.",
+          "Random string. The SAME value must be set as a GitHub repo secret (or matches the Coolify env var) so the cron job can call your dashboard maintenance routes. Click Generate to get a fresh value.",
         generate: true,
         importance: "recommended",
       },
@@ -255,14 +255,14 @@ const SECTIONS: Array<{
 ];
 
 // ── Platform-level secrets (NOT managed from dashboard) ─────────
-// These are bootstrap secrets that workers / Vercel / GitHub Actions
+// These are bootstrap secrets that workers / dashboard / GitHub Actions
 // read at startup, so they live on each platform's secret store and
 // can't be loaded from Firestore (chicken-and-egg).
 
 type PlatformSecret = {
   section: string;
   description: string;
-  badge: "Vercel" | "Colab/HF" | "GitHub";
+  badge: "Dashboard" | "Colab/HF" | "GitHub";
   get_url?: string;
   docs_url?: string;
   vars: string[];
@@ -272,13 +272,13 @@ const PLATFORM_SECRETS: PlatformSecret[] = [
   {
     section: "Firebase / Firestore credentials",
     description:
-      "Required to write to Firestore from each platform. Same JSON service-account file goes on Vercel + Colab + HF Space, in different env var names per environment.",
-    badge: "Vercel",
+      "(Legacy Firebase deployments only.) Required to write to Firestore from each platform. Same JSON service-account file goes on the dashboard + Colab + HF Space, in different env var names per environment. Coolify/Pocketbase deployments skip this entirely.",
+    badge: "Dashboard",
     get_url: "https://console.firebase.google.com/project/_/settings/serviceaccounts/adminsdk",
     docs_url: "https://firebase.google.com/docs/admin/setup",
     vars: [
-      "FIREBASE_SERVICE_ACCOUNT_JSON  (server-side; Vercel env vars)",
-      "NEXT_PUBLIC_FIREBASE_CONFIG    (client-side; Vercel env vars)",
+      "FIREBASE_SERVICE_ACCOUNT_JSON  (server-side; dashboard env vars)",
+      "NEXT_PUBLIC_FIREBASE_CONFIG    (client-side; dashboard env vars)",
     ],
   },
   {
@@ -297,7 +297,7 @@ const PLATFORM_SECRETS: PlatformSecret[] = [
     section: "YouTube OAuth Client (for auto-publish flow)",
     description:
       "Used by /api/youtube/auth + /callback to run the consent screen. Only needed if you want auto-publish. The Web Application redirect URI MUST exactly match  https://<your-vercel-url>/api/youtube/callback.",
-    badge: "Vercel",
+    badge: "Dashboard",
     get_url: "https://console.cloud.google.com/apis/credentials",
     docs_url:
       "https://developers.google.com/youtube/v3/guides/auth/installed-apps",
@@ -318,7 +318,7 @@ const PLATFORM_SECRETS: PlatformSecret[] = [
     vars: [
       "HF_TOKEN              (Write-scope HuggingFace token; lets the sync workflow push to your Space)",
       "RENDER_TRIGGER_KEY    (same value as the Firestore key, above)",
-      "VERCEL_BASE_URL       (optional repo variable; defaults to yt-agent-olive.vercel.app)",
+      "DASHBOARD_BASE_URL    (optional repo variable; defaults to whatever your deployment's public URL is)",
     ],
   },
   {
@@ -491,7 +491,7 @@ export default function KeysPage() {
         </div>
         <p className="text-sm text-neutral-400 max-w-2xl">
           These can't be set from the dashboard because they're read at
-          platform boot (Vercel function init, Colab notebook cell, HF Space
+          platform boot (dashboard server init, Colab notebook cell, HF Space
           startup, GitHub Actions runner). Each card tells you what to set and
           where.
         </p>
@@ -700,7 +700,7 @@ function OneClickAuth({
       } else {
         // Friendly "setup required" instead of raw JSON dump.
         setResult(
-          `setup-required:${provider}:${d.next_step || d.error || "OAuth client not configured on Vercel."}`,
+          `setup-required:${provider}:${d.next_step || d.error || "OAuth client not configured on the dashboard."}`,
         );
         setBusy(null);
       }
@@ -776,12 +776,12 @@ function OneClickAuth({
                 </button>
               </li>
               <li>
-                Copy Client ID + Client Secret → add to Vercel env vars as{" "}
+                Copy Client ID + Client Secret → add to your deployment env vars as{" "}
                 <code className="bg-bg-2 px-1 rounded">
                   {provider === "github" ? "GITHUB_OAUTH_CLIENT_ID/SECRET" : "HUGGINGFACE_OAUTH_CLIENT_ID/SECRET"}
                 </code>
               </li>
-              <li>Redeploy Vercel (Deployments → ⋯ → Redeploy) → come back here</li>
+              <li>Redeploy the dashboard (Coolify: Redeploy / Vercel: Deployments → ⋯ → Redeploy) → come back here</li>
             </ol>
             <details className="opacity-70">
               <summary className="cursor-pointer">Server message</summary>
@@ -900,7 +900,7 @@ function OneClickAuth({
 // ── Platform secret card ─────────────────────────────────────────
 function PlatformCard({ sec }: { sec: PlatformSecret }) {
   const badgeMap = {
-    Vercel: { icon: Cloud, cls: "border-sky-500/30 bg-sky-500/10 text-sky-300" },
+    Dashboard: { icon: Cloud, cls: "border-sky-500/30 bg-sky-500/10 text-sky-300" },
     "Colab/HF": {
       icon: Server,
       cls: "border-fuchsia-500/30 bg-fuchsia-500/10 text-fuchsia-300",
