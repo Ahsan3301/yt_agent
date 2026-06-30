@@ -70,6 +70,12 @@ services:
     expose:
       - "3000"
     environment:
+      # ── Public origin — used by OAuth routes to build callback URLs.
+      # Behind a reverse proxy (Caddy → Traefik) `req.nextUrl.origin`
+      # resolves to the internal docker hostname (http://0.0.0.0:3000)
+      # which isn't reachable from Google/GitHub/HF. Set this to the
+      # public URL of the dashboard.
+      PUBLIC_BASE_URL: ${SERVICE_FQDN_CADDY:-https://${DOMAIN}}
       # ── Pocketbase connection (internal hostname; not exposed) ──
       # Server-side Next.js code uses PB_URL_INTERNAL to hit Pocketbase
       # directly inside the docker network. The browser uses

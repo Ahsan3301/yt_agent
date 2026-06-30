@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { publicOrigin } from "@/app/api/_lib/public-origin";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -24,15 +25,15 @@ export async function GET(req: NextRequest) {
   if (!clientId) {
     return NextResponse.json(
       {
-        error: "HUGGINGFACE_OAUTH_CLIENT_ID not set on Vercel",
+        error: "HUGGINGFACE_OAUTH_CLIENT_ID not set on the dashboard",
         next_step:
-          "Create an OAuth app at https://huggingface.co/settings/applications/new — Redirect URL must exactly match <your-vercel-url>/api/huggingface/callback. Then set HUGGINGFACE_OAUTH_CLIENT_ID + HUGGINGFACE_OAUTH_CLIENT_SECRET on Vercel.",
+          "Create an OAuth app at https://huggingface.co/settings/applications/new — Redirect URL must exactly match <your-dashboard-url>/api/huggingface/callback. Then set HUGGINGFACE_OAUTH_CLIENT_ID + HUGGINGFACE_OAUTH_CLIENT_SECRET on the dashboard.",
       },
       { status: 503 },
     );
   }
 
-  const origin = req.nextUrl.origin;
+  const origin = publicOrigin(req);
   const redirectUri = `${origin}/api/huggingface/callback`;
 
   const consentUrl = new URL("https://huggingface.co/oauth/authorize");

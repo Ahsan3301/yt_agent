@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb, FieldValue } from "@/lib/firebase-admin";
+import { publicOrigin } from "@/app/api/_lib/public-origin";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -29,7 +30,9 @@ export async function GET(req: NextRequest) {
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
   const errorParam = url.searchParams.get("error");
-  const origin = url.origin;
+  // Public origin (env-driven) — must match the redirect_uri sent in
+  // the consent step, NOT the container's internal address.
+  const origin = publicOrigin(req);
 
   // Parse state: "<origin>" or "<origin>|bind=<dashboardChannelId>"
   let stateOrigin = state || "";

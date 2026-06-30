@@ -5,6 +5,7 @@ import {
   listRepoSecrets,
   parseRepoFullName,
 } from "@/app/api/_lib/github-secrets";
+import { publicOrigin } from "@/app/api/_lib/public-origin";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -24,7 +25,10 @@ export async function GET(req: NextRequest) {
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
   const errorParam = url.searchParams.get("error");
-  const origin = url.origin;
+  // Use the public origin (env-var driven) so the redirect_uri we send
+  // to GitHub's token exchange matches the redirect_uri we originally
+  // sent in the consent step. Internal docker hostname won't work here.
+  const origin = publicOrigin(req);
 
   const back = (q: string) =>
     NextResponse.redirect(`${origin}/keys?${q}`);

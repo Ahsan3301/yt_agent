@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb, FieldValue } from "@/lib/firebase-admin";
+import { publicOrigin } from "@/app/api/_lib/public-origin";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -16,7 +17,7 @@ export async function GET(req: NextRequest) {
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
   const errorParam = url.searchParams.get("error");
-  const origin = url.origin;
+  const origin = publicOrigin(req);
 
   const back = (q: string) => NextResponse.redirect(`${origin}/keys?${q}`);
 

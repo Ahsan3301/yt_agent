@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { publicOrigin } from "@/app/api/_lib/public-origin";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -12,28 +13,31 @@ const SCOPES = "https://www.googleapis.com/auth/youtube.upload https://www.googl
  * `window.location.href` to the returned URL. After the user grants
  * consent, Google redirects to /api/youtube/callback with a code.
  *
- * Required Vercel env vars (server-side):
+ * Required dashboard env vars (server-side):
  *   YOUTUBE_OAUTH_CLIENT_ID
  *   YOUTUBE_OAUTH_CLIENT_SECRET
- * The values come from Google Cloud Console → APIs & Services →
+ *   PUBLIC_BASE_URL (your dashboard URL — needed when behind a proxy
+ *                    like Coolify's Caddy/Traefik; auto-detected on Vercel)
+ *
+ * The OAuth values come from Google Cloud Console → APIs & Services →
  * Credentials → Create OAuth client ID (Web application). The
  * authorised redirect URI on the Google side must exactly match
- * `<vercel-url>/api/youtube/callback`.
+ * `${PUBLIC_BASE_URL}/api/youtube/callback`.
  */
 export async function GET(req: NextRequest) {
   const clientId = process.env.YOUTUBE_OAUTH_CLIENT_ID;
   if (!clientId) {
     return NextResponse.json(
       {
-        error: "YOUTUBE_OAUTH_CLIENT_ID not set on Vercel",
+        error: "YOUTUBE_OAUTH_CLIENT_ID not set on the dashboard",
         next_step:
-          "Create OAuth credentials at Google Cloud Console → APIs & Services → Credentials → Create OAuth client ID (Web application). Add the callback URL to authorised redirect URIs. Set YOUTUBE_OAUTH_CLIENT_ID + YOUTUBE_OAUTH_CLIENT_SECRET on Vercel.",
+          "Create OAuth credentials at Google Cloud Console → APIs & Services → Credentials → Create OAuth client ID (Web application). Add the callback URL to authorised redirect URIs. Set YOUTUBE_OAUTH_CLIENT_ID + YOUTUBE_OAUTH_CLIENT_SECRET on the dashboard.",
       },
       { status: 503 },
     );
   }
 
-  const origin = req.nextUrl.origin;
+  const origin = publicOrigin(req);
   const redirectUri = `${origin}/api/youtube/callback`;
 
   // Optional `bind=<dashboardChannelId>` — when present, the callback
