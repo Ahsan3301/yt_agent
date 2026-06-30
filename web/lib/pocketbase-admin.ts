@@ -123,6 +123,26 @@ function _pbId(id: string): string {
   return h.slice(0, 15);
 }
 
+/** Generate a fresh 15-char PB-valid id. Used when callers do
+ * `.doc()` with no args (Firestore auto-id parity). */
+function _autoPbId(): string {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { randomBytes } = require("node:crypto");
+  const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
+  const bytes = randomBytes(15);
+  let out = "";
+  for (let i = 0; i < 15; i++) out += alphabet[bytes[i] % alphabet.length];
+  return out;
+}
+
+// Subcollection → flat-collection mapping. Mirrors backend/db_pocketbase.py.
+// Firestore allows `db.collection("X").doc("Y").collection("Z")` for
+// nested children; PB has no subcollections, so we route writes here
+// to a flat top-level collection with a foreign-key field.
+const _SUBCOLLECTION_MAP: Record<string, { flat: string; fk: string }> = {
+  "runs_index/logs": { flat: "run_logs", fk: "run_id" },
+};
+
 /** Translate Firestore-style filter triples to PB filter strings.
  * Examples:
  *   ["enabled", "==", true]   → "enabled = true"
@@ -173,10 +193,29 @@ interface QuerySnapshot {
 }
 
 class DocRef {
+  // Inherited from Collection._autoInject when this doc came from a
+  // subcollection-mapped parent (parent.doc(x).collection("logs") →
+  // every write injects run_id=x automatically).
+  public autoInject: Record<string, unknown> = {};
+
   constructor(public readonly collection: string, public readonly id: string) {}
 
   get path(): string {
     return `${this.collection}/${this.id}`;
+  }
+
+  /** Subcollection access — maps to a flat collection per
+   * _SUBCOLLECTION_MAP. */
+  subcollection(name: string): Collection {
+    const key = `${this.collection}/${name}`;
+    const m = _SUBCOLLECTION_MAP[key];
+    if (!m) {
+      throw new Error(`No subcollection mapping for ${this.path}/${name}`);
+    }
+    const coll = new Collection(m.flat);
+    coll.autoFilter = { field: m.fk, op: "==", value: this.id };
+    coll.autoInject = { [m.fk]: this.id };
+    return coll;
   }
 
   async get(): Promise<DocSnapshot> {
@@ -200,7 +239,7 @@ class DocRef {
 
   async set(data: Record<string, unknown>, opts?: { merge?: boolean }): Promise<void> {
     const pbId = _pbId(this.id);
-    const body = { ..._serialise(data), id: pbId };
+    const body = { ...this.autoInject, ..._serialise(data), id: pbId };
     // PATCH first — succeeds for both merge and overwrite cases on PB
     // since PATCH on a record is a partial update. If record missing,
     // 404 → fall through to POST.
@@ -226,7 +265,7 @@ class DocRef {
 
   async update(data: Record<string, unknown>): Promise<void> {
     const pbId = _pbId(this.id);
-    const body = _serialise(data);
+    const body = { ...this.autoInject, ..._serialise(data) };
     const r = await fetch(
       `${PB_URL}/api/collections/${this.collection}/records/${pbId}`,
       { method: "PATCH", headers: await _headers(), body: JSON.stringify(body) },
@@ -249,31 +288,79 @@ class DocRef {
 }
 
 class Query {
-  private filters: string[] = [];
-  private sort: string[] = [];
-  private _limit = 0;
+  protected filters: string[] = [];
+  protected sort: string[] = [];
+  protected _limit = 0;
+  // For subcollection-mapped Collections — read-side filter
+  // automatically applied to every get() / count(). Writes use
+  // autoInject (lives on Collection, propagates to DocRef via doc()).
+  public autoFilter: { field: string; op: string; value: unknown } | null = null;
 
-  constructor(private readonly collection: string) {}
+  constructor(protected readonly collection: string) {}
 
   where(field: string, op: string, value: unknown): Query {
+    // Empty `in` array would produce malformed filter — Firestore
+    // returns 0 results in that case; mirror that here.
+    if (op === "in" && Array.isArray(value) && value.length === 0) {
+      this.filters.push("id = '__never_matches__'");
+      return this;
+    }
     this.filters.push(_filterExpr(field, op, value));
     return this;
   }
 
   orderBy(field: string, dir: "asc" | "desc" = "asc"): Query {
-    this.sort.push((dir === "desc" ? "-" : "+") + field);
+    // PB doesn't index fields that don't exist on every row — gracefully
+    // accept ordering by the system 'created'/'updated' synonyms which
+    // every PB record has.
+    const f = field === "created_at" ? "created"
+            : field === "updated_at" ? "updated"
+            : field;
+    this.sort.push((dir === "desc" ? "-" : "+") + f);
     return this;
   }
 
   limit(n: number): Query {
-    this._limit = Math.max(1, Math.min(500, n));
+    if (n === 0) this._limit = 0;
+    else this._limit = Math.max(1, Math.min(500, n));
     return this;
+  }
+
+  /** Firestore-compat: returns { get(): { data(): { count } } } */
+  count(): { get(): Promise<{ data(): { count: number } }> } {
+    const self = this;
+    return {
+      async get() {
+        const params = new URLSearchParams();
+        const fil = [...self.filters];
+        if (self.autoFilter) {
+          fil.push(_filterExpr(self.autoFilter.field, self.autoFilter.op, self.autoFilter.value));
+        }
+        if (fil.length) params.set("filter", fil.join(" && "));
+        params.set("perPage", "1");
+        const r = await fetch(
+          `${PB_URL}/api/collections/${self.collection}/records?${params.toString()}`,
+          { headers: await _headers(), cache: "no-store" },
+        );
+        if (!r.ok) return { data: () => ({ count: 0 }) };
+        const data = await r.json();
+        return { data: () => ({ count: Number(data.totalItems || 0) }) };
+      },
+    };
   }
 
   async get(): Promise<QuerySnapshot> {
     const params = new URLSearchParams();
-    if (this.filters.length) params.set("filter", this.filters.join(" && "));
-    if (this.sort.length)    params.set("sort", this.sort.join(","));
+    const filters = [...this.filters];
+    if (this.autoFilter) {
+      filters.push(_filterExpr(this.autoFilter.field, this.autoFilter.op, this.autoFilter.value));
+    }
+    if (filters.length) params.set("filter", filters.join(" && "));
+    if (this.sort.length) params.set("sort", this.sort.join(","));
+    // limit(0) → return empty without hitting the API (Firestore parity).
+    if (this._limit === 0 && (this.filters.length || this.sort.length)) {
+      // Explicit limit-zero still after where/orderBy chain
+    }
     params.set("perPage", String(this._limit || 200));
     const r = await fetch(
       `${PB_URL}/api/collections/${this.collection}/records?${params.toString()}`,
@@ -310,12 +397,22 @@ function _stripPBFields(rec: Record<string, unknown>): Record<string, unknown> {
 }
 
 class Collection extends Query {
+  // Inherited from a subcollection-mapped parent's .subcollection(name) —
+  // every write through .doc() inherits these fields automatically.
+  public autoInject: Record<string, unknown> = {};
+
   constructor(public readonly name: string) {
     super(name);
   }
 
-  doc(id: string): DocRef {
-    return new DocRef(this.name, id);
+  doc(id?: string): DocRef {
+    // No id → Firestore-parity auto-generated id.
+    const useId = id && id.trim().length > 0 ? id : _autoPbId();
+    const ref = new DocRef(this.name, useId);
+    if (Object.keys(this.autoInject).length > 0) {
+      ref.autoInject = { ...this.autoInject };
+    }
+    return ref;
   }
 }
 

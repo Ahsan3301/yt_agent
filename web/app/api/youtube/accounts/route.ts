@@ -17,6 +17,8 @@ export const runtime = "nodejs";
  */
 export async function GET() {
   try {
+    // orderBy uses 'updated' (PB system field, always present) instead
+    // of 'updated_at' which may not exist on Firestore-migrated rows.
     const snap = await adminDb()
       .collection("youtube_accounts")
       .orderBy("updated_at", "desc")
@@ -24,19 +26,35 @@ export async function GET() {
       .get();
     const out: unknown[] = [];
     snap.forEach((doc) => {
-      const d = doc.data() || {};
+      const d = (doc.data() || {}) as Record<string, unknown>;
       out.push({
         id: doc.id,
-        youtube_channel_id: d.youtube_channel_id || doc.id,
-        title: d.title || "",
-        thumbnail: d.thumbnail || "",
-        updated_at: d.updated_at?.toMillis?.() || null,
+        youtube_channel_id: (d.youtube_channel_id as string) || doc.id,
+        title:     (d.title as string) || "",
+        thumbnail: (d.thumbnail as string) || "",
+        updated_at: _toEpochMs(d.updated_at),
       });
     });
     return NextResponse.json(out);
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }
+}
+
+/** Normalize any timestamp shape to epoch ms.
+ *  Handles: Firestore Timestamp (.toMillis), epoch number (sec or ms),
+ *  ISO string, or null. */
+function _toEpochMs(v: unknown): number | null {
+  if (v == null) return null;
+  if (typeof v === "number") return v > 10_000_000_000 ? v : v * 1000;
+  if (typeof v === "string") {
+    const parsed = Date.parse(v);
+    return isNaN(parsed) ? null : parsed;
+  }
+  if (typeof (v as { toMillis?: () => number }).toMillis === "function") {
+    return (v as { toMillis: () => number }).toMillis();
+  }
+  return null;
 }
 
 /** DELETE /api/youtube/accounts?id=<youtube_channel_id> */

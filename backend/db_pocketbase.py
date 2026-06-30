@@ -44,6 +44,18 @@ SERVER_TIMESTAMP = _ServerTimestampSentinel()
 _VALID_PB_ID = re.compile(r"^[a-z0-9]{15}$")
 
 
+# Subcollection → flat collection mapping. Firestore allows
+# `db.collection("runs_index").document("<run>").collection("logs")` to
+# write nested children; PB has no subcollections, so we route those
+# writes to a flat top-level collection with a foreign-key field.
+#
+# Format: ("parent_collection", "child_name") → ("flat_collection",
+#                                                "fk_field")
+_SUBCOLLECTION_MAP = {
+    ("runs_index", "logs"): ("run_logs", "run_id"),
+}
+
+
 def _pb_id(raw_id: str) -> str:
     """Pocketbase ids: 15 chars [a-z0-9]+. Reuse if it fits, else hash."""
     raw = (raw_id or "").lower()
@@ -53,6 +65,14 @@ def _pb_id(raw_id: str) -> str:
     import base64 as _b64
     b32 = _b64.b32encode(h).decode("ascii").lower().replace("=", "")
     return b32[:15]
+
+
+def _generate_auto_id() -> str:
+    """Generate a 15-char PB-valid id. Used when callers do
+    `.document()` with no id (Firestore auto-id semantics)."""
+    import secrets
+    alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
+    return "".join(secrets.choice(alphabet) for _ in range(15))
 
 
 def _serialise(value: Any) -> Any:
@@ -128,6 +148,10 @@ class DocumentReference:
         self._collection = collection
         self._raw_id = doc_id
         self._pb_id = _pb_id(doc_id)
+        # Inherited from CollectionReference._auto_inject when this doc
+        # came from a subcollection-mapped parent (e.g. runs_index/<id>/logs
+        # → write injects run_id=<id> automatically).
+        self._auto_inject: dict[str, Any] = {}
 
     @property
     def id(self) -> str:
@@ -154,7 +178,7 @@ class DocumentReference:
         )
 
     def set(self, data: dict, merge: bool = False) -> None:
-        body = {**_serialise(data), "id": self._pb_id}
+        body = {**self._auto_inject, **_serialise(data), "id": self._pb_id}
         # PATCH first when merge=True; else try PATCH and fall back.
         url = f"/api/collections/{self._collection}/records/{self._pb_id}"
         r = self._client._http("PATCH", url, json=body)
@@ -171,10 +195,11 @@ class DocumentReference:
             raise RuntimeError(f"PB set {self.path}: HTTP {r.status_code}: {r.text[:200]}")
 
     def update(self, data: dict) -> None:
+        payload = {**self._auto_inject, **_serialise(data)}
         r = self._client._http(
             "PATCH",
             f"/api/collections/{self._collection}/records/{self._pb_id}",
-            json=_serialise(data),
+            json=payload,
         )
         if not r.ok:
             raise RuntimeError(f"PB update {self.path}: HTTP {r.status_code}: {r.text[:200]}")
@@ -189,20 +214,25 @@ class DocumentReference:
 
     def collection(self, name: str) -> "CollectionReference":
         """Subcollection — PB doesn't support these natively. We surface
-        a flat collection with the parent's id baked into queries.
+        a flat collection with the parent's id auto-injected on writes
+        AND auto-filtered on reads.
 
-        Used for runs_index/<run_id>/logs in the legacy code. The
-        migrator + new write path flatten these into a top-level
-        `run_logs` collection with a `run_id` field. The shim here
-        just returns a query pre-filtered by run_id."""
-        # Map runs_index/<id>/logs → run_logs filtered by run_id.
-        if self._collection == "runs_index" and name == "logs":
-            ref = CollectionReference(self._client, "run_logs")
-            ref._auto_filter = ("run_id", "==", self._raw_id)
-            return ref
-        raise NotImplementedError(
-            f"subcollection {self.path}/{name} not mapped for Pocketbase"
-        )
+        Used by backend/logbuf.py for runs_index/<run_id>/logs. The
+        flat collection has a `run_id` foreign-key field; any read
+        from this ref filters by it, any write injects it."""
+        mapping = _SUBCOLLECTION_MAP.get((self._collection, name))
+        if mapping is None:
+            raise NotImplementedError(
+                f"subcollection {self.path}/{name} not mapped for Pocketbase. "
+                f"Add to _SUBCOLLECTION_MAP."
+            )
+        flat_coll, fk_field = mapping
+        ref = CollectionReference(self._client, flat_coll)
+        # Read filter — automatically applied to stream/get.
+        ref._auto_filter = (fk_field, "==", self._raw_id)
+        # Write injection — set/add on this ref will include this field.
+        ref._auto_inject = {fk_field: self._raw_id}
+        return ref
 
     def collection_root(self) -> "CollectionReference":
         return CollectionReference(self._client, self._collection)
@@ -215,7 +245,11 @@ class _Query:
         self._filters: list[str] = []
         self._sort: list[str] = []
         self._limit = 0
+        # For subcollection-mapped refs: auto-filter on reads.
         self._auto_filter: Optional[tuple[str, str, Any]] = None
+        # For subcollection-mapped refs: auto-inject these fields on
+        # every write (set/update) made via .document() under this ref.
+        self._auto_inject: dict[str, Any] = {}
 
     def where(self, field: str, op: str, value: Any) -> "_Query":
         self._filters.append(_filter_expr(field, op, value))
@@ -268,17 +302,119 @@ class _Query:
     def get(self) -> list[_DocSnapshot]:
         return list(self.stream())
 
+    def count(self) -> "_CountAggregator":
+        """Firestore-style aggregation. .count().get() returns
+        AggregateQuerySnapshot with .data() containing 'count'."""
+        return _CountAggregator(self)
+
+
+class _CountAggregator:
+    """Mimics Firestore's CountAggregate. PB has no native count API
+    yet, so we do a per_page=1 query and read totalItems from the
+    response — O(1) cost."""
+
+    def __init__(self, query: "_Query"):
+        self._query = query
+
+    def get(self) -> "_CountSnapshot":
+        q = self._query
+        params: dict = {"perPage": 1, "page": 1}
+        filters = list(q._filters)
+        if q._auto_filter:
+            f, op, v = q._auto_filter
+            filters.append(_filter_expr(f, op, v))
+        if filters:
+            params["filter"] = " && ".join(filters)
+        r = q._client._http(
+            "GET",
+            f"/api/collections/{q._collection}/records",
+            params=params,
+        )
+        if not r.ok:
+            return _CountSnapshot(0)
+        data = r.json()
+        return _CountSnapshot(int(data.get("totalItems") or 0))
+
+
+class _CountSnapshot:
+    def __init__(self, count: int):
+        self._count = count
+
+    def data(self) -> dict:
+        return {"count": self._count}
+
 
 class CollectionReference(_Query):
     def __init__(self, client: "PocketBaseClient", name: str):
         super().__init__(client, name)
         self.id = name
 
-    def document(self, doc_id: str) -> DocumentReference:
-        return DocumentReference(self._client, self._collection, doc_id)
+    def document(self, doc_id: Optional[str] = None) -> DocumentReference:
+        """Get a doc ref. With no id → auto-generates a 15-char id
+        (Firestore parity). With id → uses it verbatim if it fits PB's
+        format, hashes otherwise."""
+        if doc_id is None or doc_id == "":
+            doc_id = _generate_auto_id()
+        ref = DocumentReference(self._client, self._collection, doc_id)
+        # If this collection ref had an auto_inject (it came from
+        # parent.collection("subcol")), the resulting doc inherits it.
+        if self._auto_inject:
+            ref._auto_inject = dict(self._auto_inject)
+        return ref
 
 
 # ── Top-level client ──────────────────────────────────────────────
+
+
+class _Batch:
+    """Emulates google.cloud.firestore.WriteBatch. PB has no native
+    batch endpoint — we accumulate ops and flush them on commit().
+    NOT atomic (parallel HTTP calls); matches our wrapper's overall
+    'best-effort batch' semantics. Acceptable for log/event writes;
+    NOT acceptable for primary-promotion invariants — those should
+    use serial awaits + their own rollback logic.
+    """
+
+    def __init__(self, client: "PocketBaseClient"):
+        self._client = client
+        self._ops: list[tuple[str, "DocumentReference", dict | None]] = []
+
+    def set(self, ref: "DocumentReference", data: dict, merge: bool = False):
+        self._ops.append(("set", ref, data))
+        return self
+
+    def update(self, ref: "DocumentReference", data: dict):
+        self._ops.append(("update", ref, data))
+        return self
+
+    def delete(self, ref: "DocumentReference"):
+        self._ops.append(("delete", ref, None))
+        return self
+
+    def commit(self):
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        if not self._ops:
+            return
+        # Cap parallelism so we don't open hundreds of sockets.
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            futures = []
+            for op, ref, data in self._ops:
+                if op == "set":
+                    futures.append(ex.submit(ref.set, data))
+                elif op == "update":
+                    futures.append(ex.submit(ref.update, data))
+                elif op == "delete":
+                    futures.append(ex.submit(ref.delete))
+            errors = []
+            for f in as_completed(futures):
+                try:
+                    f.result()
+                except Exception as e:
+                    errors.append(e)
+            if errors:
+                # Surface the first one; the others are logged at op level.
+                raise errors[0]
+        self._ops.clear()
 
 
 class PocketBaseClient:
@@ -335,3 +471,8 @@ class PocketBaseClient:
 
     def collection(self, name: str) -> CollectionReference:
         return CollectionReference(self, name)
+
+    def batch(self) -> "_Batch":
+        """Firestore-compat WriteBatch. Use for log/event writes (no
+        atomicity guarantee — see _Batch docstring)."""
+        return _Batch(self)
