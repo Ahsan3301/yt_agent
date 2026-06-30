@@ -61,22 +61,39 @@ MANAGED_KEYS = [
 ]
 
 
+_BLOB_DOC_ID = "api_keys"
+
+
 def _read_all() -> dict[str, str]:
-    """Return {key_name: value} from Firestore. Empty dict on any failure
-    (caller treats as 'no central store' and falls back to env vars)."""
+    """Return {key_name: value} from the central store.
+
+    Storage model: ONE record in the `settings` collection with id
+    "api_keys" and a `data` JSON field holding the full {KEY: value}
+    map. This sidesteps PB's 15-char doc-id requirement (and the
+    hash-collision read bug it caused for per-key records).
+    """
     if not db.is_configured():
         return {}
     try:
         c = db.client()
-        out: dict[str, str] = {}
-        for snap in c.collection("api_keys").stream():
+        # New blob path.
+        snap = c.collection("settings").document(_BLOB_DOC_ID).get()
+        if snap.exists:
             data = snap.to_dict() or {}
-            v = data.get("value")
+            blob = data.get("data") or {}
+            if isinstance(blob, dict):
+                return {k: str(v) for k, v in blob.items() if isinstance(v, str) and v}
+        # Legacy fallback — old per-key records (still works on
+        # Firestore-shape deploys where doc ids ARE the key names).
+        out: dict[str, str] = {}
+        for s in c.collection("api_keys").stream():
+            d = s.to_dict() or {}
+            v = d.get("value")
             if v:
-                out[snap.id] = str(v)
+                out[s.id] = str(v)
         return out
     except Exception as e:
-        log.warning(f"keys_sync: Firestore read failed: {e}")
+        log.warning(f"keys_sync: central store read failed: {e}")
         return {}
 
 
@@ -115,24 +132,24 @@ def push_from_payload(updates: dict) -> dict:
     central store. Returns the new full dict.
     """
     if not db.is_configured():
-        raise RuntimeError("Firestore not configured")
+        raise RuntimeError("DB not configured")
     c = db.client()
     current = _read_all()
-    batch = c.batch()
-    coll = c.collection("api_keys")
     for name, value in (updates or {}).items():
         if name not in MANAGED_KEYS:
             continue
-        ref = coll.document(name)
         if value in (None, ""):
-            batch.delete(ref)
             current.pop(name, None)
             os.environ.pop(name, None)
         else:
-            batch.set(ref, {"value": str(value), "updated_at": db.server_timestamp()})
             current[name] = str(value)
             os.environ[name] = str(value)
-    batch.commit()
+    # Single write to the blob — atomic on PB; effectively atomic on
+    # Firestore for the small payload size.
+    c.collection("settings").document(_BLOB_DOC_ID).set(
+        {"data": current, "updated_at": db.server_timestamp()},
+        merge=False,
+    )
     return current
 
 
