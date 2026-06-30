@@ -7,7 +7,7 @@
   "is_private": "true",
   "enable_gpu": "true",
   "enable_internet": "true",
-  "dataset_sources": ["ahsanriaz1337/yt-agent-secrets"],
+  "dataset_sources": ["ahsanriaz1337/yt-agent-secrets-v2"],
   "competition_sources": [],
   "kernel_sources": []
 }
