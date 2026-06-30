@@ -26,7 +26,14 @@ services:
   # the internal routing and lets Coolify route the public domain to
   # port 80 of this container.
   caddy:
-    image: caddy:2-alpine
+    # Custom image with the Caddyfile baked in. Coolify doesn't sync
+    # the rest of the repo to its runtime directory, so bind-mounting
+    # the Caddyfile fails ("not a directory" — Docker auto-creates an
+    # empty dir at the missing source path). Building it into the
+    # image sidesteps the issue entirely.
+    build:
+      context: ./coolify/caddy
+      dockerfile: Dockerfile
     restart: unless-stopped
     # NO host port bindings — Coolify's Traefik handles public
     # 80/443. Coolify routes the application's domain to caddy:80
@@ -34,7 +41,6 @@ services:
     expose:
       - "80"
     volumes:
-      - ./coolify/Caddyfile:/etc/caddy/Caddyfile:ro
       - /data/caddy/data:/data
       - /data/caddy/config:/config
     environment:
@@ -107,13 +113,15 @@ services:
   # ~30 MB binary. Migrations in coolify/pocketbase/pb_migrations/ are
   # auto-applied on boot.
   pocketbase:
-    image: ghcr.io/muchobien/pocketbase:latest  # multi-arch, ARM-ready
+    # Custom image with pb_migrations/ baked in (same reason as caddy).
+    build:
+      context: ./coolify/pocketbase
+      dockerfile: Dockerfile
     restart: unless-stopped
     expose:
       - "8090"
     volumes:
       - /data/pocketbase:/pb_data
-      - ./coolify/pocketbase/pb_migrations:/pb_migrations:ro
     environment:
       # First-boot admin creation (idempotent — only fires when the
       # admins table is empty).
