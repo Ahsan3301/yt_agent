@@ -20,15 +20,21 @@ import { NextRequest } from "next/server";
  * Always returns a string with NO trailing slash.
  */
 export function publicOrigin(req: NextRequest): string {
+  // Helper: always ensure a scheme is present. Coolify's
+  // SERVICE_FQDN_CADDY magic var sometimes substitutes as a bare
+  // hostname ("yt-agent.thyker.online") with no "https://" prefix,
+  // which would produce a broken OAuth redirect_uri.
+  const withScheme = (s: string) =>
+    (s.startsWith("http://") || s.startsWith("https://"))
+      ? s
+      : `https://${s}`;
+
   const explicit = (process.env.PUBLIC_BASE_URL || "").trim();
-  if (explicit) return explicit.replace(/\/$/, "");
+  if (explicit) return withScheme(explicit).replace(/\/$/, "");
 
   const domain =
     (process.env.NEXT_PUBLIC_DOMAIN || process.env.DOMAIN || "").trim();
-  if (domain) {
-    const withScheme = domain.startsWith("http") ? domain : `https://${domain}`;
-    return withScheme.replace(/\/$/, "");
-  }
+  if (domain) return withScheme(domain).replace(/\/$/, "");
 
   // Trust proxy-set headers when present.
   const xfHost = req.headers.get("x-forwarded-host");
