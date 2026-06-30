@@ -160,7 +160,8 @@ migrate((app) => {
     name: "settings",
     type: "base",
     fields: [
-      { name: "doc",                  type: "json",   maxSize: 200000 },
+      { name: "data",                 type: "json",   maxSize: 200000 },
+      { name: "updated_at",           type: "number" },
     ],
     listRule: OPEN, viewRule: OPEN,
     createRule: SUPERUSER_ONLY, updateRule: SUPERUSER_ONLY, deleteRule: SUPERUSER_ONLY,
@@ -201,7 +202,7 @@ migrate((app) => {
     type: "base",
     fields: [
       { name: "run_id",               type: "text",   max: 64 },
-      { name: "doc",                  type: "json",   maxSize: 2000000 },
+      { name: "data",                 type: "json",   maxSize: 2000000 },
     ],
     indexes: ["CREATE UNIQUE INDEX idx_run_summaries_run ON run_summaries (run_id)"],
     listRule: OPEN, viewRule: OPEN,
@@ -249,11 +250,14 @@ migrate((app) => {
   }));
 
   // ── queue_state ────────────────────────────────────────────────
+  // /api/queue/pause writes flat: { paused, updated_at }. Schema mirrors
+  // that — no JSON blob wrapper for this one.
   ensure("queue_state", () => new Collection({
     name: "queue_state",
     type: "base",
     fields: [
-      { name: "doc",                  type: "json",   maxSize: 50000 },
+      { name: "paused",               type: "bool" },
+      { name: "updated_at",           type: "number" },
     ],
     listRule: OPEN, viewRule: OPEN,
     createRule: SUPERUSER_ONLY, updateRule: SUPERUSER_ONLY, deleteRule: SUPERUSER_ONLY,
@@ -278,7 +282,8 @@ migrate((app) => {
     name: "schedules",
     type: "base",
     fields: [
-      { name: "doc",                  type: "json",   maxSize: 50000 },
+      { name: "data",                 type: "json",   maxSize: 50000 },
+      { name: "updated_at",           type: "number" },
     ],
     listRule: OPEN, viewRule: OPEN,
     createRule: SUPERUSER_ONLY, updateRule: SUPERUSER_ONLY, deleteRule: SUPERUSER_ONLY,
