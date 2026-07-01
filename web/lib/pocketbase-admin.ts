@@ -240,20 +240,19 @@ class DocRef {
   async set(data: Record<string, unknown>, opts?: { merge?: boolean }): Promise<void> {
     const pbId = _pbId(this.id);
     const body = { ...this.autoInject, ..._serialise(data), id: pbId };
-    // PATCH first — succeeds for both merge and overwrite cases on PB
-    // since PATCH on a record is a partial update. If record missing,
-    // 404 → fall through to POST.
-    if (opts?.merge !== false) {
-      const r = await fetch(
-        `${PB_URL}/api/collections/${this.collection}/records/${pbId}`,
-        { method: "PATCH", headers: await _headers(), body: JSON.stringify(body) },
-      );
-      if (r.ok) return;
-      if (r.status !== 404) {
-        throw new Error(`PB set ${this.path}: HTTP ${r.status}: ${await r.text()}`);
-      }
+    // Try PATCH first regardless of merge — Firestore-style set() with
+    // merge:false semantically means "overwrite" but on PB an existing
+    // record can only be overwritten by PATCH (POST would 400 with
+    // 'validation_not_unique' on the id). PATCH is idempotent here.
+    const patch = await fetch(
+      `${PB_URL}/api/collections/${this.collection}/records/${pbId}`,
+      { method: "PATCH", headers: await _headers(), body: JSON.stringify(body) },
+    );
+    if (patch.ok) return;
+    if (patch.status !== 404) {
+      throw new Error(`PB set ${this.path}: HTTP ${patch.status}: ${await patch.text()}`);
     }
-    // CREATE.
+    // 404 → record doesn't exist yet, CREATE it.
     const r = await fetch(
       `${PB_URL}/api/collections/${this.collection}/records`,
       { method: "POST", headers: await _headers(), body: JSON.stringify(body) },
