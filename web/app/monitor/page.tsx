@@ -159,8 +159,11 @@ export default function MonitorPage() {
     };
     poll();
     return () => { cancelled = true; };
+  // Track dep by instance_id, not url — outbound-poll workers all
+  // have url='', so a url-only dep never changes and this effect
+  // never re-runs when a worker appears/disappears from entries.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entries.map((e) => e.url).join("|")]);
+  }, [entries.map((e) => e.instance_id || e.url).join("|")]);
 
   const list = Object.values(backends).sort((a, b) => {
     // GPU available first, then CPU available, then busy, then down.

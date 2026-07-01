@@ -9,7 +9,13 @@ Config/youtube_token.json
 
 # ── Pipeline runtime artifacts ──────────────────────────────
 output/
-logs/
+# Runtime log directories only — anchor at repo root so we don't
+# swallow Next.js API route groups like web/app/api/runs/[id]/logs/.
+# Bug: bare 'logs/' matched every 'logs/' in the tree, causing the
+# runs/[id]/logs/route.ts endpoint to be silently ignored by git.
+/logs/
+/backend/logs/
+/modules/logs/
 data/run_state.json
 data/used_clips.json
 data/used_premises.json
