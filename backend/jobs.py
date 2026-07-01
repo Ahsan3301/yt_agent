@@ -391,61 +391,100 @@ def _run_one(job: dict[str, Any]):
     with _lock:
         job["run_id"] = final_state.get("run_id") or job.get("run_id")
         local_path = final_state.get("video_path")
+        upload_error = ""
+        public = ""
         if ok and local_path and os.path.exists(local_path):
-            # Try to push to remote storage. Failure is non-fatal — the
-            # video is still locally accessible via /api/runs/<id>/video.
             try:
                 from backend import storage
                 if storage.is_configured():
                     public = storage.upload_video(local_path, job["run_id"])
                     job["public_url"] = public
                     log.info(f"job {job_id} uploaded to {public}")
-
-                    # Mirror the run summary + index so the History page
-                    # survives container restarts (ephemeral output/ dir).
-                    try:
-                        from pathlib import Path as _Path
-                        summary_path = _Path("output/videos") / job["run_id"] / "run_summary.json"
-                        summary = {}
-                        if summary_path.exists():
-                            import json as _json
-                            try:
-                                summary = _json.loads(summary_path.read_text(encoding="utf-8"))
-                            except Exception as _e:
-                                log.warning(f"summary read failed for {job['run_id']}: {_e}")
-                        # Augment with the canonical public URL so the
-                        # frontend can play without depending on the
-                        # local backend.
-                        summary["run_id"] = job["run_id"]
-                        summary["video_url"] = public
-                        summary["finished_at"] = time.time()
-                        summary["channel"] = job.get("channel")
-                        summary["dry_run"] = job.get("dry_run", False)
-                        summary["ok"] = True
-
-                        from backend import runs_db
-                        runs_db.write_run(
-                            job["run_id"],
-                            summary=summary,
-                            index_entry={
-                                "channel":     summary.get("channel"),
-                                "dry_run":     summary.get("dry_run", False),
-                                "ok":          True,
-                                "finished_at": summary["finished_at"],
-                                "video_url":   public,
-                                "has_video":   True,
-                                "video_storage": "primary",
-                            },
-                        )
-                    except Exception as _e:
-                        log.warning(f"job {job_id} run-summary mirror failed: {_e}")
             except Exception as e:
-                log.warning(f"job {job_id} upload skipped: {e}")
+                upload_error = str(e)
+                log.warning(f"job {job_id} upload skipped: {upload_error}")
+
+            # Terminal status: rendered locally OK. Upload failure is
+            # SURFACED as a job error but the job is still marked
+            # complete-with-warning — the local file exists, the run
+            # summary is persisted, and the Library shows an entry.
             job["status"] = "complete"
-            job["video_url"] = f"/api/runs/{job['run_id']}/video"
+            if public:
+                job["video_url"] = public
+            else:
+                # Fallback: dashboard-hosted route serving from local disk
+                # (only works while the worker container lives).
+                job["video_url"] = f"/api/runs/{job['run_id']}/video"
+                if upload_error:
+                    job["error"] = f"upload failed: {upload_error[:400]}"
+
+            # Persist the run summary + index UNCONDITIONALLY so the
+            # Library page shows every completed render — even ones
+            # whose upload failed. The frontend can then show a
+            # "download failed" chip and offer a re-upload button.
+            try:
+                from pathlib import Path as _Path
+                summary_path = _Path("output/videos") / job["run_id"] / "run_summary.json"
+                summary: dict = {}
+                if summary_path.exists():
+                    import json as _json
+                    try:
+                        summary = _json.loads(summary_path.read_text(encoding="utf-8"))
+                    except Exception as _e:
+                        log.warning(f"summary read failed for {job['run_id']}: {_e}")
+                summary["run_id"] = job["run_id"]
+                summary["video_url"] = public or job["video_url"]
+                summary["finished_at"] = time.time()
+                summary["channel"] = job.get("channel")
+                summary["dry_run"] = job.get("dry_run", False)
+                summary["ok"] = True
+                summary["upload_error"] = upload_error or ""
+
+                from backend import runs_db
+                runs_db.write_run(
+                    job["run_id"],
+                    summary=summary,
+                    index_entry={
+                        "channel":       summary.get("channel"),
+                        "dry_run":       summary.get("dry_run", False),
+                        "ok":            True,
+                        "finished_at":   summary["finished_at"],
+                        "video_url":     public or job["video_url"],
+                        "has_video":     bool(public),
+                        "video_storage": "primary" if public else "local",
+                        "upload_error":  upload_error[:400] if upload_error else "",
+                        "title":         (summary.get("title") or "").strip(),
+                    },
+                )
+            except Exception as _e:
+                log.warning(f"job {job_id} run-summary mirror failed: {_e}")
         else:
             job["status"] = "failed"
             job["error"] = final_state.get("error") or "pipeline failed"
+
+            # Even on failure, mirror an index entry so the Library shows
+            # every attempt with a red chip instead of silently swallowing.
+            try:
+                from backend import runs_db
+                runs_db.write_run(
+                    job["run_id"],
+                    summary={
+                        "run_id":      job["run_id"],
+                        "channel":     job.get("channel"),
+                        "ok":          False,
+                        "error":       job["error"],
+                        "finished_at": time.time(),
+                    },
+                    index_entry={
+                        "channel":     job.get("channel"),
+                        "ok":          False,
+                        "error":       job["error"][:400],
+                        "finished_at": time.time(),
+                        "has_video":   False,
+                    },
+                )
+            except Exception as _e:
+                log.warning(f"job {job_id} failure-index mirror failed: {_e}")
 
         # Fire a Discord alert for terminal status. Best-effort —
         # notifier swallows all errors so a broken webhook can't break

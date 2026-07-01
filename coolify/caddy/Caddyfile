@@ -30,6 +30,27 @@
 	}
 
 	# ── MinIO S3 API ──────────────────────────────────────────
+	# NOTE the change from `handle_path /s3/*` (strips prefix) to
+	# `handle /<bucket>/*` (no strip). AWS SigV4 signs the ENTIRE
+	# URL path, so if Caddy strips /s3/ MinIO recomputes with a
+	# different path → SignatureDoesNotMatch.
+	#
+	# Solution: expose MinIO at the bucket root of the SAME domain
+	# without any prefix. Boto3 signs /<bucket>/<key>, sends to
+	# /<bucket>/<key>, MinIO receives the same → signature validates.
+	#
+	# Downside: bucket names become part of the URL surface; can't
+	# collide with dashboard routes (/api/, /pb/, /minio/, /_next/).
+	# `yt-agent-videos` is safe.
+	handle /yt-agent-videos/* {
+		reverse_proxy minio:9000 {
+			header_up Host {host}
+			header_up X-Forwarded-Proto {scheme}
+		}
+	}
+	# Back-compat — the old /s3/ path still resolves for any URLs
+	# already stored in the DB pre-fix. Serves reads only; new writes
+	# must use the bucket-root path.
 	handle_path /s3/* {
 		reverse_proxy minio:9000 {
 			header_up Host {host}

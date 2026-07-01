@@ -110,9 +110,58 @@ export default function LogsPanel({
     };
   }, [firestoreMode, runId, paused]);
 
-  // Polling fallback — runs only when NOT in firestoreMode.
+  // Dashboard-side polling for runId — reads from /api/runs/<id>/logs
+  // which itself reads Pocketbase run_logs. Used on Coolify deploys
+  // where the browser has no Firestore SDK config.
   useEffect(() => {
     if (firestoreMode) return;
+    if (!runId) return;   // legacy dashboard poll path handled below
+    let cancelled = false;
+    let sinceTs = 0;
+    const tick = async () => {
+      if (cancelled) return;
+      const delay = active ? 1500 : 5000;
+      if (!paused) {
+        try {
+          const r = await fetch(
+            `/api/runs/${encodeURIComponent(runId)}/logs?since=${sinceTs}`,
+            { cache: "no-store" },
+          );
+          if (r.ok) {
+            const j = await r.json() as {
+              lines: Array<{ seq: number; ts: number; level: string; name: string; msg: string }>;
+              latest_ts: number;
+            };
+            if (!cancelled && j.lines?.length) {
+              sinceTs = j.latest_ts || sinceTs;
+              setEntries((prev) => {
+                const merged = [...prev, ...j.lines.map((e) => ({
+                  seq:   e.seq, time: e.ts,
+                  level: e.level, name: e.name, msg: e.msg,
+                }))];
+                return merged.length > 2000
+                  ? merged.slice(merged.length - 2000)
+                  : merged;
+              });
+              const last = j.lines[j.lines.length - 1];
+              setHeadSeq(last.seq);
+              setStreamingFrom("poll");
+            }
+          }
+        } catch {
+          // transient — try next tick
+        }
+      }
+      setTimeout(tick, delay);
+    };
+    tick();
+    return () => { cancelled = true; };
+  }, [firestoreMode, runId, active, paused]);
+
+  // Legacy worker-URL polling — used when there is no runId (dashboard
+  // live-tail across all workers). Unchanged from the original impl.
+  useEffect(() => {
+    if (firestoreMode || runId) return;
     let cancelled = false;
     const tick = async () => {
       if (cancelled) return;
@@ -124,7 +173,6 @@ export default function LogsPanel({
             lastSeqRef.current = page.head_seq || lastSeqRef.current;
             setHeadSeq(page.head_seq);
             setEntries((prev) => {
-              // Keep last 2000 entries.
               const merged = [...prev, ...page.entries];
               return merged.length > 2000
                 ? merged.slice(merged.length - 2000)
@@ -132,17 +180,13 @@ export default function LogsPanel({
             });
             setStreamingFrom("poll");
           }
-        } catch {
-          // backend hiccup — try again next tick
-        }
+        } catch { /* backend hiccup — try again next tick */ }
       }
       setTimeout(tick, delay);
     };
     tick();
-    return () => {
-      cancelled = true;
-    };
-  }, [firestoreMode, active, paused]);
+    return () => { cancelled = true; };
+  }, [firestoreMode, runId, active, paused]);
 
   // Auto-scroll to bottom when new entries arrive AND user wants to follow.
   useEffect(() => {
