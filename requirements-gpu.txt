@@ -15,3 +15,14 @@
 torch==2.4.0+cu121
 decord==0.6.0
 av==12.3.0
+
+# Kokoro TTS — high-quality neural voice model that runs on the GPU
+# workers. modules/voiceover.py tries Kokoro first for English and
+# falls back to edge-tts if the import fails. Skipping this line
+# means every render logs a 'Kokoro not available' warning and uses
+# the lower-quality edge-tts voice.
+kokoro>=0.4
+soundfile>=0.12
+# Kokoro requires phonemizer at runtime (converts text → phonemes).
+# The pip package bundles the espeak-ng grammar files.
+phonemizer>=3.2
