@@ -26,18 +26,45 @@ export type StorageVideo = {
 let _client: S3Client | null = null;
 function client(): S3Client | null {
   if (_client) return _client;
-  const endpoint = process.env.S3_ENDPOINT;
-  const key      = process.env.S3_ACCESS_KEY_ID;
-  const secret   = process.env.S3_SECRET_ACCESS_KEY;
-  if (!endpoint || !key || !secret) return null;
+  // Prefer the internal Docker-network endpoint when both are set —
+  // the Coolify compose stack sets S3_ENDPOINT_INTERNAL=http://minio:9000
+  // for exactly this kind of server-side call, dodging the public
+  // Traefik path (and its TLS overhead) entirely.
+  const endpoint =
+    process.env.S3_ENDPOINT_INTERNAL ||
+    process.env.S3_ENDPOINT ||
+    "http://minio:9000";
+  const key    = process.env.S3_ACCESS_KEY_ID    || process.env.MINIO_ROOT_USER;
+  const secret = process.env.S3_SECRET_ACCESS_KEY || process.env.MINIO_ROOT_PASSWORD;
+  if (!key || !secret) return null;
   _client = new S3Client({
     endpoint,
-    region: process.env.S3_REGION || "auto",
+    region: process.env.S3_REGION || "us-east-1",
     credentials: { accessKeyId: key, secretAccessKey: secret },
     // MinIO needs path-style; R2 and modern AWS S3 don't care.
     forcePathStyle: true,
   });
   return _client;
+}
+
+/** Public URL prefix for a given bucket key. Reads the same envs the
+ *  Python worker does when it writes video_url on a successful upload,
+ *  so orphan rows synthesised here point at the same URLs the real
+ *  runs_index rows use. */
+function publicUrlFor(bucket: string, key: string): string {
+  const explicit = (
+    process.env.S3_PUBLIC_BASE ||
+    process.env.NEXT_PUBLIC_S3_PUBLIC_BASE ||
+    ""
+  ).replace(/\/$/, "");
+  if (explicit) return `${explicit}/${key}`;
+  // Derive from PUBLIC_BASE_URL (domain only, no scheme in some deploys).
+  const pb = String(process.env.PUBLIC_BASE_URL || "").replace(/\/$/, "");
+  if (pb) {
+    const host = pb.startsWith("http") ? pb : `https://${pb}`;
+    return `${host}/${bucket}/${key}`;
+  }
+  return "";
 }
 
 /** List all `videos/*.mp4` objects in the primary bucket.
@@ -46,9 +73,8 @@ function client(): S3Client | null {
  *  primary answer. */
 export async function listStorageVideos(): Promise<StorageVideo[]> {
   const c = client();
-  const bucket = process.env.S3_BUCKET;
-  const publicBase = (process.env.S3_PUBLIC_BASE || "").replace(/\/$/, "");
-  if (!c || !bucket) return [];
+  const bucket = process.env.S3_BUCKET || "yt-agent-videos";
+  if (!c) return [];
   const out: StorageVideo[] = [];
   let continuationToken: string | undefined = undefined;
   try {
@@ -71,7 +97,7 @@ export async function listStorageVideos(): Promise<StorageVideo[]> {
           run_id,
           size: Number(obj.Size || 0),
           last_modified: obj.LastModified ? Math.floor(obj.LastModified.getTime() / 1000) : 0,
-          public_url: publicBase ? `${publicBase}/${key}` : "",
+          public_url: publicUrlFor(bucket, key),
         });
       }
       continuationToken = resp.IsTruncated ? resp.NextContinuationToken : undefined;
