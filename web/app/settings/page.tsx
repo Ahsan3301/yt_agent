@@ -489,6 +489,7 @@ const IMAGE_GEN_DEFAULT: NonNullable<Settings["image_gen"]> = {
   priority: ["huggingface", "local_sdxl", "pollinations"],
   enabled: { huggingface: true, local_sdxl: true, pollinations: true } as Record<string, boolean>,
   local_sdxl_model: "stabilityai/sdxl-turbo",
+  shot_parallelism: 3,
   negative_prompt:
     "worst quality, low quality, blurry, out of focus, distorted anatomy, extra limbs, malformed hands, missing fingers, mangled face, asymmetric eyes, low res, jpeg artifacts, watermark, signature, text, logo, cropped, frame, border, cartoon, 3d render, cgi",
 };
@@ -576,6 +577,22 @@ function ImageGenCard({
           HuggingFace SDXL + Local SDXL use this as a native negative_prompt.
           Pollinations Flux has no native field — the backend appends it as a plain
           &quot;avoid: …&quot; clause to the prompt (weaker but non-zero effect).
+        </div>
+      </div>
+
+      <div>
+        <label className="label">
+          Shot parallelism: <span className="text-white font-mono">{cfg.shot_parallelism ?? 3}</span>
+        </label>
+        <input
+          type="range" min={1} max={6} step={1} className="w-full accent-accent"
+          value={cfg.shot_parallelism ?? 3}
+          onChange={(e) => setImageGen({ ...cfg, shot_parallelism: parseInt(e.target.value) })}
+        />
+        <div className="text-xs text-neutral-500 mt-1">
+          Shots fetched concurrently per render. Higher = faster storyboard step
+          + more VRAM. Sweet spot on P100/T4 (16 GB VRAM) is 3 — ~12-15 GB with
+          local SDXL. Drop to 1 for CPU-only workers or if you hit HF rate limits.
         </div>
       </div>
 

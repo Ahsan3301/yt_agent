@@ -393,7 +393,11 @@ def start():
         # In outbound-poll mode the worker is responsible for *finding*
         # jobs (vs being-pushed-to in tunnel mode), so we poll the claim
         # endpoint every 5 sec when idle.
-        outbound_claim_interval = 5
+        # 2s — jobs get picked up ~within one blink instead of 5s.
+        # Adds one PB round-trip / 2s / worker but that's cheap on the
+        # self-hosted stack. Env override lets you tune it up if you
+        # ever run more than a handful of workers.
+        outbound_claim_interval = int(os.getenv("OUTBOUND_CLAIM_INTERVAL", "2"))
 
         # First heartbeat fires IMMEDIATELY on worker startup so the
         # dashboard's onSnapshot listener sees the card within ~1 sec

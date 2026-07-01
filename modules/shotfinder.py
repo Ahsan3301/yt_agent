@@ -730,27 +730,75 @@ def fetch_shots(shots, output_dir, channel="horror", preset_sources=None):
     smoothly during this long step (the footage stage owns 30%..60% of
     the bar). Checks for user cancellation between shots."""
     from pathlib import Path
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import threading as _threading
     from modules import run_state
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     reset_pollinations_breaker()
     reset_hf_breaker()
     used_ids = set(F._load_used_clips())
-    sources = []
     presets = list(preset_sources or [])
     total = max(1, len(shots))
-    for i, shot in enumerate(shots, 1):
+
+    # Parallelism: the P100 has 16 GB VRAM; a single SDXL inference at
+    # 1024x576 uses ~4-5 GB, so 3 concurrent shots is a good default
+    # (~12-15 GB, headroom for the CUDA workspace). HF Inference API +
+    # Pollinations are HTTP calls with no per-worker cost, so
+    # parallelism is a free speedup for them too. Setting exposed under
+    # settings.image_gen.shot_parallelism — default 3.
+    ig_cfg = (load_settings().get("image_gen") or {})
+    max_workers = max(1, min(6, int(ig_cfg.get("shot_parallelism", 3))))
+
+    # used_ids is shared across threads; guard mutations with a lock so
+    # two shots don't both burn the same pexels/shutterstock id and end
+    # up with duplicated stock imagery.
+    used_lock = _threading.Lock()
+
+    def _fetch_one(idx: int, shot: dict, preset_src: dict | None):
         run_state.check_cancel()
-        log.info(f"Shot {i}/{total}")
-        if presets:
-            src = presets.pop(0)
-            log.info(f"  using preset image: {src.get('path')}")
+        if preset_src is not None:
+            src = dict(preset_src)
+            log.info(f"Shot {idx+1}/{total}: preset image {src.get('path')}")
         else:
-            src = find_image_for_shot(shot, output_dir, used_ids, channel=channel)
+            log.info(f"Shot {idx+1}/{total}: fetching")
+            # Snapshot used_ids under lock so the provider sees a
+            # consistent view; merge new additions back under lock.
+            with used_lock:
+                snap = set(used_ids)
+            src = find_image_for_shot(shot, output_dir, snap, channel=channel)
+            with used_lock:
+                used_ids.update(snap)
         if src:
             src["start"] = float(shot.get("start", 0.0))
             src["end"]   = float(shot.get("end", 0.0))
-            sources.append(src)
-        run_state.tick("footage", i / total)
-    log.info(f"Storyboard fetch: {len(sources)}/{len(shots)} shots filled "
-             f"({sum(1 for s in sources if s.get('origin') == 'manual_upload')} from user upload)")
+        return idx, src
+
+    # If ANY preset is provided, respect the "earliest shots first" rule
+    # by handing each preset to the corresponding shot index. Remaining
+    # shots get None → falls through to the provider chain.
+    preset_by_idx = {i: presets[i] for i in range(min(len(presets), len(shots)))}
+
+    results: list[dict | None] = [None] * len(shots)
+    done_count = 0
+    with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="shotfetch") as ex:
+        futures = [
+            ex.submit(_fetch_one, i, s, preset_by_idx.get(i))
+            for i, s in enumerate(shots)
+        ]
+        for fut in as_completed(futures):
+            try:
+                idx, src = fut.result()
+            except Exception as e:
+                log.warning(f"shot fetch worker crashed: {e}")
+                continue
+            results[idx] = src
+            done_count += 1
+            run_state.tick("footage", done_count / total)
+
+    sources = [s for s in results if s is not None]
+    log.info(
+        f"Storyboard fetch: {len(sources)}/{len(shots)} shots filled "
+        f"({sum(1 for s in sources if s.get('origin') == 'manual_upload')} from user upload) "
+        f"— parallelism={max_workers}"
+    )
     return sources

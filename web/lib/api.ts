@@ -238,6 +238,9 @@ export type Settings = {
     // doesn't wipe user toggles on first load.
     // Local SDXL model id (HuggingFace repo). "" = default from config.
     local_sdxl_model?: string;
+    // How many shots to fetch in parallel per render. 3 = ~12-15 GB
+    // VRAM on a P100/T4. Cap 6.
+    shot_parallelism?: number;
     // Applied to every provider that has a native negative_prompt field.
     // For Pollinations Flux (no native field) it's appended as a
     // plain-language "avoid: …" clause.
