@@ -52,7 +52,12 @@ services:
       - dashboard
       - pocketbase
       - minio
-    networks: [yt_agent_net]
+    # Attach to BOTH networks: internal so Caddy can reach dashboard/pb/
+    # minio, AND `coolify` so Coolify's Traefik proxy can reach Caddy.
+    # Without the coolify attachment, Traefik discovers Caddy via the
+    # traefik.enable=true label but can't route to it → HTTPS requests
+    # hang until the client timeout.
+    networks: [yt_agent_net, coolify]
 
   # ── Next.js dashboard ────────────────────────────────────────────
   # Built from the project's web/ directory. Multi-stage Dockerfile
@@ -216,3 +221,7 @@ services:
 networks:
   yt_agent_net:
     driver: bridge
+  # Coolify's own shared network — Traefik reverse-proxy lives here.
+  # Marked external so compose won't try to (re)create it.
+  coolify:
+    external: true
