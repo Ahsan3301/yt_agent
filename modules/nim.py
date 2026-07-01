@@ -47,7 +47,25 @@ def _retry(fn, attempts=3, base=2.0, desc="nim"):
     raise last  # unreachable
 
 NIM_BASE = "https://integrate.api.nvidia.com/v1"
-NIM_KEY = os.getenv("NVIDIA_NIM_API_KEY", "")
+
+def _nim_key() -> str:
+    """Read the NIM key from env at CALL time — not import time.
+
+    keys_sync.pull_into_env() may fire after this module is first
+    imported (e.g. dashboard set the key AFTER worker boot). A
+    module-level constant would snapshot the empty pre-pull value and
+    is_available() would report False forever."""
+    return os.getenv("NVIDIA_NIM_API_KEY", "") or ""
+
+# Backwards-compat property — older code paths that still reference
+# `nim.NIM_KEY` see whatever the env currently has.
+class _KeyProxy:
+    def __bool__(self): return bool(_nim_key())
+    def __str__(self):  return _nim_key()
+    def __eq__(self, other): return _nim_key() == other
+    def __repr__(self): return f"<NIM_KEY set={bool(_nim_key())}>"
+
+NIM_KEY = _KeyProxy()
 
 # Model picks (verified working on the free tier as of June 2026):
 #   - Nemotron 3 Super 120B (a12b MoE: 120B params, ~12B active per token)
@@ -90,14 +108,15 @@ def _wait_for_slot():
 
 # ── Core call ─────────────────────────────────────────────────
 def is_available():
-    return bool(NIM_KEY)
+    return bool(_nim_key())
 
 
 def _post_chat(payload, timeout=60):
-    if not NIM_KEY:
+    _k = _nim_key()
+    if not _k:
         raise RuntimeError("NVIDIA_NIM_API_KEY not set")
     headers = {
-        "Authorization": f"Bearer {NIM_KEY}",
+        "Authorization": f"Bearer {_k}",
         "Content-Type": "application/json",
     }
 
@@ -117,10 +136,11 @@ def _post_chat_streamed_pair(payload, read_timeout=60, total_timeout=240):
     is absolute wall-clock. Retries the WHOLE stream on transient errors
     (5xx, connection drops, partial-content interruptions).
     """
-    if not NIM_KEY:
+    _k = _nim_key()
+    if not _k:
         raise RuntimeError("NVIDIA_NIM_API_KEY not set")
     headers = {
-        "Authorization": f"Bearer {NIM_KEY}",
+        "Authorization": f"Bearer {_k}",
         "Content-Type": "application/json",
         "Accept": "text/event-stream",
     }

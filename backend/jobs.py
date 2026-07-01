@@ -340,6 +340,16 @@ def _run_one(job: dict[str, Any]):
     logbuf.set_req_id(req_id)
     log.info(f"job worker started for {job_id} (req_id={req_id})")
 
+    # Refresh central API keys BEFORE the pipeline runs. This lets keys
+    # saved via the dashboard AFTER worker boot reach the running
+    # process — otherwise nim/scriptwriter/footage would see the empty
+    # env vars snapshot from boot time.
+    try:
+        from backend import keys_sync
+        keys_sync.pull_into_env(override=True)
+    except Exception as _e:
+        log.warning(f"keys_sync.pull_into_env failed pre-job: {_e}")
+
     def progress_bridge():
         last = {"percent": -1, "step": None}
         while True:

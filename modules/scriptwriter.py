@@ -18,7 +18,12 @@ from modules import nim
 load_dotenv()
 log = logging.getLogger(__name__)
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+def _groq_key() -> str:
+    """Read GROQ key from env at CALL time (not import time) so keys
+    saved via the dashboard AFTER worker boot are picked up."""
+    return os.getenv("GROQ_API_KEY", "") or ""
+
+GROQ_API_KEY = _groq_key()  # kept for any legacy readers; DO NOT use in new code
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
@@ -340,8 +345,9 @@ def _call_llm(prompt, extra_messages=None):
 
 def _call_groq(prompt, extra_messages=None):
     """Single Groq call. Raises on HTTP error so retry() can catch it."""
-    if not GROQ_API_KEY:
-        raise ValueError("GROQ_API_KEY not set in .env file")
+    _groq = _groq_key()
+    if not _groq:
+        raise ValueError("GROQ_API_KEY not set — add it on the Connections page")
 
     messages = [
         {
@@ -370,7 +376,7 @@ def _call_groq(prompt, extra_messages=None):
         "response_format": {"type": "json_object"},
     }
     headers = {
-        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Authorization": f"Bearer {_groq}",
         "Content-Type": "application/json",
     }
 
