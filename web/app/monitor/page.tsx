@@ -18,7 +18,7 @@ import { useEffect, useRef, useState } from "react";
 import clsx from "clsx";
 import {
   Cpu, MemoryStick, HardDrive, Activity, Zap, Wifi, WifiOff,
-  Server, Loader2, Box, Clock, Power, Cloud,
+  Server, Loader2, Box, Clock, Power, Cloud, Rocket,
 } from "lucide-react";
 import {
   fetchLiveBackends, fetchStatsFor, type RegistryEntry, type BackendStats,
@@ -202,6 +202,7 @@ export default function MonitorPage() {
           </p>
         </div>
         <div className="flex items-center gap-2 text-sm flex-wrap">
+          <LaunchColabQuickButton />
           <WakeKaggleQuickButton />
           <Pill icon={Wifi}        label={`${online} online`}        color="emerald" />
           <Pill icon={Loader2}     label={`${busy} busy`}             color="amber" />
@@ -490,6 +491,29 @@ function fmtUptime(s: number) {
   if (s < 3600) return `${Math.floor(s / 60)}m`;
   if (s < 86400) return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
   return `${Math.floor(s / 86400)}d`;
+}
+
+/**
+ * Small "Launch Colab" link — opens the Colab notebook in a new tab
+ * so the user can manually run all cells (Colab requires interactive
+ * auth, so it can't be auto-dispatched like Kaggle). Only appears if
+ * NEXT_PUBLIC_COLAB_URL is set — otherwise we hide it cleanly.
+ */
+function LaunchColabQuickButton() {
+  const url = process.env.NEXT_PUBLIC_COLAB_URL || "";
+  if (!url) return null;
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex items-center gap-1 px-2 h-7 rounded-md border border-line text-neutral-300 hover:border-amber-400/40 hover:text-amber-300 text-xs"
+      title="Open the Colab notebook. Requires you to click Runtime → Run all after it loads."
+    >
+      <Rocket className="h-3 w-3" />
+      Launch Colab
+    </a>
+  );
 }
 
 /**
