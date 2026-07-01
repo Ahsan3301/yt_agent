@@ -17,11 +17,13 @@ export const runtime = "nodejs";
  */
 export async function GET() {
   try {
-    // orderBy uses 'updated' (PB system field, always present) instead
-    // of 'updated_at' which may not exist on Firestore-migrated rows.
+    // Sort by PB system field 'updated' — always present + indexed.
+    // The wrapper's orderBy() maps 'updated_at' → 'updated', but pass
+    // the correct name explicitly so this route works even if some
+    // caller reaches an older wrapper.
     const snap = await adminDb()
       .collection("youtube_accounts")
-      .orderBy("updated_at", "desc")
+      .orderBy("updated", "desc")
       .limit(50)
       .get();
     const out: unknown[] = [];
