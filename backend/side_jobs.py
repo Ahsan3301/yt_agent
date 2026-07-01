@@ -107,25 +107,32 @@ def _publish_youtube(job: dict[str, Any]) -> tuple[bool, str]:
     except Exception:
         pass
 
-    # Delegate to uploader.py — it already knows how to handle
-    # per-account credentials via youtube_account_id.
+    # uploader.upload_video(video_path, script_data, channel_type,
+    # youtube_account_id). script_data is a dict with youtube_title /
+    # description / tags — we build it from the summary + optional
+    # per-job overrides passed in the job payload.
+    channel = ""
+    try:
+        from backend import db
+        if db.is_configured():
+            idx = db.client().collection("runs_index").document(run_id).get()
+            if idx.exists:
+                channel = str((idx.to_dict() or {}).get("channel") or "")
+    except Exception:
+        pass
+    script_data = {
+        "youtube_title": title or f"Run {run_id}",
+        "description":   description or "",
+        "tags":          list(tags) if isinstance(tags, list) else [],
+    }
     try:
         from modules import uploader
         vid = uploader.upload_video(
-            file_path=video_path,
-            title=title or f"Run {run_id}",
-            description=description or "",
-            tags=list(tags) if isinstance(tags, list) else [],
+            video_path=video_path,
+            script_data=script_data,
+            channel_type=channel or "horror",
             youtube_account_id=yt_account_id,
         )
-    except TypeError:
-        # Older uploader signatures — try without youtube_account_id
-        # (best effort; user should update uploader for multi-account).
-        try:
-            from modules import uploader as _u
-            vid = _u.upload_video(video_path, title, description, list(tags) if isinstance(tags, list) else [])
-        except Exception as e:
-            return False, f"uploader.upload_video failed: {e}"
     except Exception as e:
         return False, f"uploader.upload_video failed: {e}"
 
@@ -178,7 +185,14 @@ def _copy_storage(job: dict[str, Any]) -> tuple[bool, str]:
         if not provider:
             return False, f"provider {provider_id} not found or disabled"
         remote_key = f"videos/{run_id}.mp4"
-        public_url = provider.put_file(video_path, remote_key, content_type="video/mp4")
+        # put_file signature is (key, local_path, content_type) — the
+        # KEY is where the bytes go on the provider, the LOCAL_PATH is
+        # what to upload FROM.
+        upload_result = provider.put_file(remote_key, video_path, "video/mp4")
+        # base.UploadResult has .public_url; fall back to provider.public_url_for
+        # UploadResult exposes .public_url as an attribute (str);
+        # provider.public_url(key) is the fallback getter.
+        public_url = getattr(upload_result, "public_url", None) or provider.public_url(remote_key)
     except Exception as e:
         return False, f"provider upload failed: {e}"
 
