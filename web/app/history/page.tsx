@@ -1,10 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Trash2, ChevronDown, ChevronRight, AlertTriangle, CheckCircle2, XCircle, Sparkles } from "lucide-react";
+import { Trash2, ChevronDown, ChevronRight, AlertTriangle, CheckCircle2, XCircle, Sparkles, Upload, Copy, PlaySquare } from "lucide-react";
 import clsx from "clsx";
 import { listRuns, deleteRun, type Run } from "@/lib/api";
 import VideoPlayer from "@/components/VideoPlayer";
+
+type YtAccount = { id: string; title: string; youtube_channel_id: string; thumbnail?: string };
+type StorageProvider = { id: string; name: string; kind: string; is_primary?: boolean; enabled?: boolean };
 
 export default function HistoryPage() {
   const [runs, setRuns] = useState<Run[]>([]);
@@ -12,6 +15,9 @@ export default function HistoryPage() {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [ytAccounts, setYtAccounts] = useState<YtAccount[]>([]);
+  const [providers, setProviders] = useState<StorageProvider[]>([]);
+  const [actionBusy, setActionBusy] = useState<string | null>(null);
 
   const refresh = async () => {
     setLoading(true);
@@ -20,6 +26,55 @@ export default function HistoryPage() {
     setLoading(false);
   };
   useEffect(() => { refresh(); }, []);
+
+  // Load connected accounts + storage providers so the per-run action
+  // dropdowns can offer them as targets.
+  useEffect(() => {
+    (async () => {
+      try {
+        const [yt, sp] = await Promise.all([
+          fetch("/api/youtube/accounts").then((r) => r.ok ? r.json() : []),
+          fetch("/api/storage/providers").then((r) => r.ok ? r.json() : []),
+        ]);
+        setYtAccounts(Array.isArray(yt) ? yt : []);
+        setProviders(Array.isArray(sp) ? sp.filter((p: StorageProvider) => p.enabled !== false) : []);
+      } catch { /* soft; buttons just won't populate */ }
+    })();
+  }, []);
+
+  const publishTo = async (run: Run, ytAccountId: string) => {
+    setActionBusy(run.run_id + ":publish");
+    try {
+      const r = await fetch(`/api/runs/${encodeURIComponent(run.run_id)}/publish`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ youtube_account_id: ytAccountId }),
+      });
+      const d = await r.json();
+      if (!r.ok) alert(`Publish failed: ${d.error || r.statusText}`);
+      else alert(`Publish queued as job ${d.job_id}. Track it on the Job queue.`);
+    } catch (e) {
+      alert(`Publish failed: ${String(e)}`);
+    }
+    setActionBusy(null);
+  };
+
+  const copyTo = async (run: Run, providerId: string, move = false) => {
+    setActionBusy(run.run_id + ":copy");
+    try {
+      const r = await fetch(`/api/runs/${encodeURIComponent(run.run_id)}/copy-storage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider_id: providerId, move }),
+      });
+      const d = await r.json();
+      if (!r.ok) alert(`${move ? "Move" : "Copy"} failed: ${d.error || r.statusText}`);
+      else alert(`${move ? "Move" : "Copy"} queued as job ${d.job_id}.`);
+    } catch (e) {
+      alert(`${move ? "Move" : "Copy"} failed: ${String(e)}`);
+    }
+    setActionBusy(null);
+  };
 
   const onDelete = async (id: string) => {
     if (!confirm(`Delete run ${id}?`)) return;
@@ -245,11 +300,80 @@ export default function HistoryPage() {
                     </div>
                   )}
 
-                  <div className="pt-2">
+                  <div className="pt-2 flex flex-wrap gap-2 items-center">
+                    {/* Publish to YouTube — one per connected account */}
+                    {ytAccounts.length > 0 && (
+                      <div className="flex items-center gap-1">
+                        <select
+                          className="input h-8 text-xs"
+                          value=""
+                          disabled={actionBusy === r.run_id + ":publish"}
+                          onChange={(e) => {
+                            if (e.target.value) publishTo(r, e.target.value);
+                            e.target.value = "";
+                          }}
+                          aria-label="Publish to YouTube channel"
+                        >
+                          <option value="">Publish to YouTube…</option>
+                          {ytAccounts.map((a) => (
+                            <option key={a.id} value={a.id}>{a.title || a.youtube_channel_id}</option>
+                          ))}
+                        </select>
+                        <PlaySquare className="h-3.5 w-3.5 text-red-400" />
+                      </div>
+                    )}
+                    {/* Copy to a storage provider */}
+                    {providers.length > 0 && (
+                      <div className="flex items-center gap-1">
+                        <select
+                          className="input h-8 text-xs"
+                          value=""
+                          disabled={actionBusy === r.run_id + ":copy"}
+                          onChange={(e) => {
+                            if (!e.target.value) return;
+                            const [pid, action] = e.target.value.split("|");
+                            copyTo(r, pid, action === "move");
+                            e.target.value = "";
+                          }}
+                          aria-label="Copy to storage provider"
+                        >
+                          <option value="">Copy to storage…</option>
+                          {providers.map((p) => (
+                            <optgroup key={p.id} label={`${p.name} (${p.kind})`}>
+                              <option value={`${p.id}|copy`}>Copy to {p.name}</option>
+                              <option value={`${p.id}|move`}>Move to {p.name}</option>
+                            </optgroup>
+                          ))}
+                        </select>
+                        <Copy className="h-3.5 w-3.5 text-neutral-400" />
+                      </div>
+                    )}
+                    <div className="grow" />
                     <button className="btn btn-danger" onClick={() => onDelete(r.run_id)}>
                       <Trash2 className="h-4 w-4" /> Delete run
                     </button>
                   </div>
+                  {/* Mirrors / published state — surface fields the worker
+                      side-jobs write back so the UI shows progress. */}
+                  {(r.youtube_video_id || (r.mirrors && r.mirrors.length > 0)) && (
+                    <div className="text-xs text-neutral-400 flex flex-wrap gap-3 pt-1">
+                      {r.youtube_video_id && (
+                        <a
+                          href={`https://youtube.com/watch?v=${r.youtube_video_id}`}
+                          target="_blank" rel="noreferrer"
+                          className="text-red-300 hover:underline flex items-center gap-1"
+                        >
+                          <Upload className="h-3 w-3" /> YouTube ✓
+                        </a>
+                      )}
+                      {r.mirrors && r.mirrors.map((m, i) => (
+                        <a key={i} href={m.url} target="_blank" rel="noreferrer"
+                           className="text-sky-300 hover:underline flex items-center gap-1">
+                          <Copy className="h-3 w-3" /> mirror
+                        </a>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

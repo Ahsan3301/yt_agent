@@ -292,6 +292,14 @@ export type Run = {
   storyboard_fallback?: boolean;
   video_id?: string;
   video_url?: string;
+  title?: string;
+  // Populated by side_jobs.publish_youtube on success.
+  youtube_video_id?: string;
+  youtube_url?: string;
+  youtube_account_id?: string;
+  published_at?: number;
+  // Populated by side_jobs.copy_storage: each entry a provider mirror.
+  mirrors?: Array<{ provider_id: string; url: string; copied_at: number }>;
 };
 export const listRuns = () => call<Run[]>("/api/runs");
 export const getRun = (id: string) => call<Run>(`/api/runs/${id}`);

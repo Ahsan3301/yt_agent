@@ -337,11 +337,19 @@ def _worker_loop():
 
 
 def _run_one(job: dict[str, Any]):
-    """Execute one pipeline run and upload the result to remote storage."""
+    """Execute one pipeline run and upload the result to remote storage.
+
+    Side-jobs (publish_youtube / copy_storage / etc.) short-circuit
+    the render pipeline: they operate on an EXISTING run_id, so we
+    delegate to backend.side_jobs and skip the whole run_pipeline
+    invocation. The dashboard queues these with job.kind set."""
+    kind = str(job.get("kind") or "").strip()
+    if kind in ("publish_youtube", "copy_storage"):
+        return _run_side_job(job, kind)
+
     from main import run_pipeline
     from modules import run_state
     from backend import logbuf
-    # Bridge run_state updates back to this job record.
     job_id = job["id"]
 
     # req_id propagation — every log line emitted from any thread that
@@ -550,6 +558,52 @@ def _run_one(job: dict[str, Any]):
         job["finished_at"] = time.time()
         job["percent"] = 100 if ok else job.get("percent", 0)
         _persist(job)
+
+
+def _run_side_job(job: dict[str, Any], kind: str):
+    """Execute a side-job (publish_youtube / copy_storage). Refreshes
+    keys, runs the dispatcher, writes the terminal status back to the
+    job record. Doesn't touch runs_index because side_jobs.dispatch
+    already updates the row it targets."""
+    from backend import side_jobs, logbuf
+    job_id = job["id"]
+    req_id = str(job.get("req_id") or job_id)[:12]
+    logbuf.set_req_id(req_id)
+    log.info(f"side-job started: {kind} run_id={job.get('run_id')} req_id={req_id}")
+
+    try:
+        from backend import keys_sync
+        keys_sync.pull_into_env(override=True)
+    except Exception as _e:
+        log.warning(f"keys_sync.pull_into_env failed pre-side-job: {_e}")
+
+    ok, msg = False, "unknown error"
+    try:
+        ok, msg = side_jobs.dispatch(job)
+    except Exception as e:
+        ok, msg = False, f"side_jobs.dispatch crashed: {e}"
+        log.exception(msg)
+
+    with _lock:
+        job["status"] = "complete" if ok else "failed"
+        job["error"] = "" if ok else msg
+        job["current_step"] = kind
+        job["current_step_label"] = f"{kind}: {msg[:80]}"
+        job["percent"] = 100 if ok else job.get("percent", 0)
+        job["finished_at"] = time.time()
+        _persist(job)
+
+    # Discord alert for side-jobs, same as render jobs.
+    try:
+        from backend import notifier
+        if ok:
+            notifier.info(f"✅ {kind} complete", body=msg)
+        else:
+            notifier.report_error(err=msg, title=f"❌ {kind} failed",
+                                  run_id=job.get("run_id") or job_id,
+                                  req_id=req_id)
+    except Exception:
+        pass
 
 
 # Hydrate from disk on import so prior runs survive restarts.
