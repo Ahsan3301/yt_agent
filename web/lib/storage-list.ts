@@ -13,7 +13,7 @@
  * but adds another PB round-trip on every history-page load; the env
  * path is the fast path.
  */
-import { S3Client, ListObjectsV2Command } from "@aws-sdk/client-s3";
+import { S3Client, ListObjectsV2Command, type ListObjectsV2CommandOutput } from "@aws-sdk/client-s3";
 
 export type StorageVideo = {
   key: string;         // e.g. "videos/20260701_073045.mp4"
@@ -53,7 +53,7 @@ export async function listStorageVideos(): Promise<StorageVideo[]> {
   let continuationToken: string | undefined = undefined;
   try {
     do {
-      const resp = await c.send(new ListObjectsV2Command({
+      const resp: ListObjectsV2CommandOutput = await c.send(new ListObjectsV2Command({
         Bucket: bucket,
         Prefix: "videos/",
         ContinuationToken: continuationToken,
