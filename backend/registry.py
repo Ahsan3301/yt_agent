@@ -127,11 +127,18 @@ def _sample_stats() -> dict:
     '—' rather than 0 so the user can see "not reported" vs "actually
     idle at 0%". Best-effort — never raises."""
     out: dict = {
-        "cpu_percent": None,
-        "mem_percent": None,
-        "mem_used_gb": None,
-        "mem_total_gb": None,
-        "disk_used_gb": None,
+        "cpu_percent":   None,
+        "cpu_count":     None,
+        "mem_percent":   None,
+        # Emit BOTH GB and MB flavours — the Monitor card reads
+        # mem_used_mb/mem_total_mb to render the "X.X / Y.Y GB" sub-line,
+        # while /health and older readers still expect *_gb. Sending both
+        # is a few bytes/heartbeat and dodges a field-name migration.
+        "mem_used_gb":   None,
+        "mem_total_gb":  None,
+        "mem_used_mb":   None,
+        "mem_total_mb":  None,
+        "disk_used_gb":  None,
         "disk_total_gb": None,
         "gpu": None,
         "sampled_at": time.time(),
@@ -139,12 +146,16 @@ def _sample_stats() -> dict:
     try:
         import psutil
         out["cpu_percent"] = round(psutil.cpu_percent(interval=None), 1)
+        out["cpu_count"]   = psutil.cpu_count(logical=True) or None
         vm = psutil.virtual_memory()
-        out["mem_percent"]  = round(vm.percent, 1)
-        out["mem_used_gb"]  = round((vm.total - vm.available) / (1024**3), 2)
-        out["mem_total_gb"] = round(vm.total / (1024**3), 2)
+        out["mem_percent"]   = round(vm.percent, 1)
+        used_bytes           = vm.total - vm.available
+        out["mem_used_gb"]   = round(used_bytes / (1024**3), 2)
+        out["mem_total_gb"]  = round(vm.total    / (1024**3), 2)
+        out["mem_used_mb"]   = round(used_bytes / (1024**2), 1)
+        out["mem_total_mb"]  = round(vm.total    / (1024**2), 1)
         du = psutil.disk_usage("/")
-        out["disk_used_gb"]  = round(du.used / (1024**3), 1)
+        out["disk_used_gb"]  = round(du.used  / (1024**3), 1)
         out["disk_total_gb"] = round(du.total / (1024**3), 1)
     except Exception:
         pass
@@ -173,6 +184,35 @@ def _sample_stats() -> dict:
     except Exception:
         pass
     return out
+
+
+def _hard_exit():
+    """Terminate the worker process immediately.
+
+    Called when the dashboard's Terminate button signals shutdown via
+    the heartbeat/claim response. The previous implementation scheduled
+    os._exit(0) on a 1-second Timer thread — which is fragile: if the
+    main thread is stuck in a blocking C-extension call (ffmpeg subprocess
+    wait, boto3 SSL handshake, cv2 decode), the Timer can't preempt it,
+    and users saw 'terminate hides the card but the Kaggle session keeps
+    burning GPU-hours'. Now we:
+      1. Flush stdio so the shutdown log line ships to the dashboard.
+      2. Kill our own PID with SIGKILL — the kernel can't miss that,
+         even mid-syscall. On systems without SIGKILL (Windows dev)
+         we fall through to os._exit(0).
+    """
+    import os as _os, sys as _sys, signal as _signal
+    try:
+        _sys.stdout.flush()
+        _sys.stderr.flush()
+    except Exception:
+        pass
+    try:
+        _os.kill(_os.getpid(), _signal.SIGKILL)
+    except Exception:
+        pass
+    # Belt + braces in case SIGKILL somehow returned without killing us.
+    _os._exit(0)
 
 
 def _try_num(s):
@@ -262,9 +302,8 @@ def _push_outbound(queue_depth: int):
             try:
                 data = r.json() or {}
                 if data.get("shutdown"):
-                    log.warning("dashboard requested shutdown (via heartbeat) — exiting.")
-                    import threading, os as _os
-                    threading.Timer(1.0, lambda: _os._exit(0)).start()
+                    log.warning("dashboard requested shutdown (via heartbeat) — exiting NOW.")
+                    _hard_exit()
             except Exception:
                 pass
         else:
@@ -301,11 +340,9 @@ def _claim_outbound() -> dict | None:
         if r.ok:
             payload = r.json() or {}
             if payload.get("shutdown"):
-                log.warning("dashboard requested shutdown — exiting.")
-                # Small delay so this log line ships before we die.
-                import threading, os as _os
-                threading.Timer(1.0, lambda: _os._exit(0)).start()
-                return None
+                log.warning("dashboard requested shutdown (via claim) — exiting NOW.")
+                _hard_exit()
+                return None  # unreachable — _hard_exit doesn't return
             return payload.get("job")
         log.warning(f"outbound-poll claim HTTP {r.status_code}: {r.text[:100]}")
     except Exception as e:

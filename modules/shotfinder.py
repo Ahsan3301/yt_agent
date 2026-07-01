@@ -354,36 +354,87 @@ _LOCAL_SDXL_BROKEN_REASON = ""
 
 def _local_sdxl_load():
     """Lazy-load the diffusers pipeline. Kept out of module import path
-    so CPU workers never pay the diffusers/torch import tax."""
+    so CPU workers never pay the diffusers/torch import tax.
+
+    Every failure path prints a distinct WARNING with actionable text
+    (previously most failures were logged at INFO or swallowed silently,
+    so the user saw the priority-loop skip the provider with no clue why)."""
     global _LOCAL_SDXL_PIPE, _LOCAL_SDXL_BROKEN, _LOCAL_SDXL_BROKEN_REASON
     if _LOCAL_SDXL_BROKEN:
         return None
     if _LOCAL_SDXL_PIPE is not None:
         return _LOCAL_SDXL_PIPE
+    # Import torch first — every other failure depends on it.
     try:
         import torch
-        if not torch.cuda.is_available():
-            _LOCAL_SDXL_BROKEN = True
-            _LOCAL_SDXL_BROKEN_REASON = "no CUDA device"
-            log.info("local_sdxl: no CUDA available — provider disabled for this process")
-            return None
+    except ImportError as e:
+        _LOCAL_SDXL_BROKEN = True
+        _LOCAL_SDXL_BROKEN_REASON = f"torch not installed: {e}"
+        log.warning(
+            "local_sdxl: torch is not installed on this worker — provider "
+            "DISABLED. Reinstall requirements-gpu.txt or run cell 3 of the "
+            "Colab notebook."
+        )
+        return None
+    if not torch.cuda.is_available():
+        _LOCAL_SDXL_BROKEN = True
+        _LOCAL_SDXL_BROKEN_REASON = "no CUDA device"
+        log.warning(
+            "local_sdxl: torch.cuda.is_available() is False — no GPU on this "
+            "runtime. Provider DISABLED for this process. "
+            "(This is normal for the Oracle side-worker + HF CPU Space.)"
+        )
+        return None
+    try:
         from diffusers import AutoPipelineForText2Image
-        model_id = os.getenv(
-            "LOCAL_SDXL_MODEL",
-            (load_settings().get("image_gen", {}) or {}).get(
-                "local_sdxl_model", "stabilityai/sdxl-turbo"
-            ),
+    except ImportError as e:
+        _LOCAL_SDXL_BROKEN = True
+        _LOCAL_SDXL_BROKEN_REASON = f"diffusers not installed: {e}"
+        log.warning(
+            "local_sdxl: diffusers is not installed on this worker — provider "
+            "DISABLED. On Colab: re-run cell 3 (it now installs diffusers "
+            "transformers accelerate). On Kaggle: `pip install diffusers>=0.30 "
+            "transformers>=4.40 accelerate>=0.30`."
         )
-        log.info(f"local_sdxl: loading pipeline (model={model_id}) …")
-        # bfloat16 gives quality parity with fp16 on Ampere/Turing and
-        # avoids some VAE overflow artifacts.
-        dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
-        pipe = AutoPipelineForText2Image.from_pretrained(
-            model_id,
-            torch_dtype=dtype,
-            variant="fp16" if dtype == torch.float16 else None,
-            use_safetensors=True,
-        )
+        return None
+    model_id = os.getenv(
+        "LOCAL_SDXL_MODEL",
+        (load_settings().get("image_gen", {}) or {}).get(
+            "local_sdxl_model", "stabilityai/sdxl-turbo"
+        ),
+    )
+    # First-load model download is ~7 GB for sdxl-turbo. The user needs to
+    # see this happening so they don't think the render is stuck. Log to
+    # WARN so it lands on the dashboard's realtime log stream.
+    log.warning(
+        f"local_sdxl: loading pipeline model={model_id!r} — first-load "
+        f"download can be several GB and take 30-90 sec."
+    )
+    try:
+        # bfloat16 gives quality parity with fp16 on Ampere+/Hopper and
+        # avoids some VAE overflow artifacts. Fall back to fp16 on Turing
+        # (T4) which reports False for is_bf16_supported.
+        use_bf16 = torch.cuda.is_bf16_supported()
+        dtype = torch.bfloat16 if use_bf16 else torch.float16
+        # The `variant="fp16"` load path only exists for models that
+        # actually publish an fp16-suffixed weights file. sdxl-turbo does;
+        # some community forks do not. Fall back to variant=None on a
+        # load failure so a swapped-in model still boots.
+        try:
+            pipe = AutoPipelineForText2Image.from_pretrained(
+                model_id,
+                torch_dtype=dtype,
+                variant="fp16" if not use_bf16 else None,
+                use_safetensors=True,
+            )
+        except Exception as e_variant:
+            log.warning(
+                f"local_sdxl: variant='fp16' load failed ({e_variant}); "
+                f"retrying without variant hint …"
+            )
+            pipe = AutoPipelineForText2Image.from_pretrained(
+                model_id, torch_dtype=dtype, use_safetensors=True,
+            )
         pipe = pipe.to("cuda")
         # Memory-thrift knobs — matters on T4-16GB.
         try:
@@ -392,12 +443,17 @@ def _local_sdxl_load():
         except Exception:
             pass
         _LOCAL_SDXL_PIPE = pipe
-        log.info("local_sdxl: pipeline ready")
+        log.warning(f"local_sdxl: pipeline READY (dtype={dtype}, model={model_id})")
         return pipe
     except Exception as e:
         _LOCAL_SDXL_BROKEN = True
         _LOCAL_SDXL_BROKEN_REASON = f"{type(e).__name__}: {e}"
-        log.warning(f"local_sdxl: load failed — provider disabled ({e})")
+        log.warning(
+            f"local_sdxl: pipeline load FAILED — provider DISABLED "
+            f"({type(e).__name__}: {e}). Common causes: OOM (VRAM), "
+            f"corrupted HF cache, model id typo. Try clearing "
+            f"~/.cache/huggingface/hub/ and re-running."
+        )
         return None
 
 
@@ -414,8 +470,14 @@ def _local_sdxl_generate(prompt, output_dir, trial, negative_prompt=""):
         # SDXL-Turbo is calibrated for very few steps + guidance 0. If the
         # user swapped to a full SDXL model, guidance 5-7 + 25 steps is a
         # good default; we detect via the pipe class name.
-        is_turbo = "turbo" in (getattr(pipe, "name_or_path", "") or "").lower() \
-                   or "turbo" in os.getenv("LOCAL_SDXL_MODEL", "").lower()
+        # pipe.name_or_path may be None on some diffusers versions; coerce
+        # to str before .lower() so we don't crash the whole provider.
+        pipe_name = str(getattr(pipe, "name_or_path", "") or "").lower()
+        env_model = str(os.getenv("LOCAL_SDXL_MODEL", "") or "").lower()
+        settings_model = str(
+            (load_settings().get("image_gen", {}) or {}).get("local_sdxl_model", "")
+        ).lower()
+        is_turbo = "turbo" in pipe_name or "turbo" in env_model or "turbo" in settings_model
         kwargs = {
             "prompt": prompt,
             "negative_prompt": negative_prompt or None,

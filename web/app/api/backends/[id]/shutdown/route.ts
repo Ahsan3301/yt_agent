@@ -43,7 +43,17 @@ export async function POST(
         if (alive) {
           await adminDb().collection("backends").doc(id).update({
             shutdown_pending: true,
+            shutdown_requested_at: Date.now() / 1000,
           });
+          // Also stamp the card as "terminating" so the Monitor UI can
+          // fade it out immediately instead of waiting the ~5 s for the
+          // worker to notice and stop heartbeating. The worker doesn't
+          // read `status` so this is display-only.
+          try {
+            await adminDb().collection("backends").doc(id).update({
+              status: "terminating",
+            });
+          } catch { /* best-effort */ }
           return NextResponse.json({
             ok: true,
             mode: "outbound_poll_alive",
