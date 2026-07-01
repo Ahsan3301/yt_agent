@@ -218,6 +218,33 @@ services:
       - dashboard
     networks: [yt_agent_net]
 
+  # ── Side-worker ──────────────────────────────────────────────────
+  # Oracle-hosted executor for publish_youtube + copy_storage jobs.
+  # Never renders (no GPU on ARM anyway). Registers as tier='dashboard'
+  # so the /api/jobs/claim route can route target='dashboard' jobs
+  # here specifically. Users pick "Oracle side-worker" from the
+  # Publish/Copy dropdown when they want the upload to run locally
+  # instead of on Kaggle.
+  side-worker:
+    build:
+      context: .
+      dockerfile: coolify/side_worker/Dockerfile
+    restart: unless-stopped
+    environment:
+      INSTANCE_LABEL: "Oracle side-worker"
+      COOLIFY_BASE_URL: ${SERVICE_FQDN_CADDY:-https://${DOMAIN}}
+      INTERNAL_DASHBOARD_URL: http://dashboard:3000
+      PB_URL_INTERNAL: http://pocketbase:8090
+      RENDER_TRIGGER_KEY: ${RENDER_TRIGGER_KEY}
+      POCKETBASE_ADMIN_EMAIL: ${POCKETBASE_ADMIN_EMAIL}
+      POCKETBASE_ADMIN_PASSWORD: ${POCKETBASE_ADMIN_PASSWORD}
+      STORAGE_PROVIDERS_ENC_KEY: ${STORAGE_PROVIDERS_ENC_KEY}
+      DB_BACKEND: pocketbase
+    depends_on:
+      - dashboard
+      - pocketbase
+    networks: [yt_agent_net]
+
 networks:
   yt_agent_net:
     driver: bridge

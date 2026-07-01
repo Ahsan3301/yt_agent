@@ -8,6 +8,7 @@ import VideoPlayer from "@/components/VideoPlayer";
 
 type YtAccount = { id: string; title: string; youtube_channel_id: string; thumbnail?: string };
 type StorageProvider = { id: string; name: string; kind: string; is_primary?: boolean; enabled?: boolean };
+type BackendCard = { instance_id: string; label?: string | null; tier?: string; alive: boolean; status: string };
 
 export default function HistoryPage() {
   const [runs, setRuns] = useState<Run[]>([]);
@@ -17,7 +18,11 @@ export default function HistoryPage() {
   const [bulkBusy, setBulkBusy] = useState(false);
   const [ytAccounts, setYtAccounts] = useState<YtAccount[]>([]);
   const [providers, setProviders] = useState<StorageProvider[]>([]);
+  const [backends, setBackends] = useState<BackendCard[]>([]);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
+  // Per-row target + schedule state (keyed by run_id).
+  const [target, setTarget] = useState<Record<string, string>>({});
+  const [runAt, setRunAt] = useState<Record<string, string>>({});
 
   const refresh = async () => {
     setLoading(true);
@@ -27,20 +32,54 @@ export default function HistoryPage() {
   };
   useEffect(() => { refresh(); }, []);
 
-  // Load connected accounts + storage providers so the per-run action
-  // dropdowns can offer them as targets.
+  // Load connected accounts + storage providers + live backends so
+  // the per-run action dropdowns can offer them as targets.
   useEffect(() => {
-    (async () => {
+    const load = async () => {
       try {
-        const [yt, sp] = await Promise.all([
+        const [yt, sp, bk] = await Promise.all([
           fetch("/api/youtube/accounts").then((r) => r.ok ? r.json() : []),
           fetch("/api/storage/providers").then((r) => r.ok ? r.json() : []),
+          fetch("/api/backends").then((r) => r.ok ? r.json() : []),
         ]);
         setYtAccounts(Array.isArray(yt) ? yt : []);
         setProviders(Array.isArray(sp) ? sp.filter((p: StorageProvider) => p.enabled !== false) : []);
+        setBackends(Array.isArray(bk) ? bk : []);
       } catch { /* soft; buttons just won't populate */ }
-    })();
+    };
+    load();
+    // Refresh backends every 15s so a freshly-booted worker shows up
+    // in the target dropdown without a page reload.
+    const t = setInterval(load, 15_000);
+    return () => clearInterval(t);
   }, []);
+
+  // Build the target dropdown options in one place so publish + copy
+  // share the same UI. "" = auto. Live workers are listed by
+  // instance_id. Also always show 'gpu' / 'dashboard' aliases so the
+  // user can say "any GPU worker" or "Oracle side-worker" even if
+  // one isn't currently alive (the wake happens automatically).
+  const targetOptions = (() => {
+    const opts: Array<{ value: string; label: string }> = [
+      { value: "", label: "Auto — any available worker" },
+      { value: "dashboard", label: "Oracle side-worker (fast for uploads)" },
+      { value: "gpu", label: "Any GPU worker (Kaggle/Colab)" },
+    ];
+    for (const b of backends) {
+      if (!b.alive) continue;
+      const suffix = b.tier === "gpu" ? " · GPU" : b.tier === "dashboard" ? " · Oracle" : "";
+      opts.push({
+        value: b.instance_id,
+        label: `${(b.label || b.instance_id).slice(0, 42)}${suffix}${b.status === "busy" ? " (busy)" : ""}`,
+      });
+    }
+    return opts;
+  })();
+
+  // Convert the datetime-local input's string to epoch seconds. Empty
+  // input = 0 (run ASAP).
+  const _dtToEpoch = (s: string): number =>
+    s ? Math.floor(new Date(s).getTime() / 1000) : 0;
 
   const publishTo = async (run: Run, ytAccountId: string) => {
     setActionBusy(run.run_id + ":publish");
@@ -48,11 +87,18 @@ export default function HistoryPage() {
       const r = await fetch(`/api/runs/${encodeURIComponent(run.run_id)}/publish`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ youtube_account_id: ytAccountId }),
+        body: JSON.stringify({
+          youtube_account_id: ytAccountId,
+          target_worker:      target[run.run_id] || "",
+          run_at:             _dtToEpoch(runAt[run.run_id] || ""),
+        }),
       });
       const d = await r.json();
       if (!r.ok) alert(`Publish failed: ${d.error || r.statusText}`);
-      else alert(`Publish queued as job ${d.job_id}. Track it on the Job queue.`);
+      else {
+        const when = runAt[run.run_id] ? ` at ${runAt[run.run_id]}` : "";
+        alert(`Publish queued${when} as job ${d.job_id}. Track it on the Job queue.`);
+      }
     } catch (e) {
       alert(`Publish failed: ${String(e)}`);
     }
@@ -65,11 +111,19 @@ export default function HistoryPage() {
       const r = await fetch(`/api/runs/${encodeURIComponent(run.run_id)}/copy-storage`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider_id: providerId, move }),
+        body: JSON.stringify({
+          provider_id:   providerId,
+          move,
+          target_worker: target[run.run_id] || "",
+          run_at:        _dtToEpoch(runAt[run.run_id] || ""),
+        }),
       });
       const d = await r.json();
       if (!r.ok) alert(`${move ? "Move" : "Copy"} failed: ${d.error || r.statusText}`);
-      else alert(`${move ? "Move" : "Copy"} queued as job ${d.job_id}.`);
+      else {
+        const when = runAt[run.run_id] ? ` at ${runAt[run.run_id]}` : "";
+        alert(`${move ? "Move" : "Copy"} queued${when} as job ${d.job_id}.`);
+      }
     } catch (e) {
       alert(`${move ? "Move" : "Copy"} failed: ${String(e)}`);
     }
@@ -299,6 +353,43 @@ export default function HistoryPage() {
                       </div>
                     </div>
                   )}
+
+                  {/* Target + schedule — apply to whichever action
+                      button is clicked next (Publish or Copy). */}
+                  <div className="pt-2 flex flex-wrap gap-2 items-end text-xs">
+                    <label className="flex flex-col gap-0.5">
+                      <span className="text-neutral-500">Run on</span>
+                      <select
+                        className="input h-8 text-xs min-w-[240px]"
+                        value={target[r.run_id] || ""}
+                        onChange={(e) => setTarget({ ...target, [r.run_id]: e.target.value })}
+                      >
+                        {targetOptions.map((o) => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="flex flex-col gap-0.5">
+                      <span className="text-neutral-500">Schedule (optional)</span>
+                      <input
+                        type="datetime-local"
+                        className="input h-8 text-xs"
+                        value={runAt[r.run_id] || ""}
+                        onChange={(e) => setRunAt({ ...runAt, [r.run_id]: e.target.value })}
+                      />
+                    </label>
+                    {(target[r.run_id] || runAt[r.run_id]) && (
+                      <button
+                        className="btn btn-ghost h-8 text-xs"
+                        onClick={() => {
+                          const nt = { ...target }; delete nt[r.run_id]; setTarget(nt);
+                          const nr = { ...runAt };  delete nr[r.run_id]; setRunAt(nr);
+                        }}
+                      >
+                        Reset
+                      </button>
+                    )}
+                  </div>
 
                   <div className="pt-2 flex flex-wrap gap-2 items-center">
                     {/* Publish to YouTube — one per connected account */}

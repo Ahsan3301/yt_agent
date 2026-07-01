@@ -50,6 +50,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
 
     const jobId = _shortId();
     const now = Date.now() / 1000;
+    const target_worker = String(body?.target_worker || "").slice(0, 128);
+    const run_at = Number(body?.run_at || 0);
     await adminDb().collection("jobs").doc(jobId).set({
       id:            jobId,
       kind:          "copy_storage",
@@ -63,8 +65,12 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       created_by:    "dashboard",
       req_id:        reqId,
       current_step:  "copy_storage",
-      current_step_label: move ? "Queued for move" : "Queued for copy",
+      current_step_label: run_at > now
+        ? `Scheduled for ${new Date(run_at * 1000).toISOString()}`
+        : move ? "Queued for move" : "Queued for copy",
       percent:       0,
+      target_worker,
+      run_at:        run_at > 0 ? run_at : 0,
       updated_at:    FieldValue.serverTimestamp(),
     });
     logRoute(reqId, "copy_storage queued", { run_id: id, job_id: jobId, provider_id, move });

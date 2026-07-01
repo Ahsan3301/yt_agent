@@ -48,6 +48,10 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
 
     const jobId = _shortId();
     const now = Date.now() / 1000;
+    // Target worker: "" (auto) | "gpu" | "dashboard" | "<instance_id>"
+    const target_worker = String(body?.target_worker || "").slice(0, 128);
+    // Scheduled execution: absolute epoch seconds. 0 or absent = run ASAP.
+    const run_at = Number(body?.run_at || 0);
     await adminDb().collection("jobs").doc(jobId).set({
       id:            jobId,
       kind:          "publish_youtube",
@@ -57,14 +61,16 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       title:         String(body?.title || ""),
       description:   String(body?.description || ""),
       tags:          Array.isArray(body?.tags) ? body.tags.map(String).slice(0, 30) : [],
-      channel:       "publish",   // legacy field; queue UI filters by it
+      channel:       "publish",
       dry_run:       false,
       queued_at:     now,
       created_by:    "dashboard",
       req_id:        reqId,
       current_step:  "publish_youtube",
-      current_step_label: "Queued for publish",
+      current_step_label: run_at > now ? `Scheduled for ${new Date(run_at * 1000).toISOString()}` : "Queued for publish",
       percent:       0,
+      target_worker,
+      run_at:        run_at > 0 ? run_at : 0,
       updated_at:    FieldValue.serverTimestamp(),
     });
     logRoute(reqId, "publish queued", { run_id: id, job_id: jobId, youtube_account_id });

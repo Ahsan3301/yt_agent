@@ -76,21 +76,39 @@ export async function POST(req: NextRequest) {
       return new NextResponse(null, { status: 204 });
     }
 
+    const now = Date.now() / 1000;
+    const workerTier = String(body.tier || "gpu");   // 'gpu' | 'cpu' | 'dashboard'
     for (const doc of snap.docs) {
-      const data = doc.data() || {};
-      // Filter — if the worker only handles a specific channel/tier.
+      const data = doc.data() as Record<string, unknown>;
+      // Filter — if the worker only handles a specific channel.
       if (body.channel && data.channel !== body.channel) continue;
 
+      // Schedule gate: never claim a job whose run_at is in the future.
+      const runAt = Number(data.run_at ?? 0);
+      if (runAt > 0 && runAt > now) continue;
+
+      // Target gate: `target_worker` on the job is one of:
+      //   ""            → any worker (default; unchanged behaviour)
+      //   "gpu"         → any GPU worker
+      //   "dashboard"   → the Oracle-hosted side-worker only
+      //   "<instance_id>" → that specific worker
+      const target = String(data.target_worker || "");
+      if (target) {
+        if (target === "dashboard" && workerTier !== "dashboard") continue;
+        if (target === "gpu"       && workerTier !== "gpu")       continue;
+        if (target === "cpu"       && workerTier === "gpu")       continue;
+        if (
+          target !== "dashboard" && target !== "gpu" && target !== "cpu" &&
+          target !== instance_id
+        ) continue;
+      }
+
       // Conditional update — only succeed if the doc is still queued.
-      // PB and Firestore both honour PATCH; the race condition is
-      // soft (latest writer wins) but harmless here — losing-side
-      // workers see status flip to "claimed" on their next poll and
-      // skip.
       try {
         await doc.ref.update({
           status:               "claimed",
           backend_instance_id:  instance_id,
-          claimed_at:           Date.now() / 1000,
+          claimed_at:           now,
           updated_at:           FieldValue.serverTimestamp(),
         });
         return NextResponse.json({
