@@ -31,54 +31,77 @@ export async function POST(
     const url = data.url || "";
 
     if (!url) {
-      // Outbound-poll worker. Two sub-cases:
-      //  1. Worker is ALIVE (fresh heartbeat) → set shutdown_pending
-      //     (a SEPARATE field the heartbeat register route does NOT
-      //     overwrite). Worker sees it on its next claim/heartbeat
-      //     and os._exit(0)s.
-      //  2. Worker is DEAD (no heartbeat in >90s) → delete the corpse.
-      const lastMs = toEpochMs(data.last_seen_at ?? data.last_seen) || 0;
-      const alive = lastMs > 0 && (Date.now() - lastMs) < 90_000;
+      // Outbound-poll worker.
+      //
+      // BEFORE: we tried to be graceful — set shutdown_pending and hope
+      // the worker's next heartbeat/claim response echo made it back
+      // through and the worker self-terminated. That was ONE too many
+      // failure modes: response can be dropped, worker can be on old
+      // code (pre-SIGKILL), Kaggle can freeze the kernel mid-download,
+      // network can hiccup. Users saw 'Terminate' as unreliable.
+      //
+      // NOW: forceful, always. Do all three in order, none blocks the
+      // return:
+      //   1. Set shutdown_pending + shutdown_requested_at so a healthy
+      //      worker CAN self-exit cleanly (releases GPU sooner + logs
+      //      cleanly). Best case: worker dies within one heartbeat.
+      //   2. Immediately mark the active_job_id as failed (if any) so
+      //      the queue doesn't show a phantom running job.
+      //   3. Delete the backends row itself. The card disappears from
+      //      Monitor instantly. If the worker is on old code and never
+      //      sees the flag, the Kaggle/Colab free-tier watchdog will
+      //      eventually kill the kernel; meanwhile the dashboard is
+      //      clean.
+      const activeJobId = String((data as { active_job_id?: string }).active_job_id || "");
       try {
-        if (alive) {
-          await adminDb().collection("backends").doc(id).update({
-            shutdown_pending: true,
-            shutdown_requested_at: Date.now() / 1000,
+        await adminDb().collection("backends").doc(id).update({
+          shutdown_pending: true,
+          shutdown_requested_at: Date.now() / 1000,
+          status: "terminating",
+        });
+      } catch { /* best-effort — proceed to job kill + delete */ }
+
+      if (activeJobId) {
+        try {
+          await adminDb().collection("jobs").doc(activeJobId).update({
+            status: "failed",
+            error: "worker terminated from dashboard",
+            finished_at: Date.now() / 1000,
           });
-          // Also stamp the card as "terminating" so the Monitor UI can
-          // fade it out immediately instead of waiting the ~5 s for the
-          // worker to notice and stop heartbeating. The worker doesn't
-          // read `status` so this is display-only.
-          try {
-            await adminDb().collection("backends").doc(id).update({
-              status: "terminating",
-            });
-          } catch { /* best-effort */ }
-          return NextResponse.json({
-            ok: true,
-            mode: "outbound_poll_alive",
-            note: "shutdown flag set; worker exits on next claim/heartbeat (≤5 s)",
-          });
-        } else {
-          await adminDb().collection("backends").doc(id).delete();
-          return NextResponse.json({
-            ok: true,
-            mode: "outbound_poll_dead",
-            note: "corpse card removed",
-          });
-        }
-      } catch (e) {
-        try { await adminDb().collection("backends").doc(id).delete(); } catch {}
-        return NextResponse.json({ ok: true, note: String(e) });
+        } catch { /* best-effort */ }
       }
+
+      try {
+        await adminDb().collection("backends").doc(id).delete();
+      } catch { /* best-effort */ }
+
+      return NextResponse.json({
+        ok: true,
+        mode: "outbound_poll_forced",
+        active_job_failed: !!activeJobId,
+        note: "shutdown signalled + row deleted + active job failed; " +
+              "if worker is on old code the kernel may keep running until " +
+              "the free-tier watchdog kills it (Kaggle: ~12h idle, Colab: " +
+              "~90 min idle)",
+      });
     }
 
     // Inbound-URL worker — delete registry entry so the card
     // disappears instantly, then best-effort POST /api/shutdown.
+    const activeJobId2 = String((data as { active_job_id?: string }).active_job_id || "");
     try {
       await adminDb().collection("backends").doc(id).delete();
     } catch (e) {
       console.error("backends doc delete failed:", e);
+    }
+    if (activeJobId2) {
+      try {
+        await adminDb().collection("jobs").doc(activeJobId2).update({
+          status: "failed",
+          error: "worker terminated from dashboard",
+          finished_at: Date.now() / 1000,
+        });
+      } catch { /* best-effort */ }
     }
 
     // Now best-effort tell the worker to exit. Don't await long —
