@@ -70,7 +70,7 @@ jobs:
 
       - name: Install Kaggle CLI
         if: github.event_name == 'workflow_dispatch' || steps.probe.outputs.needs_worker == 'true'
-        run: pip install --quiet kaggle
+        run: pip install --quiet 'kaggle==1.6.17'
 
       - name: Push Kaggle worker kernel
         if: github.event_name == 'workflow_dispatch' || steps.probe.outputs.needs_worker == 'true'
