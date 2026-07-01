@@ -42,6 +42,12 @@ def write_run(run_id: str, summary: dict, index_entry: dict) -> bool:
     the source of truth for the running process."""
     if not db.is_configured():
         return False
+    # Guard: empty run_id would land as a junk row (all-blank fields) in PB
+    # and, worse, monopolise the row-with-empty-run_id unique-index slot so
+    # every subsequent failed run's write collides. Skip cleanly instead.
+    if not run_id or not str(run_id).strip():
+        log.warning("runs_db.write_run: refusing to write row with empty run_id")
+        return False
     try:
         c = db.client()
         batch = c.batch()
