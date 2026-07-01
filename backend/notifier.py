@@ -199,9 +199,18 @@ def report_error(
     try:
         from backend import db
         if db.is_configured():
+            # Field names MUST match the reader in web/app/health/page.tsx
+            # and web/app/api/health/summary/route.ts (kind/message/title/stack).
+            # Legacy field names (class/msg/traceback) are also written for
+            # back-compat with the migrated Firestore data.
             doc = {
                 "ts":           time.time(),
                 "level":        level,
+                "kind":         cls,
+                "message":      msg[:2000],
+                "title":        auto_title[:160],
+                "stack":        tb[:8000] if tb else "",
+                # Legacy aliases — safe to remove once no old client reads them.
                 "class":        cls,
                 "msg":          msg[:2000],
                 "traceback":    tb[:8000] if tb else "",
