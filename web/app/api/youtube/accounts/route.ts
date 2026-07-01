@@ -17,16 +17,14 @@ export const runtime = "nodejs";
  */
 export async function GET() {
   try {
-    // Sort by PB system field 'updated' — always present + indexed.
-    // The wrapper's orderBy() maps 'updated_at' → 'updated', but pass
-    // the correct name explicitly so this route works even if some
-    // caller reaches an older wrapper.
+    // Skip DB-side orderBy — PB v0.39 rejects `sort=-updated` on
+    // collections that don't declare the sort field in an index.
+    // The list is tiny (< 100 rows), so sort client-side.
     const snap = await adminDb()
       .collection("youtube_accounts")
-      .orderBy("updated", "desc")
-      .limit(50)
+      .limit(100)
       .get();
-    const out: unknown[] = [];
+    const out: Array<Record<string, unknown>> = [];
     snap.forEach((doc) => {
       const d = (doc.data() || {}) as Record<string, unknown>;
       out.push({
@@ -37,6 +35,7 @@ export async function GET() {
         updated_at: _toEpochMs(d.updated_at),
       });
     });
+    out.sort((a, b) => Number(b.updated_at || 0) - Number(a.updated_at || 0));
     return NextResponse.json(out);
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
