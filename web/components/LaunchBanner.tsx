@@ -125,44 +125,41 @@ export default function LaunchBanner() {
             <div className="text-lg font-semibold">No backend online</div>
             <div className="text-sm text-neutral-400 mt-0.5">
               {waitingForBoot
-                ? "Waiting for your Colab to boot and register…"
-                : "Spin up a Colab GPU session to start rendering videos."}
+                ? "Waiting for a GPU worker to boot and register…"
+                : "Spin up a GPU worker to start rendering videos."}
             </div>
           </div>
 
           {waitingForBoot ? (
             <div className="flex items-center gap-2 text-sm text-amber-300">
               <Loader2 className="h-4 w-4 animate-spin" />
-              <span>Polling registry every 5s. The Colab boot takes ~90s.</span>
+              <span>Polling registry every 5s. Boot takes ~90s.</span>
             </div>
           ) : (
             <ol className="text-sm text-neutral-300 space-y-1 list-decimal list-inside">
-              <li>Click <b>Launch backend</b> below — opens the Colab notebook in a new tab.</li>
-              <li>Hit <b>Runtime → Run all</b>. Confirm "Run anyway" if prompted.</li>
-              <li>Wait ~90 seconds for the tunnel + registry heartbeat.</li>
+              <li>Click <b>Wake Kaggle (GPU)</b> below — dashboard fires the workflow_dispatch.</li>
+              <li>Kaggle boots the notebook automatically (~90s).</li>
+              <li>Notebook registers via the outbound-poll heartbeat.</li>
               <li>This page detects it automatically — no refresh needed.</li>
             </ol>
           )}
 
           <div className="flex flex-wrap items-center gap-2 pt-1">
-            {colabReady ? (
-              <a
-                href={COLAB_URL} target="_blank" rel="noreferrer"
-                onClick={() => setWaitingForBoot(true)}
-                className="btn btn-primary"
-              >
-                <Rocket className="h-4 w-4" />
-                Launch backend (Colab)
-                <ExternalLink className="h-3.5 w-3.5 opacity-70" />
-              </a>
-            ) : (
-              <div className="text-xs text-amber-300">
-                Set <code className="font-mono">NEXT_PUBLIC_COLAB_URL</code> in your dashboard
-                environment variables to enable the launch button.
-              </div>
+            <WakeKaggleButton primary />
+            {colabReady && (
+              <>
+                <span className="text-xs text-neutral-500">or</span>
+                <a
+                  href={COLAB_URL} target="_blank" rel="noreferrer"
+                  onClick={() => setWaitingForBoot(true)}
+                  className="btn btn-ghost"
+                >
+                  <Rocket className="h-4 w-4" />
+                  Launch Colab (manual)
+                  <ExternalLink className="h-3.5 w-3.5 opacity-70" />
+                </a>
+              </>
             )}
-            <span className="text-xs text-neutral-500">or</span>
-            <WakeKaggleButton />
             {waitingForBoot && (
               <button onClick={() => setWaitingForBoot(false)} className="btn btn-ghost">
                 Stop polling
@@ -192,7 +189,7 @@ export default function LaunchBanner() {
  *   - Pre-warming Kaggle before submitting a render
  *   - Testing the dispatch wiring without burning a render slot
  */
-function WakeKaggleButton({ compact = false }: { compact?: boolean }) {
+function WakeKaggleButton({ compact = false, primary = false }: { compact?: boolean; primary?: boolean }) {
   const [waking, setWaking] = useState(false);
   const [result, setResult] = useState<string | null>(null);
 
@@ -218,7 +215,11 @@ function WakeKaggleButton({ compact = false }: { compact?: boolean }) {
       <button
         onClick={wake}
         disabled={waking}
-        className={compact ? "btn btn-ghost h-7 text-xs" : "btn btn-ghost"}
+        className={
+          compact ? "btn btn-ghost h-7 text-xs"
+          : primary ? "btn btn-primary"
+          : "btn btn-ghost"
+        }
         title="Spin up a Kaggle GPU notebook via GitHub Actions. Uses your free 30 GPU hr/week budget."
       >
         {waking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Cloud className="h-3.5 w-3.5" />}
