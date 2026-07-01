@@ -118,6 +118,68 @@ def set_status(status: str):
     _status = status
 
 
+def _sample_stats() -> dict:
+    """Snapshot cpu/mem/gpu/disk. Outbound-poll workers ship this to the
+    dashboard's register route on every heartbeat so the Monitor page
+    can render live numbers without needing a reachable /api/stats URL.
+
+    Any sensor that isn't available becomes None; the frontend renders
+    '—' rather than 0 so the user can see "not reported" vs "actually
+    idle at 0%". Best-effort — never raises."""
+    out: dict = {
+        "cpu_percent": None,
+        "mem_percent": None,
+        "mem_used_gb": None,
+        "mem_total_gb": None,
+        "disk_used_gb": None,
+        "disk_total_gb": None,
+        "gpu": None,
+        "sampled_at": time.time(),
+    }
+    try:
+        import psutil
+        out["cpu_percent"] = round(psutil.cpu_percent(interval=None), 1)
+        vm = psutil.virtual_memory()
+        out["mem_percent"]  = round(vm.percent, 1)
+        out["mem_used_gb"]  = round((vm.total - vm.available) / (1024**3), 2)
+        out["mem_total_gb"] = round(vm.total / (1024**3), 2)
+        du = psutil.disk_usage("/")
+        out["disk_used_gb"]  = round(du.used / (1024**3), 1)
+        out["disk_total_gb"] = round(du.total / (1024**3), 1)
+    except Exception:
+        pass
+    try:
+        # nvidia-smi one-liner; parses to a small dict.
+        import subprocess
+        smi = subprocess.check_output(
+            ["nvidia-smi",
+             "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu",
+             "--format=csv,noheader,nounits"],
+            stderr=subprocess.DEVNULL, timeout=3,
+        ).decode().strip().splitlines()
+        if smi:
+            parts = [p.strip() for p in smi[0].split(",")]
+            if len(parts) == 5:
+                name, util, mem_used, mem_total, temp = parts
+                out["gpu"] = {
+                    "name":         name,
+                    "util_percent": _try_num(util),
+                    "mem_used_mb":  _try_num(mem_used),
+                    "mem_total_mb": _try_num(mem_total),
+                    "mem_percent":  round(_try_num(mem_used) / _try_num(mem_total) * 100, 1)
+                                    if _try_num(mem_total) else None,
+                    "temp_c":       _try_num(temp),
+                }
+    except Exception:
+        pass
+    return out
+
+
+def _try_num(s):
+    try: return float(s)
+    except: return None
+
+
 def _self_payload(queue_depth: int) -> dict:
     return {
         "instance_id":  INSTANCE_ID,
@@ -132,6 +194,10 @@ def _self_payload(queue_depth: int) -> dict:
         "version":      "2.0",
         "started_at":   _startup_epoch,
         "last_seen_at": db.server_timestamp(),
+        # Live resource stats. Read by /api/workers/register and stored
+        # under backends/<id>.stats so the Monitor page can render CPU/
+        # GPU/RAM/disk without polling the worker directly.
+        "stats":        _sample_stats(),
     }
 
 
@@ -178,6 +244,18 @@ def _push_outbound(queue_depth: int):
         )
         if r.ok:
             log.debug(f"outbound-poll heartbeat ok ({_status}, depth={queue_depth})")
+            # Heartbeat response can carry a shutdown signal — check
+            # inline so a Terminate click takes effect within one
+            # heartbeat cycle instead of waiting for the next claim
+            # poll (which may be idle-blocked).
+            try:
+                data = r.json() or {}
+                if data.get("shutdown"):
+                    log.warning("dashboard requested shutdown (via heartbeat) — exiting.")
+                    import threading, os as _os
+                    threading.Timer(1.0, lambda: _os._exit(0)).start()
+            except Exception:
+                pass
         else:
             log.warning(f"outbound-poll heartbeat HTTP {r.status_code}: {r.text[:100]}")
     except Exception as e:

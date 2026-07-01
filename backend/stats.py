@@ -25,9 +25,28 @@ _gpu_cache = {"at": 0.0, "value": None}
 _gpu_lock = threading.Lock()
 
 
+_gpu_missing_warned = False
+
+
 def _gpu_probe() -> dict | None:
     """One nvidia-smi call returning utilization + VRAM. None if no GPU."""
+    global _gpu_missing_warned
     if not shutil.which("nvidia-smi"):
+        # Warn ONCE at first probe — if the worker was launched as tier=gpu
+        # but no GPU is reachable, that's a real problem the operator
+        # should see in the logs.
+        if not _gpu_missing_warned:
+            _gpu_missing_warned = True
+            try:
+                import os as _os
+                if (_os.getenv("INSTANCE_TIER") or "").lower() == "gpu":
+                    import logging as _lg
+                    _lg.getLogger(__name__).warning(
+                        "INSTANCE_TIER=gpu but nvidia-smi not found — GPU stats will show '—' "
+                        "and any GPU-only rendering will fall back to CPU."
+                    )
+            except Exception:
+                pass
         return None
     try:
         r = subprocess.run(

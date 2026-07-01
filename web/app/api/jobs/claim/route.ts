@@ -46,15 +46,17 @@ export async function POST(req: NextRequest) {
 
     const db = adminDb();
 
-    // Termination signal — if the dashboard's Terminate button set
-    // status='shutdown_requested' on this worker's registry row, tell
-    // it to exit. Worker responds by calling os._exit(0). Applies to
-    // outbound-poll workers (no reachable URL).
+    // Termination signal — dashboard sets shutdown_pending on the
+    // worker's backends record. This is a SEPARATE field from
+    // status/last_seen_at so the heartbeat register route can't
+    // clobber it. Worker's next claim poll sees the flag and exits.
     try {
       const backSnap = await db.collection("backends").doc(instance_id).get();
       if (backSnap.exists) {
-        const bd = backSnap.data() as { status?: string };
-        if (bd.status === "shutdown_requested") {
+        const bd = backSnap.data() as { shutdown_pending?: boolean; status?: string };
+        // Accept both the new bool field and the legacy status string
+        // for one release cycle.
+        if (bd.shutdown_pending || bd.status === "shutdown_requested") {
           return NextResponse.json({ ok: true, shutdown: true, job: null });
         }
       }

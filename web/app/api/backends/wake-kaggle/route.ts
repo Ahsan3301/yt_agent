@@ -25,13 +25,19 @@ export async function POST(_req: NextRequest) {
 
   let token = "";
   try {
-    const snap = await adminDb()
-      .collection("api_keys")
-      .doc("GITHUB_ACCESS_TOKEN")
-      .get();
-    token = snap.exists ? ((snap.data() as { value?: string }).value || "") : "";
+    // Preferred: keys blob at settings/api_keys.
+    const blobSnap = await adminDb().collection("settings").doc("api_keys").get();
+    if (blobSnap.exists) {
+      const blob = (blobSnap.data() as { data?: Record<string, string> }).data || {};
+      token = String(blob.GITHUB_ACCESS_TOKEN || "");
+    }
+    if (!token) {
+      // Legacy fallback for pre-blob deploys.
+      const snap = await adminDb().collection("api_keys").doc("GITHUB_ACCESS_TOKEN").get();
+      token = snap.exists ? ((snap.data() as { value?: string }).value || "") : "";
+    }
   } catch (e) {
-    return NextResponse.json({ error: "firestore read failed", detail: String(e) }, { status: 500 });
+    return NextResponse.json({ error: "keys read failed", detail: String(e) }, { status: 500 });
   }
   if (!token) {
     return NextResponse.json(
@@ -61,7 +67,7 @@ export async function POST(_req: NextRequest) {
       return NextResponse.json({
         ok: true,
         message: "Kaggle worker dispatch fired. Notebook should boot within ~90 sec; the Monitor card appears when it heartbeats.",
-        watch_url: `https://www.kaggle.com/code/ahsanriaz1337/yt-agent-worker`,
+        watch_url: `https://www.kaggle.com/code/${process.env.KAGGLE_USER || "ahsanriaz1337"}/yt-agent-worker`,
         workflow_url: `https://github.com/${owner}/${repo}/actions/workflows/kaggle-dispatch.yml`,
       });
     }

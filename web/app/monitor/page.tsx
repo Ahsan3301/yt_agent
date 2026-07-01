@@ -123,12 +123,21 @@ export default function MonitorPage() {
         const results = await Promise.all(
           entries.map(async (e) => {
             const id = e.instance_id || e.url;
-            const stats = await fetchStatsFor(e.url);
+            // For outbound-poll workers (no URL) use the stats from
+            // the registry entry itself — the worker pushed them in
+            // the heartbeat body, /api/backends echoes them here.
+            // For URL-based (tunnel-mode) workers, poll /api/stats.
+            let stats: BackendStats | null = null;
+            if (e.url) {
+              stats = await fetchStatsFor(e.url);
+            } else if (e.stats && typeof e.stats === "object") {
+              stats = e.stats as BackendStats;
+            }
             return { id, entry: e, stats };
           }),
         );
 
-        setBackends((prev) => {
+        setBackends(() => {
           const next: Record<string, BackendState> = {};
           for (const { id, entry, stats } of results) {
             const h = historyRef.current[id] || { cpu: [], mem: [], gpu: [], vram: [] };
@@ -139,15 +148,14 @@ export default function MonitorPage() {
               h.vram = appendTrim(h.vram, stats.gpu?.mem_percent ?? 0);
             }
             historyRef.current[id] = h;
-            // For outbound-poll workers (no URL), 'reachable' just
-            // means "heartbeat is fresh" — we NEVER have live stats,
-            // and DOWN would be misleading. Trust the registry
-            // freshness that /api/backends already computed.
             const heartbeatAlive = Date.now() / 1000 - (entry.last_seen || 0) < 180;
             const outboundPoll = !entry.url;
             next[id] = {
               entry,
               stats,
+              // Outbound-poll: alive-by-heartbeat is the truth; stats
+              // may be absent on old workers but that's cosmetic.
+              // URL-based: reachable iff stats poll returned data.
               reachable: outboundPoll ? heartbeatAlive : stats !== null,
               history: { ...h },
             };

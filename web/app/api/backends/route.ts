@@ -41,6 +41,10 @@ export async function GET() {
         version:     (d.version as string) ?? null,
         alive,
         mode:        (d.mode as string) || "unknown",
+        // Latest resource stats pushed by the worker via heartbeat.
+        // null on legacy workers that don't include stats in payload.
+        stats:       (d.stats as Record<string, unknown>) ?? null,
+        shutdown_pending: !!d.shutdown_pending,
       });
     });
     // Fresh workers first.

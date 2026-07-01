@@ -42,26 +42,50 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "instance_id required" }, { status: 400 });
     }
 
-    const doc = {
+    // Read existing doc first so we can PRESERVE dashboard-set fields
+    // that the worker's heartbeat body would otherwise clobber:
+    //   - shutdown_pending: set by /api/backends/[id]/shutdown when the
+    //     user clicks Terminate. If we blindly overwrite with the
+    //     worker's status='available', the flag is lost, the worker's
+    //     next claim poll never sees it, and Terminate is a no-op.
+    const existingSnap = await adminDb().collection("backends").doc(instance_id).get();
+    const existing = existingSnap.exists ? (existingSnap.data() || {}) : {};
+    const shutdown_pending = !!existing.shutdown_pending;
+
+    // Sample rate: heartbeats can arrive with stats (cpu/mem/gpu/disk)
+    // in the body. Passing them through means the Monitor page reads
+    // fresh numbers from PB without needing an inbound URL on the
+    // worker. Absent = clear the field so old stats don't stick.
+    const stats = (body.stats && typeof body.stats === "object") ? body.stats : null;
+
+    const doc: Record<string, unknown> = {
       instance_id,
       label:          String(body.label || "").slice(0, 80),
       tier:           String(body.tier || "gpu").slice(0, 8),
       gpu_name:       String(body.gpu_name || "").slice(0, 128),
       status:         String(body.status || "available").slice(0, 32),
       // url is intentionally empty for outbound-poll workers — they
-      // have no addressable endpoint. The dashboard's job dispatch
-      // path checks `mode==='outbound_poll' || url===''` to skip the
-      // try-to-POST-the-worker step.
+      // have no addressable endpoint.
       url:            String(body.url || "").slice(0, 400),
       mode:           "outbound_poll",
       started_at:     Number(body.started_at) || Date.now() / 1000,
       last_seen_at:   Date.now() / 1000,
       active_job_id:  String(body.active_job_id || "").slice(0, 64),
       updated_at:     FieldValue.serverTimestamp(),
+      // Preserve the dashboard-controlled shutdown flag across heartbeats.
+      shutdown_pending,
     };
+    if (stats) doc.stats = stats;
 
     await adminDb().collection("backends").doc(instance_id).set(doc, { merge: true });
-    return NextResponse.json({ ok: true, id: instance_id, registered_at: doc.last_seen_at });
+    return NextResponse.json({
+      ok: true,
+      id: instance_id,
+      registered_at: doc.last_seen_at,
+      // Echo the flag so the worker can early-exit without a separate
+      // claim call — saves one round-trip on shutdown latency.
+      shutdown: shutdown_pending,
+    });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }

@@ -42,16 +42,28 @@ def _persist(job: dict[str, Any]):
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(job, f, indent=2)
     os.replace(tmp, p)
-    # Best-effort Firestore mirror — never fail the local persist on
-    # remote failures.
+    # DB mirror — retry with exponential backoff on transient failures
+    # so a brief PB blip doesn't lose progress writes. Local disk copy
+    # is already safe; retries just get us to eventual consistency.
     try:
         from backend import jobs_db, registry
         record = dict(job)
         record.setdefault("backend_instance_id", registry.INSTANCE_ID)
         record.setdefault("backend_url", registry.public_url() or None)
-        jobs_db.upsert_job(record)
+        last_err: Exception | None = None
+        for delay in (0.0, 0.1, 0.3, 0.8):
+            if delay:
+                time.sleep(delay)
+            try:
+                jobs_db.upsert_job(record)
+                last_err = None
+                break
+            except Exception as e:
+                last_err = e
+        if last_err is not None:
+            log.debug(f"_persist: DB mirror gave up after retries ({last_err})")
     except Exception as e:
-        log.debug(f"_persist: Firestore mirror skipped ({e})")
+        log.debug(f"_persist: DB mirror skipped ({e})")
 
 
 def _load_persisted():

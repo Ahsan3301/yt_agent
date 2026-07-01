@@ -32,23 +32,22 @@ export async function POST(
 
     if (!url) {
       // Outbound-poll worker. Two sub-cases:
-      //  1. Worker is ALIVE (fresh heartbeat) → flip status to
-      //     'shutdown_requested'; worker's next claim poll sees the
-      //     flag and os._exit(0)s. Doc gets cleaned on next
-      //     heartbeat cycle when the worker deregisters.
-      //  2. Worker is DEAD (no heartbeat in >90s) → just delete
-      //     the corpse card. There's no process to signal.
+      //  1. Worker is ALIVE (fresh heartbeat) → set shutdown_pending
+      //     (a SEPARATE field the heartbeat register route does NOT
+      //     overwrite). Worker sees it on its next claim/heartbeat
+      //     and os._exit(0)s.
+      //  2. Worker is DEAD (no heartbeat in >90s) → delete the corpse.
       const lastMs = toEpochMs(data.last_seen_at ?? data.last_seen) || 0;
       const alive = lastMs > 0 && (Date.now() - lastMs) < 90_000;
       try {
         if (alive) {
           await adminDb().collection("backends").doc(id).update({
-            status: "shutdown_requested",
+            shutdown_pending: true,
           });
           return NextResponse.json({
             ok: true,
             mode: "outbound_poll_alive",
-            note: "shutdown flag set; worker exits on next claim poll (≤5 s)",
+            note: "shutdown flag set; worker exits on next claim/heartbeat (≤5 s)",
           });
         } else {
           await adminDb().collection("backends").doc(id).delete();
@@ -59,7 +58,6 @@ export async function POST(
           });
         }
       } catch (e) {
-        // Whichever operation failed, try the other. Idempotent.
         try { await adminDb().collection("backends").doc(id).delete(); } catch {}
         return NextResponse.json({ ok: true, note: String(e) });
       }

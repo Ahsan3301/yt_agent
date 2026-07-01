@@ -23,6 +23,27 @@ export type RegistryEntry = {
   label?: string | null;
   gpu_name?: string | null;
   version?: string;
+  // Optional resource stats. Present when the worker pushes them via
+  // heartbeat (outbound-poll workers do; legacy tunnel workers rely
+  // on /api/stats polling instead).
+  stats?: {
+    cpu_percent?: number | null;
+    mem_percent?: number | null;
+    mem_used_gb?: number | null;
+    mem_total_gb?: number | null;
+    disk_used_gb?: number | null;
+    disk_total_gb?: number | null;
+    gpu?: {
+      name?: string;
+      util_percent?: number | null;
+      mem_used_mb?: number | null;
+      mem_total_mb?: number | null;
+      mem_percent?: number | null;
+      temp_c?: number | null;
+    } | null;
+    sampled_at?: number;
+  } | null;
+  shutdown_pending?: boolean;
 };
 
 let _cached: { at: number; url: string } | null = null;

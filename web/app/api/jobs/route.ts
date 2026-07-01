@@ -160,21 +160,36 @@ export async function POST(req: NextRequest) {
     const workers = await pickWorkers();
     const target = workers[0];
 
-    // Decide UP-FRONT whether to wake Kaggle. We fire the workflow_dispatch
-    // in PARALLEL with the worker dispatch so the user doesn't wait. The
-    // condition is "no live GPU worker" — a CPU-only worker (HF Space) is
-    // OK to dispatch the job to immediately, but we still wake Kaggle so
-    // GPU finishes faster than HF would.
-    const liveGpu = workers.find(
-      (w) => w.tier === "gpu" && w.status === "available",
-    );
+    // Decide UP-FRONT whether to wake Kaggle. Fire the workflow_dispatch
+    // in PARALLEL with worker dispatch so the user doesn't wait.
+    //
+    // BUG FIX: previously we filtered by `status === "available"`, which
+    // meant a Kaggle worker that was BUSY on another job triggered a
+    // fresh dispatch — spawning duplicate instances. A busy GPU worker
+    // WILL claim the job as soon as it's free; no need to burn a fresh
+    // Kaggle boot (which eats the 30-hr/wk budget).
+    //
+    // Also: dedupe against a recent dispatch within DEDUP_MS so a
+    // rapid job-submission burst doesn't fire multiple workflows.
+    const liveGpu = workers.some((w) => w.tier === "gpu");
+    const nowSec = Date.now() / 1000;
+    const DEDUP_SEC = 90; // don't fire twice within 1.5 min
     let wakePromise: Promise<void> | null = null;
     if (!liveGpu) {
-      logRoute(reqId, "no live GPU — triggering kaggle workflow", {
-        any_worker: !!target,
-        target_tier: target?.tier,
+      // Idempotency check via PB kaggle_dispatch/latest.
+      const skip = await _wasWokenRecently(nowSec, DEDUP_SEC);
+      if (skip) {
+        logRoute(reqId, "kaggle wake SUPPRESSED (recent dispatch)", { within_sec: DEDUP_SEC });
+      } else {
+        logRoute(reqId, "no live GPU worker (any status) — triggering kaggle workflow", {
+          any_worker: !!target, target_tier: target?.tier,
+        });
+        wakePromise = _maybeWakeKaggle(reqId).then(() => _markKaggleWoken(nowSec));
+      }
+    } else {
+      logRoute(reqId, "kaggle wake SKIPPED (live GPU worker exists)", {
+        count: workers.filter(w => w.tier === "gpu").length,
       });
-      wakePromise = _maybeWakeKaggle(reqId);
     }
 
     if (target) {
@@ -249,12 +264,37 @@ export async function POST(req: NextRequest) {
 }
 
 /**
+ * Idempotency guard for Kaggle wake. Reads
+ * `queue_state.doc('kaggle_dispatch').last_woken_at` and returns true
+ * if a wake fired within the given window. Prevents rapid job bursts
+ * from firing multiple workflow_dispatches while a fresh Kaggle boot
+ * is still coming online (~90 s).
+ */
+async function _wasWokenRecently(now: number, withinSec: number): Promise<boolean> {
+  try {
+    const snap = await adminDb().collection("queue_state").doc("kaggle_dispatch").get();
+    if (!snap.exists) return false;
+    const d = snap.data() as { last_woken_at?: number };
+    const t = Number(d.last_woken_at || 0);
+    return t > 0 && (now - t) < withinSec;
+  } catch { return false; }
+}
+
+async function _markKaggleWoken(now: number): Promise<void> {
+  try {
+    await adminDb().collection("queue_state").doc("kaggle_dispatch").set(
+      { last_woken_at: now }, { merge: true },
+    );
+  } catch { /* soft-fail; worst case is one duplicate dispatch */ }
+}
+
+/**
  * Best-effort: trigger the kaggle-dispatch workflow immediately via the
- * GitHub Actions API so the user doesn't wait for the 10-minute cron
+ * GitHub Actions API so the user doesn't wait for the 5-minute cron
  * tick when their submission lands with no GPU worker alive.
  *
  * Auth: the OAuth `repo` scope from /api/github/auth already includes
- * workflow:write. We pull the saved token from Firestore.
+ * workflow:write. We pull the saved token from the keys blob.
  *
  * Repo: GITHUB_REPO_FULL_NAME env var or sensible default.
  */
@@ -266,15 +306,24 @@ async function _maybeWakeKaggle(reqId: string): Promise<void> {
     return;
   }
 
+  // Read GITHUB_ACCESS_TOKEN from the settings blob at settings/api_keys
+  // (this is where /api/keys stores it since the migration to blob form).
+  // Fall back to the legacy per-doc path in case some deploys still have
+  // that shape.
   let token = "";
   try {
-    const snap = await adminDb()
-      .collection("api_keys")
-      .doc("GITHUB_ACCESS_TOKEN")
-      .get();
-    token = snap.exists ? ((snap.data() as { value?: string }).value || "") : "";
+    const blobSnap = await adminDb().collection("settings").doc("api_keys").get();
+    if (blobSnap.exists) {
+      const blob = (blobSnap.data() as { data?: Record<string, string> }).data || {};
+      token = String(blob.GITHUB_ACCESS_TOKEN || "");
+    }
+    if (!token) {
+      // Legacy fallback.
+      const snap = await adminDb().collection("api_keys").doc("GITHUB_ACCESS_TOKEN").get();
+      token = snap.exists ? ((snap.data() as { value?: string }).value || "") : "";
+    }
   } catch (e) {
-    logRoute(reqId, "kaggle wake firestore read failed", { err: String(e) });
+    logRoute(reqId, "kaggle wake keys read failed", { err: String(e) });
     return;
   }
   if (!token) {

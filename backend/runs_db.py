@@ -65,22 +65,28 @@ def write_run(run_id: str, summary: dict, index_entry: dict) -> bool:
 
 
 def list_index(limit: int = 200) -> list[dict]:
-    """Return the index ordered finished_at descending. Each entry has an
-    `epoch_finished_at` float field added for the frontend to sort on."""
+    """Return the index ordered by finished_at descending.
+
+    Uses the db wrapper's own order_by so it works on both Firestore
+    (Admin SDK) and Pocketbase — DO NOT import firebase_admin.firestore
+    directly, that dep isn't present on PB-only workers and would
+    raise ImportError, killing the /api/runs page silently."""
     if not db.is_configured():
         return []
     try:
-        from firebase_admin import firestore as _fs
         c = db.client()
-        q = (c.collection("runs_index")
-              .order_by("finished_at", direction=_fs.Query.DESCENDING)
-              .limit(limit))
+        q = c.collection("runs_index").order_by("finished_at", "DESCENDING").limit(limit)
         out = []
         for snap in q.stream():
             d = snap.to_dict() or {}
             d.setdefault("run_id", snap.id)
-            d["finished_at"] = _ts_to_seconds(d.get("finished_at"))
+            # Guard against null finished_at from in-progress or failed
+            # rows — sort-side null handling differs between backends.
+            d["finished_at"] = _ts_to_seconds(d.get("finished_at")) or 0.0
             out.append(d)
+        # Post-sort as a belt-and-braces guarantee so partial rows
+        # never leak above complete ones.
+        out.sort(key=lambda r: r.get("finished_at") or 0.0, reverse=True)
         return out
     except Exception as e:
         log.warning(f"runs_db.list_index failed: {e}")
