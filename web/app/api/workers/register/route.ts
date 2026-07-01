@@ -61,7 +61,7 @@ export async function POST(req: NextRequest) {
     const doc: Record<string, unknown> = {
       instance_id,
       label:          String(body.label || "").slice(0, 80),
-      tier:           String(body.tier || "gpu").slice(0, 8),
+      tier:           String(body.tier || "gpu").slice(0, 20),
       gpu_name:       String(body.gpu_name || "").slice(0, 128),
       status:         String(body.status || "available").slice(0, 32),
       // url is intentionally empty for outbound-poll workers — they

@@ -87,7 +87,11 @@ export async function GET() {
         queue_depth: Number(d.queue_depth ?? 0),
         last_seen:   lastMs != null ? lastMs / 1000 : 0,
         started_at:  startedMs != null ? startedMs / 1000 : null,
-        tier:        d.tier === "cpu" ? "cpu" : "gpu",
+        // Preserve the tier as-reported by the worker. Only fall back
+        // to 'gpu' when it's missing so the Monitor doesn't hide the
+        // card. New tiers ('dashboard' for the side-worker) pass
+        // through unchanged.
+        tier:        typeof d.tier === "string" && d.tier ? String(d.tier) : "gpu",
         label:       (d.label as string) ?? null,
         gpu_name:    (d.gpu_name as string) ?? null,
         version:     (d.version as string) ?? null,
