@@ -351,10 +351,21 @@ def _run_one(job: dict[str, Any]):
         log.warning(f"keys_sync.pull_into_env failed pre-job: {_e}")
 
     def progress_bridge():
-        last = {"percent": -1, "step": None}
+        last = {"percent": -1, "step": None, "run_id": None}
         while True:
             time.sleep(0.4)
             s = run_state.read()
+            # Persist run_id as soon as it's assigned — LogsPanel + the
+            # /queue/[id] page filter run_logs by this, so if we wait
+            # until terminal status the live-log stream is empty for the
+            # entire run. Also mirrors to PB so the dashboard picks up
+            # the id within one poll cycle.
+            new_run_id = s.get("run_id") or ""
+            if new_run_id and new_run_id != last["run_id"]:
+                last["run_id"] = new_run_id
+                with _lock:
+                    job["run_id"] = new_run_id
+                    _persist(job)
             if s.get("percent") != last["percent"] or s.get("current_step") != last["step"]:
                 last["percent"] = s.get("percent", 0)
                 last["step"] = s.get("current_step")
@@ -362,7 +373,6 @@ def _run_one(job: dict[str, Any]):
                                 s.get("current_step", "") or "",
                                 s.get("current_step_label", "") or "")
             if s.get("status") in ("complete", "failed"):
-                # Capture run_id for download path.
                 with _lock:
                     job["run_id"] = s.get("run_id") or job.get("run_id")
                     _persist(job)

@@ -68,10 +68,12 @@ export default function MonitorPage() {
               const d = doc.data() as Record<string, unknown>;
               const last = _firestoreEpoch(d.last_seen_at ?? d.last_seen);
               if (last !== null && last < cutoff) return;
-              const url = String(d.url || "");
-              if (!url) return;
+              // Outbound-poll workers (Kaggle/Colab on Coolify) have no
+              // URL by design — the dashboard NEVER connects TO them.
+              // Include them anyway so the Monitor shows a card; live
+              // stats will just be null.
               list.push({
-                instance_id: doc.id, url,
+                instance_id: doc.id, url: String(d.url || ""),
                 status:      d.status === "busy" ? "busy" : "available",
                 queue_depth: Number(d.queue_depth ?? 0),
                 last_seen:   last ?? Date.now() / 1000,

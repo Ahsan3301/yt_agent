@@ -29,24 +29,36 @@ export async function POST(
     const data = snap.data() as { url?: string };
     const url = data.url || "";
 
-    // Delete the Firestore doc FIRST so the dashboard's onSnapshot
-    // drops the card instantly — don't make the user stare at a
-    // stale 'DOWN' card while waiting for the 180-sec freshness
-    // window. We also want this delete to happen even if the worker
-    // is unreachable (it might have already crashed) so the user
-    // can clear corpse cards.
+    if (!url) {
+      // Outbound-poll worker — no reachable URL. Flip status to
+      // 'shutdown_requested'; the worker's next /api/jobs/claim
+      // poll (≤5s) sees the flag and os._exit(0). Keep the doc
+      // around so the poll returns a definite {shutdown: true}
+      // instead of 404. The worker will vanish from the registry
+      // after the heartbeat freshness window (or when we delete
+      // it below on the next click).
+      try {
+        await adminDb().collection("backends").doc(id).update({
+          status: "shutdown_requested",
+        });
+        return NextResponse.json({
+          ok: true,
+          mode: "outbound_poll",
+          note: "shutdown flag set; worker will exit on next claim poll (≤5 s)",
+        });
+      } catch (e) {
+        // Fall through — best-effort delete instead.
+        try { await adminDb().collection("backends").doc(id).delete(); } catch {}
+        return NextResponse.json({ ok: true, note: String(e) });
+      }
+    }
+
+    // Inbound-URL worker — delete registry entry so the card
+    // disappears instantly, then best-effort POST /api/shutdown.
     try {
       await adminDb().collection("backends").doc(id).delete();
     } catch (e) {
-      // Non-fatal but unusual — surface it so we know.
       console.error("backends doc delete failed:", e);
-    }
-
-    if (!url) {
-      return NextResponse.json({
-        ok: true,
-        note: "backend had no public_url; just removed from registry",
-      });
     }
 
     // Now best-effort tell the worker to exit. Don't await long —

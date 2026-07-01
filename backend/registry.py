@@ -188,7 +188,12 @@ def _claim_outbound() -> dict | None:
     """Poll the dashboard for a queued job. Returns the job payload or
     None when nothing's queued. Used by the loop in outbound-poll mode
     instead of jobs_db.claim_queued (which goes via the DB client and
-    requires Firestore creds we don't have)."""
+    requires Firestore creds we don't have).
+
+    Also handles the dashboard-initiated shutdown signal: when the
+    Terminate button flips backends/<id>.status to 'shutdown_requested',
+    the claim endpoint returns {shutdown: true}. The worker then calls
+    os._exit(0) so it disappears from the registry within one cycle."""
     if not COOLIFY_BASE_URL or not RENDER_TRIGGER_KEY:
         return None
     import requests
@@ -205,7 +210,14 @@ def _claim_outbound() -> dict | None:
         if r.status_code == 204:
             return None
         if r.ok:
-            return (r.json() or {}).get("job")
+            payload = r.json() or {}
+            if payload.get("shutdown"):
+                log.warning("dashboard requested shutdown — exiting.")
+                # Small delay so this log line ships before we die.
+                import threading, os as _os
+                threading.Timer(1.0, lambda: _os._exit(0)).start()
+                return None
+            return payload.get("job")
         log.warning(f"outbound-poll claim HTTP {r.status_code}: {r.text[:100]}")
     except Exception as e:
         log.warning(f"outbound-poll claim failed: {e}")

@@ -79,7 +79,9 @@ async function _readBackendsFromFirestore(): Promise<RegistryEntry[]> {
         version:     (d.version as string) ?? undefined,
       });
     });
-    return out.filter((e) => e.url);
+    // Return ALL entries — outbound-poll workers have no URL by
+    // design; the UI shows a card without live stats.
+    return out;
   } catch (e) {
     console.warn("firestore backends read failed:", e);
     return [];
@@ -299,8 +301,19 @@ export async function fetchLiveBackends(): Promise<RegistryEntry[]> {
     }];
   }
 
-  // Prefer Firestore (the new path). Fall back to legacy registry files
-  // only if Firestore isn't configured (mid-migration deployments).
+  // Preferred path — same-origin /api/backends. Works on every
+  // deployment (Coolify / Vercel / local), returns URL-less
+  // outbound-poll workers too.
+  try {
+    const r = await fetch("/api/backends", { cache: "no-store" });
+    if (r.ok) {
+      const list = (await r.json()) as RegistryEntry[];
+      if (Array.isArray(list) && list.length > 0) return list;
+    }
+  } catch { /* fall through */ }
+
+  // Firestore JS SDK path — only reachable when NEXT_PUBLIC_FIREBASE_
+  // CONFIG is set. Kept for the legacy Vercel + Firebase deploys.
   if (isFirestoreConfigured()) {
     return _readBackendsFromFirestore();
   }

@@ -45,6 +45,20 @@ export async function POST(req: NextRequest) {
     }
 
     const db = adminDb();
+
+    // Termination signal — if the dashboard's Terminate button set
+    // status='shutdown_requested' on this worker's registry row, tell
+    // it to exit. Worker responds by calling os._exit(0). Applies to
+    // outbound-poll workers (no reachable URL).
+    try {
+      const backSnap = await db.collection("backends").doc(instance_id).get();
+      if (backSnap.exists) {
+        const bd = backSnap.data() as { status?: string };
+        if (bd.status === "shutdown_requested") {
+          return NextResponse.json({ ok: true, shutdown: true, job: null });
+        }
+      }
+    } catch { /* soft-fail, keep polling */ }
     // Pull a small batch of unclaimed jobs, then race-loss on the first
     // one we can grab. Five candidates per call keeps the contention
     // window short — multiple workers polling the same second will
