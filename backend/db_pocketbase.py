@@ -57,14 +57,25 @@ _SUBCOLLECTION_MAP = {
 
 
 def _pb_id(raw_id: str) -> str:
-    """Pocketbase ids: 15 chars [a-z0-9]+. Reuse if it fits, else hash."""
+    """Pocketbase ids: 15 chars [a-z0-9]+. Reuse if it fits, else hash.
+
+    MUST match web/lib/pocketbase-admin.ts _pbId() byte-for-byte —
+    otherwise the TS route writes to one PB id and the Python worker
+    reads from another. Cross-language mismatch was the reason NIM
+    keys saved via the dashboard weren't seen on the worker.
+
+    Algorithm: sha256(rawId) → base64 → lowercase → strip non-alphanum
+    → take first 15 chars. Same as Node's createHash.digest('base64').
+    """
     raw = (raw_id or "").lower()
     if _VALID_PB_ID.match(raw):
         return raw
-    h = hashlib.sha256(raw_id.encode("utf-8")).digest()
     import base64 as _b64
-    b32 = _b64.b32encode(h).decode("ascii").lower().replace("=", "")
-    return b32[:15]
+    h = hashlib.sha256(raw_id.encode("utf-8")).digest()
+    b64 = _b64.b64encode(h).decode("ascii").lower()
+    # Strip anything not [a-z0-9] — matches the JS regex /[^a-z0-9]/g.
+    b64 = "".join(c for c in b64 if c.isalnum())
+    return b64[:15]
 
 
 def _generate_auto_id() -> str:
