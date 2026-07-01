@@ -21,8 +21,14 @@ av==12.3.0
 # falls back to edge-tts if the import fails. Skipping this line
 # means every render logs a 'Kokoro not available' warning and uses
 # the lower-quality edge-tts voice.
-kokoro>=0.4
+kokoro>=0.9.4
+misaki>=0.9.4
 soundfile>=0.12
-# Kokoro requires phonemizer at runtime (converts text → phonemes).
-# The pip package bundles the espeak-ng grammar files.
-phonemizer>=3.2
+# Kokoro 0.9+ pulls `misaki` for phoneme handling. misaki calls
+# EspeakWrapper.set_data_path(...) which only exists in phonemizer-fork
+# (vanilla `phonemizer` on PyPI stopped receiving updates in 2023).
+# espeakng-loader ships the data path misaki asks for. All three are
+# required — omitting any one raises `AttributeError: type object
+# 'EspeakWrapper' has no attribute 'set_data_path'` at Kokoro import.
+phonemizer-fork>=3.3.2
+espeakng-loader>=0.2

@@ -52,10 +52,13 @@ def write_run(run_id: str, summary: dict, index_entry: dict) -> bool:
         batch.set(idx_ref, entry, merge=True)
 
         sum_ref = c.collection("run_summaries").document(run_id)
+        # merge=True so a retry after a failed run overwrites the earlier
+        # failure row instead of colliding on the run_id unique index.
+        # PB's create-only path raises validation_not_unique otherwise.
         batch.set(sum_ref, {
             "data": summary,
             "updated_at": db.server_timestamp(),
-        }, merge=False)
+        }, merge=True)
 
         batch.commit()
         return True

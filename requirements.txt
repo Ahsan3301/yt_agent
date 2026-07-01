@@ -13,7 +13,7 @@ psutil>=5.9            # CPU/RAM/disk stats for the dashboard monitor
 firebase-admin>=6.4    # Firestore client for the small-data layer (registry, keys, settings, runs index)
 
 # Pipeline — TTS, research, footage
-edge-tts>=6.1.9
+edge-tts>=7.0.0
 pytrends>=4.9.2
 feedparser>=6.0.11
 
