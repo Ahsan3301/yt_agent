@@ -687,10 +687,18 @@ function OneClickAuth({
     } else if (hf && hf !== "connected") {
       setResult(`Hugging Face connect failed: ${p.get("reason") || hf}`);
     }
+    const yt = p.get("youtube");
+    if (yt === "connected") {
+      const ch = p.get("channel") || "";
+      setResult(`YouTube connected${ch ? ` — channel: ${decodeURIComponent(ch)}` : ""}. Publish dropdowns on the Library page will list this account.`);
+      onRefresh();
+    } else if (yt && yt !== "connected") {
+      setResult(`YouTube connect failed: ${p.get("reason") || yt}`);
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const start = async (provider: "github" | "huggingface") => {
+  const start = async (provider: "github" | "huggingface" | "youtube") => {
     setBusy(provider);
     try {
       const r = await fetch(`/api/${provider}/auth`);
@@ -698,7 +706,6 @@ function OneClickAuth({
       if (d.url) {
         window.location.href = d.url as string;
       } else {
-        // Friendly "setup required" instead of raw JSON dump.
         setResult(
           `setup-required:${provider}:${d.next_step || d.error || "OAuth client not configured on the dashboard."}`,
         );
@@ -732,6 +739,25 @@ function OneClickAuth({
 
   const githubConnected = !!keys?.GITHUB_ACCESS_TOKEN?.set;
   const hfConnected = !!keys?.HF_TOKEN?.set;
+  const [ytAccounts, setYtAccounts] = useState<Array<{ id: string; title: string; youtube_channel_id: string; thumbnail?: string }>>([]);
+  useEffect(() => {
+    fetch("/api/youtube/accounts").then((r) => r.ok ? r.json() : []).then((d) => setYtAccounts(Array.isArray(d) ? d : [])).catch(() => {});
+  }, [keys]);
+  const ytConnected = ytAccounts.length > 0;
+
+  const disconnectYt = async (id: string) => {
+    if (!confirm("Disconnect this YouTube account? The dashboard will lose upload access.")) return;
+    try {
+      const r = await fetch(`/api/youtube/disconnect?id=${encodeURIComponent(id)}`, { method: "POST" });
+      if (r.ok) {
+        setYtAccounts((prev) => prev.filter((a) => a.id !== id));
+      } else {
+        alert(`Disconnect failed: HTTP ${r.status}`);
+      }
+    } catch (e) {
+      alert(`Disconnect failed: ${String(e)}`);
+    }
+  };
 
   return (
     <div className="card border-accent/30 bg-gradient-to-br from-accent/5 to-bg-1 space-y-3">
@@ -884,6 +910,63 @@ function OneClickAuth({
               <Brain className="h-3 w-3" />
             )}
             {hfConnected ? "Re-authenticate" : "Sign in with Hugging Face"}
+          </button>
+        </div>
+
+        {/* YouTube — multi-account. Every sign-in creates a new
+            youtube_accounts row; the Publish dropdown on /history
+            lists them by channel title. */}
+        <div className="rounded-md border border-line bg-bg-2 p-3 space-y-2 sm:col-span-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <PlaySquare className="h-4 w-4 text-red-400" />
+              <span className="font-medium text-sm">YouTube</span>
+            </div>
+            {ytConnected ? (
+              <span className="pill pill-success">
+                <CheckCircle2 className="h-3 w-3" />
+                {ytAccounts.length} channel{ytAccounts.length > 1 ? "s" : ""} connected
+              </span>
+            ) : (
+              <span className="pill pill-muted text-[10px]">not connected</span>
+            )}
+          </div>
+          <div className="text-xs text-neutral-400">
+            Upload rendered videos to any YouTube channel from the Library page.
+            Sign in multiple times to connect multiple accounts.
+          </div>
+          {ytAccounts.length > 0 && (
+            <div className="space-y-1 pt-1">
+              {ytAccounts.map((a) => (
+                <div key={a.id} className="flex items-center justify-between gap-2 text-xs bg-bg-1 rounded px-2 py-1">
+                  <div className="flex items-center gap-2 min-w-0">
+                    {a.thumbnail && (
+                      <img src={a.thumbnail} alt="" className="h-5 w-5 rounded-full shrink-0" />
+                    )}
+                    <span className="truncate">{a.title || a.youtube_channel_id}</span>
+                  </div>
+                  <button
+                    onClick={() => disconnectYt(a.id)}
+                    className="btn btn-ghost h-6 text-[10px] shrink-0"
+                    title="Remove this account. Existing published videos are untouched."
+                  >
+                    Disconnect
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <button
+            onClick={() => start("youtube")}
+            disabled={busy === "youtube"}
+            className="btn btn-primary h-8 text-xs"
+          >
+            {busy === "youtube" ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <PlaySquare className="h-3 w-3" />
+            )}
+            {ytConnected ? "Add another channel" : "Sign in with YouTube"}
           </button>
         </div>
       </div>
