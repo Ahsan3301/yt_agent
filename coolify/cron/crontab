@@ -19,5 +19,13 @@
 # {needs_worker: bool} and (optionally) fires a Kaggle dispatch.
 */5 * * * *  curl -fsS -H "X-API-Key: $RENDER_TRIGGER_KEY" "$DASHBOARD_INTERNAL_URL/api/maintenance/needs-worker" >> /proc/1/fd/1 2>&1
 
+# Every 15 min — sweep stale backends rows (kaggle kernels that died
+# mid-heartbeat, container restarts pre-stable-INSTANCE_ID) and orphan
+# videos (bytes landed in MinIO but no runs_index row + older than
+# retention). Prevents PB row bloat + MinIO storage creep.
+# stale_seconds=600 → drop backends idle >10 min.
+# orphan_retention=604800 → keep orphan videos for 7 days before deleting.
+*/15 * * * *  curl -fsS -X POST -H "X-API-Key: $RENDER_TRIGGER_KEY" "$DASHBOARD_INTERNAL_URL/api/maintenance/cleanup-stale?stale_seconds=600&orphan_retention=604800" >> /proc/1/fd/1 2>&1
+
 # Trailing newline is required — Linux crontab silently ignores the last
 # line if it doesn't end with one.
