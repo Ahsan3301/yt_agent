@@ -103,6 +103,18 @@ export async function POST(req: NextRequest) {
         ) continue;
       }
 
+      // Kind gate: the Oracle side-worker (tier='dashboard') is
+      // provisioned ONLY for post-render side-jobs — it has no GPU,
+      // no ffmpeg NVENC, no Kokoro / diffusers / playwright installs.
+      // A render job that lands there fails immediately and burns the
+      // queued row. So: dashboard-tier workers only ever claim jobs
+      // whose kind is explicitly a side-job. GPU/CPU workers stay
+      // unrestricted (they handle renders + can also fill in for side
+      // jobs when the side-worker is offline).
+      const kind = String(data.kind || "render");
+      const SIDE_JOB_KINDS = new Set(["publish_youtube", "copy_storage"]);
+      if (workerTier === "dashboard" && !SIDE_JOB_KINDS.has(kind)) continue;
+
       // Conditional update — only succeed if the doc is still queued.
       try {
         await doc.ref.update({
