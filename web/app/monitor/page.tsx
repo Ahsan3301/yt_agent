@@ -139,10 +139,16 @@ export default function MonitorPage() {
               h.vram = appendTrim(h.vram, stats.gpu?.mem_percent ?? 0);
             }
             historyRef.current[id] = h;
+            // For outbound-poll workers (no URL), 'reachable' just
+            // means "heartbeat is fresh" — we NEVER have live stats,
+            // and DOWN would be misleading. Trust the registry
+            // freshness that /api/backends already computed.
+            const heartbeatAlive = Date.now() / 1000 - (entry.last_seen || 0) < 180;
+            const outboundPoll = !entry.url;
             next[id] = {
               entry,
               stats,
-              reachable: stats !== null,
+              reachable: outboundPoll ? heartbeatAlive : stats !== null,
               history: { ...h },
             };
           }
@@ -380,6 +386,13 @@ function BackendCard({ bs }: { bs: BackendState }) {
       ) : !reachable ? (
         <div className="text-xs text-red-400">
           Last seen in registry but /api/stats unreachable — instance may have crashed or the tunnel closed.
+        </div>
+      ) : !entry.url ? (
+        // Outbound-poll worker: alive per heartbeat, no stats to show.
+        <div className="text-xs text-neutral-400">
+          Outbound-poll worker (no inbound URL). Live per heartbeat;
+          per-process CPU / GPU / RAM stats aren't collected in this
+          mode. Follow live logs from the Job queue instead.
         </div>
       ) : null}
     </div>
