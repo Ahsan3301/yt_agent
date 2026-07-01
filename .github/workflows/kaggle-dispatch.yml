@@ -32,22 +32,26 @@ jobs:
         # whose backend_instance_id was set by a failed HF dispatch.
         if: github.event_name != 'workflow_dispatch'
         env:
-          VERCEL_BASE: ${{ vars.VERCEL_BASE_URL }}
-          API_KEY: ${{ secrets.RENDER_TRIGGER_KEY }}
+          DASHBOARD_BASE: ${{ vars.DASHBOARD_BASE_URL }}
+          VERCEL_BASE:    ${{ vars.VERCEL_BASE_URL }}
+          API_KEY:        ${{ secrets.RENDER_TRIGGER_KEY }}
         run: |
           set -e
-          if [ -z "$VERCEL_BASE" ]; then
-            VERCEL_BASE="https://yt-agent-olive.vercel.app"
+          # Prefer DASHBOARD_BASE_URL (Coolify); fall back to VERCEL_BASE_URL
+          # (legacy). Either var works.
+          BASE="${DASHBOARD_BASE:-$VERCEL_BASE}"
+          if [ -z "$BASE" ]; then
+            echo "::error::Set DASHBOARD_BASE_URL (or VERCEL_BASE_URL) repo variable to your dashboard URL."
+            exit 1
           fi
           if [ -z "$API_KEY" ]; then
-            echo "::warning::RENDER_TRIGGER_KEY not set — skipping"
-            echo "needs_worker=false" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "::error::RENDER_TRIGGER_KEY repo secret is required."
+            exit 1
           fi
           body=$(curl -sS \
             -H "X-API-Key: ${API_KEY}" \
-            "${VERCEL_BASE}/api/maintenance/needs-worker")
-          echo "$body"
+            "${BASE}/api/maintenance/needs-worker")
+          echo "Response: $body"
           needs=$(echo "$body" | python3 -c "import json,sys; d=json.load(sys.stdin); print('true' if d.get('needs_worker') else 'false')")
           echo "needs_worker=$needs" >> "$GITHUB_OUTPUT"
 
