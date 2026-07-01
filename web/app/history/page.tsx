@@ -312,9 +312,14 @@ export default function HistoryPage() {
                       Published: <a className="text-accent underline" href={r.video_url} target="_blank">{r.video_url}</a>
                     </div>
                   )}
-                  {(r.has_video || r.video_url) && (
-                    <VideoPlayer runId={r.run_id} publicUrl={r.video_url}
-                                 className="w-full max-w-xs rounded-md border border-line aspect-[9/16] object-cover" />
+                  {(r.has_video || r.video_url || r.youtube_video_id || (r.mirrors && r.mirrors.length > 0)) && (
+                    <VideoPlayer
+                      runId={r.run_id}
+                      publicUrl={r.video_url}
+                      mirrors={r.mirrors}
+                      youtubeVideoId={r.youtube_video_id}
+                      className="w-full max-w-xs rounded-md border border-line"
+                    />
                   )}
 
                   {r.steps && (

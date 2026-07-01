@@ -246,8 +246,11 @@ export default function Dashboard() {
             </pre>
           )}
           {state.video_path && state.run_id && (
-            <VideoPlayer runId={state.run_id} publicUrl={state.video_url}
-                         className="w-full max-w-sm rounded-md border border-line aspect-[9/16] object-cover" />
+            <VideoPlayer
+              runId={state.run_id}
+              publicUrl={state.video_url}
+              className="w-full max-w-sm rounded-md border border-line"
+            />
           )}
         </div>
       )}
@@ -290,9 +293,14 @@ export default function Dashboard() {
             <Metric label="Channel" value={latest.channel || "—"} />
             <Metric label="Mode" value={latest.dry_run ? "dry-run" : "upload"} />
           </div>
-          {latest.has_video && (
-            <VideoPlayer runId={latest.run_id}
-                         className="w-full max-w-sm rounded-md border border-line aspect-[9/16] object-cover" />
+          {(latest.has_video || latest.video_url || latest.youtube_video_id) && (
+            <VideoPlayer
+              runId={latest.run_id}
+              publicUrl={latest.video_url}
+              mirrors={latest.mirrors}
+              youtubeVideoId={latest.youtube_video_id}
+              className="w-full max-w-sm rounded-md border border-line"
+            />
           )}
         </div>
       )}
