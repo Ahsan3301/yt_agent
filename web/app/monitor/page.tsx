@@ -77,7 +77,7 @@ export default function MonitorPage() {
                 status:      d.status === "busy" ? "busy" : "available",
                 queue_depth: Number(d.queue_depth ?? 0),
                 last_seen:   last ?? Date.now() / 1000,
-                tier:        d.tier === "cpu" ? "cpu" : "gpu",
+                tier:        d.tier === "cpu" ? "cpu" : d.tier === "dashboard" ? "dashboard" : "gpu",
                 label:       (d.label as string) ?? null,
                 gpu_name:    (d.gpu_name as string) ?? null,
               });
@@ -233,7 +233,10 @@ export default function MonitorPage() {
 
 function BackendCard({ bs }: { bs: BackendState }) {
   const { entry, stats, reachable, history } = bs;
-  const tierColor = entry.tier === "gpu" ? "text-emerald-400" : "text-sky-400";
+  const tierColor =
+    entry.tier === "gpu" ? "text-emerald-400" :
+    entry.tier === "dashboard" ? "text-violet-400" :
+    "text-sky-400";
   const statusColor = !reachable
     ? "text-red-400"
     : stats?.busy
@@ -283,11 +286,13 @@ function BackendCard({ bs }: { bs: BackendState }) {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <TerminateButton
-            entryId={entry.instance_id}
-            busy={!!stats?.busy}
-            reachable={reachable}
-          />
+          {entry.tier !== "dashboard" && (
+            <TerminateButton
+              entryId={entry.instance_id}
+              busy={!!stats?.busy}
+              reachable={reachable}
+            />
+          )}
           <div className={clsx("flex items-center gap-1 text-xs", statusColor)}>
             {reachable ? (
               stats?.busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wifi className="h-3.5 w-3.5" />

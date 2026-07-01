@@ -19,7 +19,7 @@ export type RegistryEntry = {
   queue_depth: number;
   last_seen: number;
   started_at?: number;
-  tier?: "gpu" | "cpu";
+  tier?: "gpu" | "cpu" | "dashboard";
   label?: string | null;
   gpu_name?: string | null;
   version?: string;
@@ -106,7 +106,7 @@ async function _readBackendsFromFirestore(): Promise<RegistryEntry[]> {
         queue_depth: Number(d.queue_depth ?? 0),
         last_seen:   last ?? Date.now() / 1000,
         started_at:  _toEpoch(d.started_at) ?? undefined,
-        tier:        d.tier === "cpu" ? "cpu" : "gpu",
+        tier:        d.tier === "cpu" ? "cpu" : d.tier === "dashboard" ? "dashboard" : "gpu",
         label:       (d.label as string) ?? null,
         gpu_name:    (d.gpu_name as string) ?? null,
         version:     (d.version as string) ?? undefined,
