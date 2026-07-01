@@ -227,6 +227,22 @@ export type Settings = {
   keywords: Record<string, string[]>;
   music_keywords: Record<string, string>;
   providers: Record<string, boolean>;
+  image_gen?: {
+    // Left-to-right priority; unknown names skipped. Names must be
+    // one of "huggingface" | "local_sdxl" | "pollinations".
+    priority: string[];
+    // Per-provider master switch. Keyed by provider name. Falsy → skipped.
+    enabled: Record<string, boolean>;
+    // Legacy alt keys the Python side wrote at various points; UI reads
+    // whichever exists so a stale settings row from an older worker
+    // doesn't wipe user toggles on first load.
+    // Local SDXL model id (HuggingFace repo). "" = default from config.
+    local_sdxl_model?: string;
+    // Applied to every provider that has a native negative_prompt field.
+    // For Pollinations Flux (no native field) it's appended as a
+    // plain-language "avoid: …" clause.
+    negative_prompt: string;
+  };
 };
 export const getSettings = () => call<Settings>("/api/settings");
 export const putSettings = (s: Settings) =>

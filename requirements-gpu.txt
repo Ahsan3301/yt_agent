@@ -24,6 +24,14 @@ av==12.3.0
 kokoro>=0.9.4
 misaki>=0.9.4
 soundfile>=0.12
+# Local SDXL image generation via diffusers. Provider is opt-in via
+# the /settings "AI image generation" card and no-ops on CPU-only
+# workers (checks torch.cuda.is_available() at load time). Adds ~200 MB
+# to the venv but Colab/Kaggle base images already ship torch so this
+# is only the diffusers + transformers + accelerate overhead.
+diffusers>=0.30
+transformers>=4.40
+accelerate>=0.30
 # Kokoro 0.9+ pulls `misaki` for phoneme handling. misaki calls
 # EspeakWrapper.set_data_path(...) which only exists in phonemizer-fork
 # (vanilla `phonemizer` on PyPI stopped receiving updates in 2023).

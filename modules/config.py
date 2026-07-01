@@ -137,6 +137,36 @@ DEFAULT_SETTINGS = {
         "pollinations":    True,   # free AI image gen — primary fallback (no key needed)
         "huggingface":     True,   # free AI image gen — robust second fallback (needs HF_TOKEN)
     },
+    # AI image generation — 3 providers with user-configurable priority
+    # order + per-provider toggles + a shared negative prompt.
+    # `priority` is walked left-to-right; a disabled or key-less provider
+    # is skipped. Each provider has its own retry/breaker inside shotfinder.
+    # Keys/tokens flow through the api_keys collection or worker env; the
+    # UI toggle just gates whether we EVEN TRY the provider.
+    "image_gen": {
+        "priority": ["huggingface", "local_sdxl", "pollinations"],
+        "enabled": {
+            "huggingface": True,
+            "local_sdxl":  True,
+            "pollinations": True,
+        },
+        # `local_sdxl` uses diffusers on the worker's own GPU (T4/P100 on
+        # Colab or Kaggle). Free, fast (~5-8 sec/image), no rate limits,
+        # native negative-prompt support. Model default fits comfortably
+        # in 8 GB VRAM. Override with LOCAL_SDXL_MODEL env if you want a
+        # different HF-repo checkpoint.
+        "local_sdxl_model": "stabilityai/sdxl-turbo",
+        # Applied to every provider that has a native negative_prompt
+        # parameter (HF SDXL, local SDXL). For Pollinations Flux we
+        # append a "avoid:" clause to the prompt since Flux has no
+        # separate negative field. Empty string disables.
+        "negative_prompt": (
+            "worst quality, low quality, blurry, out of focus, distorted anatomy, "
+            "extra limbs, malformed hands, missing fingers, mangled face, "
+            "asymmetric eyes, low res, jpeg artifacts, watermark, signature, "
+            "text, logo, cropped, frame, border, cartoon, 3d render, cgi"
+        ),
+    },
     "upload": {
         "privacy": env("YOUTUBE_PRIVACY", "public").lower(),  # public|unlisted|private
         "made_for_kids": False,

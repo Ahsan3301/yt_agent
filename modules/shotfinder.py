@@ -158,9 +158,14 @@ def _pollinations_breaker_record(success: bool, http_status: int | None = None):
             )
 
 
-def _pollinations_generate(prompt, output_dir, trial):
+def _pollinations_generate(prompt, output_dir, trial, negative_prompt=""):
     """Generate one image via Pollinations, respecting the circuit breaker.
-    Returns (path, seed) on success, (None, seed) on any failure."""
+    Returns (path, seed) on success, (None, seed) on any failure.
+
+    Pollinations Flux has NO native negative_prompt parameter, so we
+    append a plain-English `avoid: …` clause to the prompt. Flux's
+    caption model is decent at honouring it in practice, though the
+    effect is weaker than SDXL's proper negative_prompt path."""
     seed = int(hashlib.md5(f"{prompt}|{trial}".encode()).hexdigest()[:8], 16)
 
     if _pollinations_breaker_skip():
@@ -168,7 +173,11 @@ def _pollinations_generate(prompt, output_dir, trial):
         log.info(f"Pollinations: breaker OPEN (skipping; reopens in {wait}s)")
         return None, seed
 
-    encoded = urllib.parse.quote(prompt, safe="")
+    # Bolt the negative clause onto the prompt for Flux (no native field).
+    final_prompt = prompt
+    if negative_prompt and negative_prompt.strip():
+        final_prompt = f"{prompt}. Avoid: {negative_prompt}"
+    encoded = urllib.parse.quote(final_prompt, safe="")
     url = (
         f"https://image.pollinations.ai/prompt/{encoded}"
         f"?width=1080&height=1920&seed={seed}&model=flux&nologo=true&private=true"
@@ -252,12 +261,14 @@ def reset_hf_breaker():
     _HF_OPEN_UNTIL = 0.0
 
 
-def _huggingface_generate(prompt, output_dir, trial):
+def _huggingface_generate(prompt, output_dir, trial, negative_prompt=""):
     """Generate one image via HF Inference API. Returns (path, seed) on
     success, (None, seed) on failure. Honours its own circuit breaker.
 
     Needs HF_TOKEN env var. Token is free at
-    https://huggingface.co/settings/tokens (Read scope is enough)."""
+    https://huggingface.co/settings/tokens (Read scope is enough).
+    negative_prompt is passed to SDXL as a real parameter (native
+    support), unlike Pollinations Flux which has no negative field."""
     token = os.getenv("HF_TOKEN", "").strip()
     seed = int(hashlib.md5(f"{prompt}|{trial}|hf".encode()).hexdigest()[:8], 16)
     if not token:
@@ -291,6 +302,9 @@ def _huggingface_generate(prompt, output_dir, trial):
                     "guidance_scale": 7.5,
                     "num_inference_steps": 25,
                     "seed": seed,
+                    # Native negative-prompt support on SDXL. Empty string
+                    # is fine — the API treats it the same as omitting.
+                    "negative_prompt": negative_prompt or "",
                 },
                 "options": {"wait_for_model": True},
             },
@@ -323,6 +337,105 @@ def _huggingface_generate(prompt, output_dir, trial):
     except Exception as e:
         _hf_breaker_record(success=False)
         log.warning(f"HuggingFace gen failed: {e}")
+        return None, seed
+
+
+# ── Local SDXL (via diffusers) — free GPU-only fallback ──────────
+#
+# Runs on the worker's own CUDA device (T4/P100 on Colab/Kaggle).
+# Model is cached on first use; subsequent generations are ~5-8 sec.
+# No rate limits, no API keys, and native negative_prompt support.
+# On a CPU-only worker this provider silently no-ops.
+
+_LOCAL_SDXL_PIPE = None
+_LOCAL_SDXL_BROKEN = False
+_LOCAL_SDXL_BROKEN_REASON = ""
+
+
+def _local_sdxl_load():
+    """Lazy-load the diffusers pipeline. Kept out of module import path
+    so CPU workers never pay the diffusers/torch import tax."""
+    global _LOCAL_SDXL_PIPE, _LOCAL_SDXL_BROKEN, _LOCAL_SDXL_BROKEN_REASON
+    if _LOCAL_SDXL_BROKEN:
+        return None
+    if _LOCAL_SDXL_PIPE is not None:
+        return _LOCAL_SDXL_PIPE
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            _LOCAL_SDXL_BROKEN = True
+            _LOCAL_SDXL_BROKEN_REASON = "no CUDA device"
+            log.info("local_sdxl: no CUDA available — provider disabled for this process")
+            return None
+        from diffusers import AutoPipelineForText2Image
+        model_id = os.getenv(
+            "LOCAL_SDXL_MODEL",
+            (load_settings().get("image_gen", {}) or {}).get(
+                "local_sdxl_model", "stabilityai/sdxl-turbo"
+            ),
+        )
+        log.info(f"local_sdxl: loading pipeline (model={model_id}) …")
+        # bfloat16 gives quality parity with fp16 on Ampere/Turing and
+        # avoids some VAE overflow artifacts.
+        dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        pipe = AutoPipelineForText2Image.from_pretrained(
+            model_id,
+            torch_dtype=dtype,
+            variant="fp16" if dtype == torch.float16 else None,
+            use_safetensors=True,
+        )
+        pipe = pipe.to("cuda")
+        # Memory-thrift knobs — matters on T4-16GB.
+        try:
+            pipe.enable_vae_slicing()
+            pipe.enable_attention_slicing()
+        except Exception:
+            pass
+        _LOCAL_SDXL_PIPE = pipe
+        log.info("local_sdxl: pipeline ready")
+        return pipe
+    except Exception as e:
+        _LOCAL_SDXL_BROKEN = True
+        _LOCAL_SDXL_BROKEN_REASON = f"{type(e).__name__}: {e}"
+        log.warning(f"local_sdxl: load failed — provider disabled ({e})")
+        return None
+
+
+def _local_sdxl_generate(prompt, output_dir, trial, negative_prompt=""):
+    """Generate one image on the local GPU. Returns (path, seed) on
+    success, (None, seed) on failure or when disabled."""
+    seed = int(hashlib.md5(f"{prompt}|{trial}|sdxl".encode()).hexdigest()[:8], 16)
+    pipe = _local_sdxl_load()
+    if pipe is None:
+        return None, seed
+    try:
+        import torch
+        gen = torch.Generator(device="cuda").manual_seed(seed)
+        # SDXL-Turbo is calibrated for very few steps + guidance 0. If the
+        # user swapped to a full SDXL model, guidance 5-7 + 25 steps is a
+        # good default; we detect via the pipe class name.
+        is_turbo = "turbo" in (getattr(pipe, "name_or_path", "") or "").lower() \
+                   or "turbo" in os.getenv("LOCAL_SDXL_MODEL", "").lower()
+        kwargs = {
+            "prompt": prompt,
+            "negative_prompt": negative_prompt or None,
+            "height": 1024,
+            "width": 576,   # 9:16 portrait; SDXL handles this via 32-multiple sizes
+            "generator": gen,
+        }
+        if is_turbo:
+            kwargs.update({"num_inference_steps": 4, "guidance_scale": 0.0})
+        else:
+            kwargs.update({"num_inference_steps": 25, "guidance_scale": 6.5})
+        image = pipe(**kwargs).images[0]
+        dest = os.path.join(output_dir, f"local_sdxl_{seed:08x}.jpg")
+        image.save(dest, quality=92)
+        if not os.path.exists(dest) or os.path.getsize(dest) < 4096:
+            log.warning("local_sdxl: pipe returned <4 KB — treating as failure")
+            return None, seed
+        return dest, seed
+    except Exception as e:
+        log.warning(f"local_sdxl gen failed: {e}")
         return None, seed
 
 
@@ -430,79 +543,81 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror"):
                 return {"type": "image", "path": path,
                         "origin": "pexels_img", "score": -1}
 
-    # ── 3. HuggingFace Inference API — PRIMARY AI image gen ──
-    # SDXL via HF gives meaningfully higher quality than Pollinations:
-    # tighter prompt adherence, fewer mangled hands/faces, more
-    # consistent style. Promoted to primary when HF_TOKEN is set.
-    # Pollinations becomes the no-key fallback below.
-    if providers.get("huggingface", True) and os.getenv("HF_TOKEN", "").strip():
-        ai_attempts = int(vid_cfg.get("ai_image_attempts_per_shot", 3))
-        for trial in range(ai_attempts):
-            _rs.check_cancel()
-            crafted = craft_image_prompt(
-                narration_excerpt=premise,
-                visual_description=visual,
-                channel=channel,
-                attempt=trial,
-            )
-            prompt_to_use = crafted or ai_prompt
-            log.info(f"  HF prompt (try {trial+1}): {(crafted or ai_prompt)[:90]}...")
-            path, seed = _huggingface_generate(prompt_to_use, output_dir, trial)
-            if not path:
-                continue
-            if judge_on:
-                s = _score_local_image(path, visual, premise)
-                log.info(f"  HuggingFace AI: {s}/10 (seed {seed})")
-                if s >= threshold:
-                    used_ids.add(f"huggingface:{seed}")
-                    F._remember_clip(f"huggingface:{seed}")
-                    return {"type": "image", "path": path,
-                            "origin": "huggingface", "score": s}
-                if s > 0:
-                    consider(s, {"type": "image", "path": path,
-                                 "origin": "huggingface", "score": s})
-            else:
-                used_ids.add(f"huggingface:{seed}")
-                F._remember_clip(f"huggingface:{seed}")
-                return {"type": "image", "path": path,
-                        "origin": "huggingface", "score": -1}
+    # ── 3. AI image generation — priority-ordered, settings-driven ──
+    # The user configures priority + toggles in settings.image_gen.
+    # We walk providers in the declared order; each provider gets its
+    # own ai_image_attempts_per_shot budget and returns on first
+    # threshold-passing image. A disabled or key-less provider is
+    # skipped with a log line so it's obvious in the output.
+    ai_attempts = int(vid_cfg.get("ai_image_attempts_per_shot", 3))
+    ig_cfg = (load_settings().get("image_gen") or {})
+    priority = ig_cfg.get("priority") or ["huggingface", "local_sdxl", "pollinations"]
+    ig_enabled = ig_cfg.get("enabled") or {}
+    negative_prompt = str(ig_cfg.get("negative_prompt") or "").strip()
 
-    # ── 3b. Pollinations — no-key fallback when HF isn't configured ──
-    # or when HF returns nothing usable (rate-limited / off-topic).
-    if providers.get("pollinations", False):
-        ai_attempts = int(vid_cfg.get("ai_image_attempts_per_shot", 3))
+    def _provider_ready(name: str) -> tuple[bool, str]:
+        """Return (ready, reason-if-not). Combines user toggle + key/GPU check."""
+        # Master enable in settings.image_gen.enabled AND the legacy
+        # providers.<name> toggle both count as "off". Either off → skip.
+        if ig_enabled.get(name, True) is False:
+            return False, "disabled in settings"
+        if providers.get(name, True) is False:
+            return False, "disabled in providers toggle"
+        if name == "huggingface":
+            if not os.getenv("HF_TOKEN", "").strip():
+                return False, "no HF_TOKEN"
+        if name == "local_sdxl":
+            if _LOCAL_SDXL_BROKEN:
+                return False, f"local pipeline broken ({_LOCAL_SDXL_BROKEN_REASON})"
+        return True, ""
+
+    _AI_PROVIDERS = {
+        "huggingface": _huggingface_generate,
+        "local_sdxl":  _local_sdxl_generate,
+        "pollinations": _pollinations_generate,
+    }
+
+    for slot, provider_name in enumerate(priority):
+        fn = _AI_PROVIDERS.get(provider_name)
+        if fn is None:
+            log.info(f"  [ai-{slot+1}] unknown provider {provider_name!r} — skipping")
+            continue
+        ready, reason = _provider_ready(provider_name)
+        if not ready:
+            log.info(f"  [ai-{slot+1}] {provider_name}: skipped ({reason})")
+            continue
+        log.info(f"  [ai-{slot+1}] {provider_name}: trying ({ai_attempts} attempts)")
         for trial in range(ai_attempts):
             _rs.check_cancel()
             crafted = craft_image_prompt(
                 narration_excerpt=premise,
                 visual_description=visual,
                 channel=channel,
-                attempt=trial + 100,  # different seed than HF's attempts
+                # Offset per provider so each gets a distinct seed pool.
+                attempt=trial + (slot * 100),
             )
             prompt_to_use = crafted or ai_prompt
-            if crafted:
-                log.info(f"  Pollinations prompt (try {trial+1}): {crafted[:90]}...")
-            else:
-                log.info(f"  Pollinations prompt (try {trial+1}, raw): {ai_prompt[:90]}...")
-            path, seed = _pollinations_generate(prompt_to_use, output_dir, trial)
+            log.info(f"    {provider_name} prompt (try {trial+1}): {(crafted or ai_prompt)[:90]}...")
+            path, seed = fn(prompt_to_use, output_dir, trial, negative_prompt)
             if not path:
                 continue
+            tag = f"{provider_name}:{seed}"
             if judge_on:
                 s = _score_local_image(path, visual, premise)
-                log.info(f"  Pollinations AI: {s}/10 (seed {seed})")
+                log.info(f"    {provider_name}: {s}/10 (seed {seed})")
                 if s >= threshold:
-                    used_ids.add(f"pollinations:{seed}")
-                    F._remember_clip(f"pollinations:{seed}")
+                    used_ids.add(tag)
+                    F._remember_clip(tag)
                     return {"type": "image", "path": path,
-                            "origin": "pollinations", "score": s}
+                            "origin": provider_name, "score": s}
                 if s > 0:
                     consider(s, {"type": "image", "path": path,
-                                 "origin": "pollinations", "score": s})
+                                 "origin": provider_name, "score": s})
             else:
-                used_ids.add(f"pollinations:{seed}")
-                F._remember_clip(f"pollinations:{seed}")
+                used_ids.add(tag)
+                F._remember_clip(tag)
                 return {"type": "image", "path": path,
-                        "origin": "pollinations", "score": -1}
+                        "origin": provider_name, "score": -1}
 
     # ── 4. Last-resort: license the best below-threshold candidate ──
     if best is not None:

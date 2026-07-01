@@ -352,6 +352,11 @@ export default function SettingsPage() {
             </div>
           </div>
 
+          <ImageGenCard
+            imageGen={s.image_gen}
+            setImageGen={(next) => setS({ ...s, image_gen: next })}
+          />
+
           <div className="card space-y-3">
             <div className="font-medium">Footage providers</div>
             <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-3">
@@ -451,6 +456,143 @@ function Toggle({ checked, onChange, label, hint }:
         {hint && <div className="text-xs text-neutral-500">{hint}</div>}
       </div>
     </label>
+  );
+}
+
+// ── Image-generation providers card ───────────────────────────
+//
+// Three providers: HuggingFace SDXL (API, needs HF_TOKEN), Local SDXL
+// (diffusers on the worker's own GPU, no key), Pollinations Flux (API,
+// no key). The user picks the ordering (1st/2nd/3rd) and toggles each
+// independently. Shared negative prompt applies to all three — for
+// Pollinations Flux (no native field) the backend appends it as a
+// plain-English "avoid: …" clause.
+const IMAGE_GEN_PROVIDERS: { key: string; label: string; hint: string }[] = [
+  {
+    key: "huggingface",
+    label: "HuggingFace SDXL",
+    hint: "Best quality when HF_TOKEN is set. Native negative-prompt support.",
+  },
+  {
+    key: "local_sdxl",
+    label: "Local SDXL (worker GPU)",
+    hint: "Fast (~5-8 s/img), free, no rate limits. Runs on Colab/Kaggle T4. CPU workers skip.",
+  },
+  {
+    key: "pollinations",
+    label: "Pollinations Flux",
+    hint: "Free, no key. Lowest quality — good last-resort fallback.",
+  },
+];
+
+const IMAGE_GEN_DEFAULT: NonNullable<Settings["image_gen"]> = {
+  priority: ["huggingface", "local_sdxl", "pollinations"],
+  enabled: { huggingface: true, local_sdxl: true, pollinations: true } as Record<string, boolean>,
+  local_sdxl_model: "stabilityai/sdxl-turbo",
+  negative_prompt:
+    "worst quality, low quality, blurry, out of focus, distorted anatomy, extra limbs, malformed hands, missing fingers, mangled face, asymmetric eyes, low res, jpeg artifacts, watermark, signature, text, logo, cropped, frame, border, cartoon, 3d render, cgi",
+};
+
+function ImageGenCard({
+  imageGen, setImageGen,
+}: {
+  imageGen: Settings["image_gen"];
+  setImageGen: (v: Settings["image_gen"]) => void;
+}) {
+  const cfg = imageGen || IMAGE_GEN_DEFAULT;
+  const priority = cfg.priority && cfg.priority.length === 3
+    ? cfg.priority
+    : IMAGE_GEN_DEFAULT.priority;
+
+  // When the user picks a provider at slot N, swap it with whichever
+  // slot currently holds that provider. Guarantees the priority list
+  // stays a valid permutation without hidden duplicates.
+  const swapAtSlot = (slot: number, provider: string) => {
+    const cur = [...priority];
+    const otherSlot = cur.indexOf(provider);
+    if (otherSlot === -1 || otherSlot === slot) return;
+    [cur[slot], cur[otherSlot]] = [cur[otherSlot], cur[slot]];
+    setImageGen({ ...cfg, priority: cur });
+  };
+
+  const setEnabled = (k: string, v: boolean) =>
+    setImageGen({ ...cfg, enabled: { ...(cfg.enabled || {}), [k]: v } });
+
+  return (
+    <div className="card space-y-4">
+      <div>
+        <div className="font-medium">AI image generation — provider priority</div>
+        <div className="text-xs text-neutral-500 mt-0.5">
+          Backend walks left-to-right; a disabled or key-less provider is skipped.
+          Each provider gets its own <code>AI attempts per shot</code> budget.
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        {priority.map((provKey, slot) => {
+          const meta = IMAGE_GEN_PROVIDERS.find((p) => p.key === provKey);
+          const enabled = (cfg.enabled || {})[provKey] !== false;
+          return (
+            <div key={slot} className="flex items-center gap-3 card-tight">
+              <div className="pill pill-info shrink-0" title={`Priority slot ${slot + 1}`}>
+                #{slot + 1}
+              </div>
+              <select className="select flex-shrink-0 max-w-[220px]"
+                      value={provKey}
+                      onChange={(e) => swapAtSlot(slot, e.target.value)}>
+                {IMAGE_GEN_PROVIDERS.map((p) => (
+                  <option key={p.key} value={p.key}>{p.label}</option>
+                ))}
+              </select>
+              <div className="text-xs text-neutral-500 flex-1 truncate" title={meta?.hint || ""}>
+                {meta?.hint}
+              </div>
+              <button type="button" role="switch" aria-checked={enabled}
+                      onClick={() => setEnabled(provKey, !enabled)}
+                      className={clsx(
+                        "relative inline-flex h-5 w-9 shrink-0 rounded-full transition",
+                        enabled ? "bg-accent" : "bg-bg-3",
+                      )}
+                      title={enabled ? "On" : "Off"}>
+                <span className={clsx(
+                  "absolute top-0.5 h-4 w-4 rounded-full bg-white transition",
+                  enabled ? "left-4" : "left-0.5",
+                )} />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      <div>
+        <label className="label">Negative prompt (applied to all three providers)</label>
+        <textarea
+          className="input font-mono text-xs" rows={3}
+          value={cfg.negative_prompt || ""}
+          onChange={(e) => setImageGen({ ...cfg, negative_prompt: e.target.value })}
+          placeholder="worst quality, blurry, distorted anatomy, extra limbs, ..."
+        />
+        <div className="text-xs text-neutral-500 mt-1">
+          HuggingFace SDXL + Local SDXL use this as a native negative_prompt.
+          Pollinations Flux has no native field — the backend appends it as a plain
+          &quot;avoid: …&quot; clause to the prompt (weaker but non-zero effect).
+        </div>
+      </div>
+
+      <div>
+        <label className="label">Local SDXL model (HuggingFace repo id)</label>
+        <input
+          className="input font-mono text-xs"
+          value={cfg.local_sdxl_model || ""}
+          onChange={(e) => setImageGen({ ...cfg, local_sdxl_model: e.target.value })}
+          placeholder="stabilityai/sdxl-turbo"
+        />
+        <div className="text-xs text-neutral-500 mt-1">
+          Default: <code>stabilityai/sdxl-turbo</code> — fits in 8 GB VRAM, 4 steps per image.
+          For full-quality output at ~25 steps use <code>stabilityai/stable-diffusion-xl-base-1.0</code>.
+        </div>
+      </div>
+    </div>
   );
 }
 
