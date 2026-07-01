@@ -156,40 +156,46 @@ export async function POST(req: NextRequest) {
       youtube_account_id,
     };
 
-    // Pick a worker. If one is alive, dispatch immediately.
+    // Pick a URL-based worker (tunnel mode) for direct HTTP dispatch.
     const workers = await pickWorkers();
     const target = workers[0];
 
-    // Decide UP-FRONT whether to wake Kaggle. Fire the workflow_dispatch
-    // in PARALLEL with worker dispatch so the user doesn't wait.
+    // Wake-Kaggle logic. Fires ONLY when there's genuinely no worker
+    // available — a live worker (URL-based OR outbound-poll) that has
+    // headroom should absorb the new job.
     //
-    // BUG FIX: previously we filtered by `status === "available"`, which
-    // meant a Kaggle worker that was BUSY on another job triggered a
-    // fresh dispatch — spawning duplicate instances. A busy GPU worker
-    // WILL claim the job as soon as it's free; no need to burn a fresh
-    // Kaggle boot (which eats the 30-hr/wk budget).
+    // Headroom = the existing worker isn't so overloaded that queuing
+    // this job on it would be worse than a fresh Kaggle boot. Signals:
+    //   - GPU util > 90% for the last heartbeat, OR
+    //   - Queue depth > 3 already pending on that worker
+    // For a P100 + serial-job pipeline, these thresholds mean "the
+    // running job hasn't started rendering yet AND enough are already
+    // in front of you that another 5-10 min wait would beat a fresh
+    // 90-sec boot".
     //
-    // Also: dedupe against a recent dispatch within DEDUP_MS so a
-    // rapid job-submission burst doesn't fire multiple workflows.
-    const liveGpu = workers.some((w) => w.tier === "gpu");
+    // Rapid job bursts share the same wake via a 90-sec idempotency
+    // window in queue_state.kaggle_dispatch.last_woken_at.
+    const anyLive = await _liveGpuWithHeadroom();
     const nowSec = Date.now() / 1000;
-    const DEDUP_SEC = 90; // don't fire twice within 1.5 min
+    const DEDUP_SEC = 90;
     let wakePromise: Promise<void> | null = null;
-    if (!liveGpu) {
-      // Idempotency check via PB kaggle_dispatch/latest.
+
+    if (anyLive.ok) {
+      logRoute(reqId, "kaggle wake SKIPPED (live worker with headroom)", {
+        instance_id: anyLive.instance_id,
+        gpu_util:    anyLive.gpu_util,
+        queue_depth: anyLive.queue_depth,
+      });
+    } else {
       const skip = await _wasWokenRecently(nowSec, DEDUP_SEC);
       if (skip) {
-        logRoute(reqId, "kaggle wake SUPPRESSED (recent dispatch)", { within_sec: DEDUP_SEC });
+        logRoute(reqId, "kaggle wake SUPPRESSED (recent dispatch within 90s)", {});
       } else {
-        logRoute(reqId, "no live GPU worker (any status) — triggering kaggle workflow", {
-          any_worker: !!target, target_tier: target?.tier,
+        logRoute(reqId, "kaggle wake TRIGGERED", {
+          reason: anyLive.reason,
         });
         wakePromise = _maybeWakeKaggle(reqId).then(() => _markKaggleWoken(nowSec));
       }
-    } else {
-      logRoute(reqId, "kaggle wake SKIPPED (live GPU worker exists)", {
-        count: workers.filter(w => w.tier === "gpu").length,
-      });
     }
 
     if (target) {
@@ -261,6 +267,75 @@ export async function POST(req: NextRequest) {
     logRoute(reqId, "POST jobs failed", { err: String(e) });
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }
+}
+
+/**
+ * Return whether ANY GPU worker is alive AND has headroom for another
+ * queued job. Reads backends collection directly so outbound-poll
+ * workers (Kaggle/Colab on Coolify, url='') are counted alongside
+ * URL-based tunnel workers.
+ *
+ * Definition of "has headroom":
+ *   - Heartbeat is fresh (last_seen_at within 180 s), AND
+ *   - queue_depth on that worker is < 4, AND
+ *   - gpu.util_percent < 90 (unset counts as ok).
+ *
+ * If any GPU worker satisfies all three, we return ok=true and the
+ * new job just enqueues behind whatever it's already running. No
+ * fresh Kaggle dispatch fires. This is the correct default — a single
+ * P100 renders serially and can absorb a small queue.
+ */
+async function _liveGpuWithHeadroom(): Promise<{
+  ok: boolean;
+  reason?: string;
+  instance_id?: string;
+  gpu_util?: number | null;
+  queue_depth?: number;
+}> {
+  try {
+    const snap = await adminDb().collection("backends").limit(50).get();
+    const nowMs = Date.now();
+    const cutoff = nowMs - 180_000;
+    let bestReason = "no GPU worker alive";
+    for (const d of snap.docs) {
+      const v = d.data() as {
+        tier?: string;
+        last_seen_at?: unknown;
+        queue_depth?: number;
+        stats?: { gpu?: { util_percent?: number | null } | null };
+        instance_id?: string;
+      };
+      if (v.tier !== "gpu") continue;
+      const lastMs = _epochToMs(v.last_seen_at);
+      if (lastMs == null || lastMs < cutoff) continue;
+      const qd = Number(v.queue_depth ?? 0);
+      const gu = v.stats?.gpu?.util_percent;
+      if (qd >= 4) {
+        bestReason = `existing worker overloaded (queue_depth=${qd})`;
+        continue;
+      }
+      if (typeof gu === "number" && gu >= 90) {
+        bestReason = `existing worker GPU saturated (util=${gu}%)`;
+        continue;
+      }
+      return {
+        ok: true,
+        instance_id: v.instance_id,
+        gpu_util:    typeof gu === "number" ? gu : null,
+        queue_depth: qd,
+      };
+    }
+    return { ok: false, reason: bestReason };
+  } catch (e) {
+    return { ok: false, reason: `backends read failed: ${String(e)}` };
+  }
+}
+
+function _epochToMs(v: unknown): number | null {
+  if (v == null) return null;
+  if (typeof v === "number") return v > 1e11 ? v : v * 1000;
+  if (typeof v === "string" && /^\d/.test(v)) return _epochToMs(Number(v));
+  return null;
 }
 
 /**
