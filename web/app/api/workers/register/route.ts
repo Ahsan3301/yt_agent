@@ -52,6 +52,24 @@ export async function POST(req: NextRequest) {
     const existing = existingSnap.exists ? (existingSnap.data() || {}) : {};
     const shutdown_pending = !!existing.shutdown_pending;
 
+    // Short-circuit: if the dashboard has flagged this worker for
+    // shutdown, do NOT refresh its last_seen_at or reset its status.
+    // Reason: a zombie worker on pre-SIGKILL code that ignores the
+    // shutdown signal was previously keeping its row alive forever
+    // via heartbeats, so the Monitor card kept re-appearing after
+    // Terminate. Now the row goes stale (no last_seen_at bumps) and
+    // the frontend's 3-min freshness filter hides it. We still echo
+    // shutdown:true in the response so a NEW-code worker exits
+    // immediately on the same call.
+    if (shutdown_pending) {
+      return NextResponse.json({
+        ok:       true,
+        id:       instance_id,
+        shutdown: true,
+        note:     "shutdown_pending set; row will not be refreshed until it is deleted or the flag is cleared",
+      });
+    }
+
     // Sample rate: heartbeats can arrive with stats (cpu/mem/gpu/disk)
     // in the body. Passing them through means the Monitor page reads
     // fresh numbers from PB without needing an inbound URL on the

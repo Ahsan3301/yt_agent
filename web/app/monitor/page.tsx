@@ -68,6 +68,14 @@ export default function MonitorPage() {
               const d = doc.data() as Record<string, unknown>;
               const last = _firestoreEpoch(d.last_seen_at ?? d.last_seen);
               if (last !== null && last < cutoff) return;
+              // A worker flagged for shutdown is treated as gone
+              // immediately — its card must disappear even if the
+              // zombie process keeps trying to heartbeat. The register
+              // route already refuses to refresh last_seen_at for
+              // shutdown_pending rows, but a fresh flag can survive a
+              // stale-cutoff for up to 3 min; filtering here is what
+              // makes Terminate feel instant to the user.
+              if (d.shutdown_pending === true || d.status === "terminating") return;
               // Outbound-poll workers (Kaggle/Colab on Coolify) have no
               // URL by design — the dashboard NEVER connects TO them.
               // Include them anyway so the Monitor shows a card; live

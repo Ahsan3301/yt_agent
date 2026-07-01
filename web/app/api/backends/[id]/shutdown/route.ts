@@ -53,36 +53,40 @@ export async function POST(
       //      eventually kill the kernel; meanwhile the dashboard is
       //      clean.
       const activeJobId = String((data as { active_job_id?: string }).active_job_id || "");
+      // DO NOT delete the row. If we delete it, the worker's next
+      // heartbeat (5-30 s later) hits /api/workers/register and creates
+      // a fresh row with shutdown_pending=false — Terminate becomes a
+      // no-op on zombie workers. Instead we FLAG the row; the register
+      // route now short-circuits on shutdown_pending and refuses to
+      // refresh last_seen_at, so the row goes stale and the Monitor's
+      // 3-min freshness filter hides it. A NEW-code worker sees
+      // shutdown:true in the response and SIGKILLs itself immediately.
       try {
         await adminDb().collection("backends").doc(id).update({
-          shutdown_pending: true,
-          shutdown_requested_at: Date.now() / 1000,
-          status: "terminating",
+          shutdown_pending:       true,
+          shutdown_requested_at:  Date.now() / 1000,
+          status:                 "terminating",
         });
-      } catch { /* best-effort — proceed to job kill + delete */ }
+      } catch { /* best-effort */ }
 
       if (activeJobId) {
         try {
           await adminDb().collection("jobs").doc(activeJobId).update({
-            status: "failed",
-            error: "worker terminated from dashboard",
+            status:      "failed",
+            error:       "worker terminated from dashboard",
             finished_at: Date.now() / 1000,
           });
         } catch { /* best-effort */ }
       }
 
-      try {
-        await adminDb().collection("backends").doc(id).delete();
-      } catch { /* best-effort */ }
-
       return NextResponse.json({
         ok: true,
         mode: "outbound_poll_forced",
         active_job_failed: !!activeJobId,
-        note: "shutdown signalled + row deleted + active job failed; " +
-              "if worker is on old code the kernel may keep running until " +
-              "the free-tier watchdog kills it (Kaggle: ~12h idle, Colab: " +
-              "~90 min idle)",
+        note: "shutdown flagged + active job failed; row stays but the register " +
+              "route refuses to refresh it, so the Monitor freshness filter " +
+              "(~3 min) hides the card and the cleanup-stale cron deletes " +
+              "the tombstone.",
       });
     }
 
