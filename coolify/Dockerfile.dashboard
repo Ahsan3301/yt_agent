@@ -27,8 +27,15 @@ FROM node:20-alpine AS builder
 WORKDIR /app/web
 COPY web/ .
 COPY --from=deps /app/web/node_modules ./node_modules
-# Next.js needs to be able to write the .next/cache during build —
-# nothing fancy here.
+# NEXT_PUBLIC_* env vars are inlined at build time — if we don't pass
+# them here, any component that reads process.env.NEXT_PUBLIC_* gets
+# an empty string at runtime. Pass through the ones the UI depends on.
+ARG NEXT_PUBLIC_COLAB_URL=https://colab.research.google.com/github/Ahsan3301/yt_agent/blob/main/colab/yt_agent_colab.ipynb
+ARG NEXT_PUBLIC_HF_SPACE_URL=
+ARG NEXT_PUBLIC_PB_URL=/pb
+ENV NEXT_PUBLIC_COLAB_URL=$NEXT_PUBLIC_COLAB_URL
+ENV NEXT_PUBLIC_HF_SPACE_URL=$NEXT_PUBLIC_HF_SPACE_URL
+ENV NEXT_PUBLIC_PB_URL=$NEXT_PUBLIC_PB_URL
 RUN npm run build
 
 # ── Stage 3: runner ────────────────────────────────────────────────
