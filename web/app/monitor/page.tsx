@@ -298,30 +298,39 @@ function BackendCard({ bs }: { bs: BackendState }) {
         </div>
       </div>
 
-      {/* Active job (if any) */}
-      {stats?.active_job ? (
-        <div className="rounded-md border border-amber-500/20 bg-amber-500/5 p-3 text-sm space-y-1.5">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 text-amber-300 font-medium">
-              <Activity className="h-4 w-4" />
-              {stats.active_job.current_step_label || stats.active_job.current_step || "running"}
+      {/* Active job. Two sources:
+          - `stats.active_job` from URL-based /api/stats poll (tunnel mode).
+          - `entry.active_job` from /api/backends (PB job lookup) — set
+            when the worker is outbound-poll and its heartbeat carried
+            active_job_id. Prefer the PB path since it's fresher than
+            the polled /api/stats (which caches). */}
+      {(entry.active_job || stats?.active_job) ? (() => {
+        const job = entry.active_job || stats?.active_job || null;
+        if (!job) return null;
+        return (
+          <div className="rounded-md border border-amber-500/20 bg-amber-500/5 p-3 text-sm space-y-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-amber-300 font-medium">
+                <Activity className="h-4 w-4" />
+                {job.current_step_label || job.current_step || "running"}
+              </div>
+              <div className="font-mono text-xs text-amber-200">
+                {Math.round(job.percent ?? 0)}%
+              </div>
             </div>
-            <div className="font-mono text-xs text-amber-200">
-              {Math.round(stats.active_job.percent ?? 0)}%
+            <div className="text-xs text-neutral-400 font-mono truncate">
+              run <span className="text-neutral-200">{job.run_id || job.id}</span>
+              {job.channel && (
+                <span> · ch:{job.channel}</span>
+              )}
+            </div>
+            <div className="progress-track h-1">
+              <div className="progress-fill h-1"
+                style={{ width: `${Math.max(2, job.percent ?? 0)}%` }} />
             </div>
           </div>
-          <div className="text-xs text-neutral-400 font-mono truncate">
-            run <span className="text-neutral-200">{stats.active_job.run_id || stats.active_job.id}</span>
-            {stats.active_job.channel && (
-              <span> · ch:{stats.active_job.channel}</span>
-            )}
-          </div>
-          <div className="progress-track h-1">
-            <div className="progress-fill h-1"
-              style={{ width: `${Math.max(2, stats.active_job.percent ?? 0)}%` }} />
-          </div>
-        </div>
-      ) : reachable ? (
+        );
+      })() : reachable ? (
         <div className="text-xs text-neutral-500 italic">No active job</div>
       ) : null}
 

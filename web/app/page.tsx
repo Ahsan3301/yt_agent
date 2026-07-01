@@ -252,8 +252,16 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Live backend logs — always mounted; polls faster while a job runs */}
-      <LogsPanel active={isRunning} />
+      {/* Live backend logs. Passing runId flips LogsPanel into the
+          dashboard-side polling path (reads /api/runs/<id>/logs → PB
+          run_logs). Without runId it would fall back to the legacy
+          worker-URL polling path which is empty on outbound-poll
+          deployments and left the panel stuck at 'Waiting for
+          backend output…'. */}
+      <LogsPanel
+        active={isRunning}
+        runId={state.run_id || latest?.run_id || undefined}
+      />
 
       {/* Latest finished run */}
       {!isRunning && latest && (

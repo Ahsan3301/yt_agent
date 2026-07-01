@@ -21,13 +21,65 @@ export async function GET() {
     const snap = await adminDb().collection("backends").limit(100).get();
     const now = Date.now();
     const out: Array<Record<string, unknown>> = [];
+
+    // Pre-fetch active jobs so Monitor cards can render progress + step
+    // for outbound-poll workers (their /api/stats can't be polled).
+    // Collects the set of active_job_ids and fetches them ONCE in
+    // parallel — bounded by the number of alive workers (usually 1).
+    const activeIds = new Set<string>();
+    snap.forEach((doc) => {
+      const d = doc.data() as { active_job_id?: string };
+      if (d.active_job_id) activeIds.add(d.active_job_id);
+    });
+    const jobsById = new Map<string, Record<string, unknown>>();
+    await Promise.all([...activeIds].map(async (jid) => {
+      try {
+        const j = await adminDb().collection("jobs").doc(jid).get();
+        if (j.exists) jobsById.set(jid, j.data() || {});
+      } catch { /* worker may have a stale id; ignore */ }
+    }));
+    // Docs we delete inline — corpse cleanup so the Monitor page doesn't
+    // show a 'ghost' worker for 3 min after Terminate.
+    const stalePendingIds: string[] = [];
     snap.forEach((doc) => {
       const d = doc.data() as Record<string, unknown>;
       const lastMs = toEpochMs(d.last_seen_at ?? d.last_seen);
       const startedMs = toEpochMs(d.started_at);
-      // 3 min freshness window — matches the Firestore-branch code.
       const alive = lastMs != null && (now - lastMs) < 180_000;
-      if (!alive && !lastMs) return; // no heartbeat ever → hide
+      const shutdown_pending = !!d.shutdown_pending;
+
+      // Aggressive cleanup for terminated workers:
+      //   - shutdown_pending flag was set (dashboard sent Terminate), AND
+      //   - heartbeat stopped >30 s ago (worker acted on the flag).
+      // Once both are true, the worker will never come back — remove
+      // the row so the UI stops showing a stale card. 30 s is our
+      // slack for one missed heartbeat before we call it gone.
+      if (shutdown_pending && lastMs != null && (now - lastMs) > 30_000) {
+        stalePendingIds.push(doc.id);
+        return;
+      }
+      // Also drop rows without ANY heartbeat (broken register).
+      if (!lastMs) return;
+      // Drop rows silent for >30 min — worker died without deregister.
+      if ((now - lastMs) > 30 * 60_000) {
+        stalePendingIds.push(doc.id);
+        return;
+      }
+      // Inline the active job so the Monitor card can show step +
+      // progress without a per-card fetch. Only sends the fields the UI
+      // actually reads.
+      const activeJobId = String(d.active_job_id || "");
+      const job = activeJobId ? jobsById.get(activeJobId) : null;
+      const active_job = job ? {
+        id:                  activeJobId,
+        run_id:              String(job.run_id || ""),
+        channel:             String(job.channel || ""),
+        current_step:        String(job.current_step || ""),
+        current_step_label:  String(job.current_step_label || ""),
+        percent:             Number(job.percent ?? 0),
+        started_at:          Number(job.started_at ?? 0),
+      } : null;
+
       out.push({
         instance_id: (d.instance_id as string) || doc.id,
         url:         String(d.url || ""),
@@ -41,13 +93,19 @@ export async function GET() {
         version:     (d.version as string) ?? null,
         alive,
         mode:        (d.mode as string) || "unknown",
-        // Latest resource stats pushed by the worker via heartbeat.
-        // null on legacy workers that don't include stats in payload.
         stats:       (d.stats as Record<string, unknown>) ?? null,
-        shutdown_pending: !!d.shutdown_pending,
+        active_job_id: activeJobId,
+        active_job,
+        shutdown_pending,
       });
     });
-    // Fresh workers first.
+    // Fire-and-forget cleanup. Don't await — Monitor should get its
+    // fresh list immediately; deletes happen in the background.
+    if (stalePendingIds.length > 0) {
+      Promise.all(stalePendingIds.map((id) =>
+        adminDb().collection("backends").doc(id).delete().catch(() => null),
+      ));
+    }
     out.sort((a, b) => Number(b.last_seen) - Number(a.last_seen));
     return NextResponse.json(out);
   } catch (e) {

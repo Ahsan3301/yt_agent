@@ -10,10 +10,13 @@ export default function HistoryPage() {
   const [runs, setRuns] = useState<Run[]>([]);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const refresh = async () => {
     setLoading(true);
     try { setRuns(await listRuns()); } catch {}
+    setSelected(new Set());
     setLoading(false);
   };
   useEffect(() => { refresh(); }, []);
@@ -24,11 +27,114 @@ export default function HistoryPage() {
     refresh();
   };
 
+  const toggleSel = (id: string) => {
+    const s = new Set(selected);
+    if (s.has(id)) s.delete(id); else s.add(id);
+    setSelected(s);
+  };
+  const toggleAll = () => {
+    if (selected.size === runs.length) setSelected(new Set());
+    else setSelected(new Set(runs.map((r) => r.run_id)));
+  };
+
+  const onBulkDelete = async () => {
+    if (selected.size === 0) return;
+    if (!confirm(`Delete ${selected.size} run(s)? This removes the video files + all logs.`)) return;
+    setBulkBusy(true);
+    try {
+      const r = await fetch("/api/runs/bulk-delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ run_ids: [...selected] }),
+      });
+      const d = await r.json();
+      if (!r.ok) alert(`Bulk delete failed: ${d.error || r.statusText}`);
+      else if (d.fully_deleted < d.requested) {
+        alert(`${d.fully_deleted}/${d.requested} deleted cleanly. Check /health for the rest.`);
+      }
+    } catch (e) {
+      alert(`Bulk delete failed: ${String(e)}`);
+    }
+    setBulkBusy(false);
+    refresh();
+  };
+
+  const allChecked = runs.length > 0 && selected.size === runs.length;
+
+  const [pruneDays, setPruneDays] = useState<number>(30);
+  const [pruneBusy, setPruneBusy] = useState(false);
+  const onPrune = async () => {
+    if (!Number.isFinite(pruneDays) || pruneDays < 1) return;
+    // Dry-run first so the user sees the count before committing.
+    setPruneBusy(true);
+    try {
+      const dry = await fetch("/api/runs/prune", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ older_than_days: pruneDays, dry_run: true }),
+      }).then((r) => r.json());
+      const n = Number(dry.would_delete || 0);
+      if (n === 0) { alert(`No runs older than ${pruneDays} days.`); setPruneBusy(false); return; }
+      if (!confirm(`Delete ${n} run(s) older than ${pruneDays} days? Videos + logs go too.`)) {
+        setPruneBusy(false); return;
+      }
+      const real = await fetch("/api/runs/prune", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ older_than_days: pruneDays }),
+      }).then((r) => r.json());
+      alert(`Pruned ${real.fully_deleted}/${real.requested} runs.`);
+      refresh();
+    } catch (e) {
+      alert(`Prune failed: ${String(e)}`);
+    }
+    setPruneBusy(false);
+  };
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Run history</h1>
-        <p className="text-sm text-neutral-400">{runs.length} runs · most recent first</p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Run history</h1>
+          <p className="text-sm text-neutral-400">{runs.length} runs · most recent first</p>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          {runs.length > 0 && (
+            <button className="btn btn-ghost text-xs" onClick={toggleAll}>
+              {allChecked ? "Deselect all" : "Select all"}
+            </button>
+          )}
+          <div className="flex items-center gap-1">
+            <span className="text-xs text-neutral-400">Prune older than</span>
+            <input
+              type="number" min={1} max={3650}
+              value={pruneDays}
+              onChange={(e) => setPruneDays(Number(e.target.value) || 30)}
+              className="input h-8 w-16 text-xs"
+              aria-label="Days"
+            />
+            <span className="text-xs text-neutral-400">days</span>
+            <button
+              className="btn btn-ghost text-xs"
+              disabled={pruneBusy}
+              onClick={onPrune}
+              title="Delete every run finished more than N days ago. Confirms count before committing."
+            >
+              {pruneBusy ? "…" : "Prune"}
+            </button>
+          </div>
+          {selected.size > 0 && (
+            <button
+              className="btn btn-danger"
+              disabled={bulkBusy}
+              onClick={onBulkDelete}
+              title="Deletes the video files + Pocketbase rows + log tails for every selected run."
+            >
+              <Trash2 className="h-4 w-4" />
+              {bulkBusy ? "Deleting…" : `Delete ${selected.size} run${selected.size > 1 ? "s" : ""}`}
+            </button>
+          )}
+        </div>
       </div>
 
       {loading && <div className="text-neutral-400">Loading…</div>}
@@ -41,8 +147,17 @@ export default function HistoryPage() {
       <div className="space-y-3">
         {runs.map((r) => {
           const open = !!expanded[r.run_id];
+          const checked = selected.has(r.run_id);
           return (
             <div key={r.run_id} className="card">
+              <div className="flex items-start gap-3">
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggleSel(r.run_id)}
+                  className="mt-1.5 shrink-0"
+                  aria-label={`Select run ${r.run_id}`}
+                />
               <button
                 onClick={() => setExpanded({ ...expanded, [r.run_id]: !open })}
                 className="w-full flex items-start justify-between text-left"
@@ -79,6 +194,7 @@ export default function HistoryPage() {
                   {r.ok === false && <XCircle className="h-4 w-4 text-red-400" />}
                 </div>
               </button>
+              </div>
 
               {open && (
                 <div className="mt-4 space-y-3 border-t border-line pt-4">

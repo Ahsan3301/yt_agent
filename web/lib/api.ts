@@ -44,6 +44,18 @@ export type RegistryEntry = {
     sampled_at?: number;
   } | null;
   shutdown_pending?: boolean;
+  // Populated by /api/backends when the worker's active_job_id has a
+  // matching row in the jobs collection. Lets the Monitor card render
+  // step + progress for outbound-poll workers (no /api/stats to poll).
+  active_job?: {
+    id: string;
+    run_id?: string | null;
+    channel?: string;
+    current_step?: string;
+    current_step_label?: string;
+    percent?: number;
+    started_at?: number;
+  } | null;
 };
 
 let _cached: { at: number; url: string } | null = null;
