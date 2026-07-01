@@ -181,6 +181,16 @@ def _try_num(s):
 
 
 def _self_payload(queue_depth: int) -> dict:
+    # Best-effort: include the ID of the job we're currently running so
+    # the Monitor card can show "Working on <job>" instead of "No active
+    # job". Import lazily to avoid a startup cycle (jobs imports
+    # registry via the notifier).
+    active_job_id = ""
+    try:
+        from backend import jobs as _jobs
+        active_job_id = _jobs._active_job_id or ""
+    except Exception:
+        pass
     return {
         "instance_id":  INSTANCE_ID,
         "url":          public_url(),
@@ -188,6 +198,7 @@ def _self_payload(queue_depth: int) -> dict:
         "queue_depth":  int(queue_depth),
         "tier":         INSTANCE_TIER,
         "label":        INSTANCE_LABEL or None,
+        "active_job_id": active_job_id,
         # Real GPU model from nvidia-smi (e.g. "Tesla P100-PCIE-16GB").
         # Empty string on CPU-only workers — frontend can show "—".
         "gpu_name":     GPU_NAME or None,

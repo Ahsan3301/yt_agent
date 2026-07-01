@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase-admin";
 import { toEpochMs } from "@/lib/timestamps";
+import { newRequestId, logRoute } from "@/app/api/_lib/orchestrator";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -22,6 +23,7 @@ export const runtime = "nodejs";
  *   }
  */
 export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const reqId = newRequestId();
   const { id } = await ctx.params;
   const sinceRaw = req.nextUrl.searchParams.get("since") || "0";
   const since = Number(sinceRaw) || 0;
@@ -31,6 +33,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     let q = adminDb().collection("run_logs").where("run_id", "==", id);
     if (since > 0) q = q.where("ts", ">", since);
     const snap = await q.limit(limit).get();
+    logRoute(reqId, "run logs", { run_id: id, since, returned: snap.docs.length });
     const lines = snap.docs
       .map((d) => {
         const v = d.data() as Record<string, unknown>;
