@@ -408,8 +408,14 @@ def _local_sdxl_load():
     # WARN so it lands on the dashboard's realtime log stream.
     log.warning(
         f"local_sdxl: loading pipeline model={model_id!r} — first-load "
-        f"download can be several GB and take 30-90 sec."
+        f"download can be 2-5 min on a fresh Colab/Kaggle runtime "
+        f"(cached for the rest of the session)."
     )
+    # Hard timeout on the download so a genuinely stuck fetch (HF outage,
+    # network drop) bails the provider instead of blocking every shot.
+    # Falls through to the next provider in the priority loop. 6 min is
+    # generous — a healthy fetch finishes in 60-120 sec.
+    os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "360")
     try:
         # bfloat16 gives quality parity with fp16 on Ampere+/Hopper and
         # avoids some VAE overflow artifacts. Fall back to fp16 on Turing
