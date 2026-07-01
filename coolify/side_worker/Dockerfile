@@ -34,6 +34,9 @@ RUN pip install --no-cache-dir --upgrade pip && \
         google-auth>=2.28 \
         google-auth-oauthlib>=1.2 \
         google-auth-httplib2>=0.2 \
-        pillow>=10.0
+        pillow>=10.0 \
+        python-dotenv>=1.0 \
+        cryptography>=41 \
+        pynacl>=1.5
 
 CMD ["python", "-u", "/app/entrypoint.py"]

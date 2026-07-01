@@ -174,7 +174,7 @@ def _copy_storage(job: dict[str, Any]) -> tuple[bool, str]:
 
     try:
         from backend.storage import registry
-        provider = registry.load_by_id(provider_id)
+        provider = registry.get(provider_id)
         if not provider:
             return False, f"provider {provider_id} not found or disabled"
         remote_key = f"videos/{run_id}.mp4"
