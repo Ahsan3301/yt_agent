@@ -120,7 +120,7 @@ export default function LogsPanel({
     let sinceTs = 0;
     const tick = async () => {
       if (cancelled) return;
-      const delay = active ? 1500 : 5000;
+      const delay = active ? 2500 : 8000;
       if (!paused) {
         try {
           const r = await fetch(

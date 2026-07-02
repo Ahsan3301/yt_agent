@@ -67,11 +67,24 @@ function publicUrlFor(bucket: string, key: string): string {
   return "";
 }
 
+// In-memory cache. /api/runs is polled every 15s by the history page +
+// every dashboard load also fetches it — without a cache we did a full
+// MinIO ListObjectsV2 round-trip on every hit. 30s TTL is well below
+// the user-visible staleness threshold (a freshly-copied video appears
+// within 30s of hitting MinIO) and cuts S3 API calls ~20x.
+let _cache: { at: number; videos: StorageVideo[] } | null = null;
+const CACHE_TTL_MS = 30_000;
+
 /** List all `videos/*.mp4` objects in the primary bucket.
  *  Returns [] on any error — this is a best-effort augmentation, not
  *  a source of truth, so we swallow failures and let runs_index be the
- *  primary answer. */
+ *  primary answer.
+ *
+ *  Cached for 30 seconds — dashboard + history poll this frequently. */
 export async function listStorageVideos(): Promise<StorageVideo[]> {
+  if (_cache && Date.now() - _cache.at < CACHE_TTL_MS) {
+    return _cache.videos;
+  }
   const c = client();
   const bucket = process.env.S3_BUCKET || "yt-agent-videos";
   if (!c) return [];
@@ -106,5 +119,13 @@ export async function listStorageVideos(): Promise<StorageVideo[]> {
     // Best-effort; log and return whatever we already have.
     console.warn("listStorageVideos failed:", e);
   }
+  _cache = { at: Date.now(), videos: out };
   return out;
+}
+
+/** Invalidate the storage listing cache. Call after a copy_storage
+ *  side-job so the new video shows up in /api/runs on the next call
+ *  instead of waiting for the 30s TTL. */
+export function invalidateStorageCache(): void {
+  _cache = null;
 }

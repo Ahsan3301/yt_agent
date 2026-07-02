@@ -50,7 +50,7 @@ export default function HistoryPage() {
     load();
     // Refresh backends every 15s so a freshly-booted worker shows up
     // in the target dropdown without a page reload.
-    const t = setInterval(load, 15_000);
+    const t = setInterval(load, 30_000);
     return () => clearInterval(t);
   }, []);
 

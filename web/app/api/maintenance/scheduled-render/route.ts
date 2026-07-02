@@ -39,9 +39,18 @@ export async function POST(req: NextRequest) {
     // Loose typing — the Firestore doc shape evolves over time
     // (web_research was added later) so cast to a permissive record
     // and read fields defensively.
-    const data: Record<string, unknown> = snap.exists
+    // Pocketbase-shape docs nest the Firestore payload under a `data`
+    // JSON column, so snap.data() returns {data: {enabled, ...}, updated_at, ...}.
+    // Firestore-native returns the fields flat. Unwrap once with a
+    // fallback so this route works on both backends. Was reading
+    // `data.enabled` at the outer level → always undefined on PB
+    // → scheduler was silently disabled since the Firestore→PB migration.
+    const rawSnap = snap.exists
       ? (snap.data() || {}) as Record<string, unknown>
-      : (DEFAULT_SCHEDULE as Record<string, unknown>);
+      : {};
+    const data: Record<string, unknown> = rawSnap.data && typeof rawSnap.data === "object"
+      ? (rawSnap.data as Record<string, unknown>)
+      : { ...(DEFAULT_SCHEDULE as Record<string, unknown>), ...rawSnap };
     const enabled = !!data.enabled;
     if (!enabled) {
       logRoute(reqId, "schedule disabled");

@@ -79,7 +79,7 @@ export default function QueuePage() {
     refreshPause();
     // Backed off to 5s — matches the cache TTL on /api/jobs to avoid
     // wasted Firestore reads.
-    const t = setInterval(refresh, 5000);
+    const t = setInterval(refresh, 8000);
     return () => clearInterval(t);
   }, []);
 
