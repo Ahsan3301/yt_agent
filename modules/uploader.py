@@ -159,8 +159,64 @@ def get_youtube_client(account_id: str | None = None):
     return build("youtube", "v3", credentials=creds)
 
 
-def _resumable_upload(request, max_retries=5):
-    """Drive a resumable upload, retrying transient errors."""
+_RETRIABLE_HTTP = (408, 429, 500, 502, 503, 504)
+# 403 reasons that YouTube documents as transient — DIFFERENT from
+# 'quotaExceeded' which is a hard daily-quota fail and should not retry.
+_RETRIABLE_403_REASONS = {
+    "rateLimitExceeded",
+    "userRateLimitExceeded",
+    "backendError",
+    "internalError",
+}
+
+
+def _is_retriable_httperror(e) -> tuple[bool, str]:
+    """Classify a googleapiclient HttpError. Returns (retriable, reason)."""
+    status = getattr(e.resp, "status", None)
+    if status in _RETRIABLE_HTTP:
+        return True, f"HTTP {status}"
+    if status == 403:
+        # Body carries {"error":{"errors":[{"reason":"..."}]}}
+        try:
+            import json as _json
+            body = _json.loads(e.content.decode("utf-8", "replace")) if e.content else {}
+            errors = (body.get("error") or {}).get("errors") or []
+            reason = (errors[0].get("reason") if errors else "") or ""
+            if reason in _RETRIABLE_403_REASONS:
+                return True, f"403 {reason}"
+        except Exception:
+            pass
+    return False, f"HTTP {status}"
+
+
+def _is_retriable_network(e) -> bool:
+    """Classify a non-HttpError as transient network trouble."""
+    import socket
+    import ssl
+    import http.client
+    return isinstance(e, (
+        socket.timeout, socket.error,
+        ssl.SSLError,
+        http.client.IncompleteRead, http.client.RemoteDisconnected,
+        ConnectionError, TimeoutError,
+    ))
+
+
+def _resumable_upload(request, max_retries=8):
+    """Drive a resumable upload, retrying transient errors.
+
+    Retries on:
+      - HTTP 408, 429, 500, 502, 503, 504
+      - HTTP 403 with reason in {rateLimitExceeded, userRateLimitExceeded,
+        backendError, internalError}
+      - Socket / SSL / IncompleteRead / RemoteDisconnected / generic
+        ConnectionError / TimeoutError
+
+    Everything else raises. Exponential backoff with jitter, capped at 60 s
+    per attempt so a rate-limited upload can eventually succeed instead of
+    burning the retry budget in the first 30 seconds.
+    """
+    import random as _random
     response = None
     retry_n = 0
     while response is None:
@@ -169,14 +225,27 @@ def _resumable_upload(request, max_retries=5):
             if status:
                 log.info(f"Upload progress: {int(status.progress() * 100)}%")
         except HttpError as e:
-            # 5xx + 403 rateLimit/quota → retry.
-            if e.resp.status in (500, 502, 503, 504) and retry_n < max_retries:
-                retry_n += 1
-                sleep = 2 ** retry_n
-                log.warning(f"Upload chunk error {e.resp.status}; retry {retry_n}/{max_retries} in {sleep}s")
-                time.sleep(sleep)
-                continue
-            raise
+            retriable, reason = _is_retriable_httperror(e)
+            if not retriable or retry_n >= max_retries:
+                log.error(f"Upload chunk error {reason}; giving up after {retry_n} retries")
+                raise
+            retry_n += 1
+            base = min(60, 2 ** retry_n)
+            sleep = base + _random.uniform(0, 2)
+            log.warning(f"Upload chunk error {reason}; retry {retry_n}/{max_retries} in {sleep:.1f}s")
+            time.sleep(sleep)
+        except Exception as e:
+            if not _is_retriable_network(e) or retry_n >= max_retries:
+                log.error(f"Upload chunk fatal ({type(e).__name__}: {e}); no retry")
+                raise
+            retry_n += 1
+            base = min(60, 2 ** retry_n)
+            sleep = base + _random.uniform(0, 2)
+            log.warning(
+                f"Upload chunk network error ({type(e).__name__}: {e}); "
+                f"retry {retry_n}/{max_retries} in {sleep:.1f}s"
+            )
+            time.sleep(sleep)
     return response
 
 

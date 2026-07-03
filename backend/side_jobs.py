@@ -65,16 +65,55 @@ def _get_run_video(run_id: str) -> str | None:
                 url = str(data.get("video_url") or data.get("public_url") or "")
         if not url or not url.startswith("http"):
             return None
-        # Stream to a temp file.
-        import requests
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
-        with requests.get(url, stream=True, timeout=60) as r:
-            r.raise_for_status()
-            for chunk in r.iter_content(chunk_size=1 << 20):
-                tmp.write(chunk)
-        tmp.close()
-        log.info(f"side_jobs: downloaded {run_id} video from {url} → {tmp.name}")
-        return tmp.name
+        # Stream to a temp file with retries — MinIO/Traefik can hiccup
+        # on cold start and a bare requests.get can bail on any RST. A
+        # 3-attempt loop with exponential backoff turns most flakes into
+        # invisible retries; only a genuinely dead URL gives up.
+        import requests, random as _random
+        tmp_name = None
+        last_err = None
+        for attempt in range(3):
+            try:
+                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+                bytes_written = 0
+                # (connect, read) — read timeout raised so a slow MinIO
+                # doesn't kill a legit long download.
+                with requests.get(url, stream=True, timeout=(10, 120)) as r:
+                    r.raise_for_status()
+                    for chunk in r.iter_content(chunk_size=1 << 20):
+                        if not chunk:
+                            continue
+                        tmp.write(chunk)
+                        bytes_written += len(chunk)
+                tmp.close()
+                if bytes_written < 4096:
+                    # Truncated / empty — treat as failure so we retry.
+                    try: os.unlink(tmp.name)
+                    except Exception: pass
+                    raise RuntimeError(f"download produced only {bytes_written} bytes")
+                tmp_name = tmp.name
+                log.info(
+                    f"side_jobs: downloaded {run_id} video from {url} → "
+                    f"{tmp_name} ({bytes_written // 1024} KB, attempt {attempt+1})"
+                )
+                break
+            except Exception as e:
+                last_err = e
+                try: tmp.close()
+                except Exception: pass
+                try: os.unlink(tmp.name)
+                except Exception: pass
+                if attempt < 2:
+                    wait = (2 ** attempt) + _random.uniform(0, 1)
+                    log.warning(
+                        f"side_jobs: download attempt {attempt+1}/3 failed "
+                        f"({type(e).__name__}: {e}); retrying in {wait:.1f}s"
+                    )
+                    time.sleep(wait)
+        if tmp_name is None:
+            log.warning(f"side_jobs: _get_run_video({run_id}) failed after 3 attempts: {last_err}")
+            return None
+        return tmp_name
     except Exception as e:
         log.warning(f"side_jobs: _get_run_video({run_id}) failed: {e}")
         return None
