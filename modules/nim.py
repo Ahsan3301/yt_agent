@@ -130,7 +130,7 @@ def is_available():
     return bool(_nim_key())
 
 
-def _post_chat(payload, timeout=60):
+def _post_chat(payload, timeout=60, attempts=3):
     _k = _nim_key()
     if not _k:
         raise RuntimeError("NVIDIA_NIM_API_KEY not set")
@@ -145,7 +145,7 @@ def _post_chat(payload, timeout=60):
         r.raise_for_status()
         return r.json()
 
-    return _retry(_once, attempts=3, desc="chat")
+    return _retry(_once, attempts=attempts, desc="chat")
 
 
 def _post_chat_streamed_pair(payload, read_timeout=60, total_timeout=240):
@@ -214,7 +214,7 @@ def _stream_once(payload, headers, read_timeout, total_timeout):
 
 def chat(messages, model=None, max_tokens=2048, temperature=0.7,
          response_format=None, timeout=60, stream=None, thinking=False,
-         tools=None, tool_choice=None):
+         tools=None, tool_choice=None, attempts=3):
     """
     OpenAI-compatible chat completion. Returns the assistant message string.
 
@@ -269,7 +269,7 @@ def chat(messages, model=None, max_tokens=2048, temperature=0.7,
                     payload, read_timeout=60, total_timeout=max(120, timeout)
                 )
             else:
-                data = _post_chat(payload, timeout=timeout)
+                data = _post_chat(payload, timeout=timeout, attempts=attempts)
                 msg = data["choices"][0]["message"]
                 content = msg.get("content") or ""
                 reasoning = msg.get("reasoning_content") or ""

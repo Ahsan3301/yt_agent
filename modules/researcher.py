@@ -217,12 +217,19 @@ def _generic_research(channel_type: str) -> dict | None:
             # the: Just. seeks a to'), which then propagated garbage
             # into the storyboard. 70b llama produces clean single-
             # sentence topics at temp 0.9 without the reasoning trace.
+            # attempts=1 + timeout=90: topic suggestion is a nice-to-have,
+            # NOT critical path. Previously waited 3 × 60 = 180 sec on NIM
+            # timeouts before falling back to a keyword; scripts didn't
+            # start for 3 minutes on a slow-NIM day. Now bails after ONE
+            # attempt @ 90 sec and the pipeline moves on immediately.
             raw = _nim.chat(
                 messages=[{"role": "user", "content": prompt}],
                 model="meta/llama-3.3-70b-instruct",
                 max_tokens=200,
                 temperature=0.9,
                 stream=False,
+                timeout=90,
+                attempts=1,
             )
             # Strip any leftover reasoning markers + take the first
             # coherent line + reject if suspiciously short or has
