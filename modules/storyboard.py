@@ -47,11 +47,19 @@ For EACH shot return:
   - visual_description: 1-2 sentences describing what we see on screen during
     these words. Concrete subject, lighting, composition. Grounded in what
     the sentence is literally about — not decorative genre atmosphere.
-  - search_query: 3-6 word stock-footage search phrase that will surface
-    real imagery on Shutterstock/Pexels/Pixabay for THIS specific shot's
-    subject. Concrete subject + setting + tone. Example for a science
-    channel line 'the probe launched from Baikonur at dawn': "rocket
-    launch cosmodrome sunrise vapor".
+  - search_query: 3 to 5 GENERIC words that a stock library like Shutterstock
+    or Pexels will ACTUALLY have matches for. Do NOT include specific
+    names, dates, institutions, unique research findings, or technical
+    jargon — those return zero results.
+      • BAD (too specific, zero matches): "MIT visual cortex brain scan
+        predictive timing 2019", "Baikonur Soyuz 2.1a first stage separation".
+      • GOOD (generic subjects a library actually stocks): "rocket
+        launch cosmodrome sunrise", "neural network brain scan", "person
+        looking at stars".
+    Prefer common photography subjects (people, places, objects, weather,
+    nature) over niche subjects. The AI image gen provider will use the
+    much richer `ai_prompt` field for accuracy — search_query only needs
+    to find a decent generic stock stand-in.
   - ai_prompt: a full text-to-image generation prompt (1-3 sentences).
     Describe the specific subject the shot depicts. End with the
     channel's style keywords: "{style_keywords_tail}".

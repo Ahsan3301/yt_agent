@@ -200,30 +200,64 @@ def _publish_youtube(job: dict[str, Any]) -> tuple[bool, str]:
         return False, "uploader returned no video id"
 
     # Write youtube_video_id back to runs_index so the Library card
-    # can show a link.
+    # can show the YouTube link + preview.
+    #
+    # Three-way fallback:
+    #   1. update by direct doc id
+    #   2. update by run_id field query (worker-written rows use a hash)
+    #   3. CREATE a new row (storage_only orphans have no row at all)
+    #      — without this, publishing a MinIO-only video succeeded on
+    #      YouTube but produced no link in the dashboard because the
+    #      row it tried to update didn't exist. Now we upsert it.
+    pub_url = f"https://youtube.com/watch?v={vid}"
+    row_touched = False
     try:
         from backend import db
         if db.is_configured():
             c = db.client()
-            # Update by direct doc first, then by run_id filter as fallback.
+            payload = {
+                "youtube_video_id":   vid,
+                "youtube_account_id": yt_account_id,
+                "youtube_url":        pub_url,
+                "published_at":       time.time(),
+            }
+            # 1) direct doc id
             try:
-                c.collection("runs_index").document(run_id).update({
-                    "youtube_video_id": vid,
-                    "youtube_account_id": yt_account_id,
-                    "youtube_url": f"https://youtube.com/watch?v={vid}",
-                    "published_at": time.time(),
-                })
+                c.collection("runs_index").document(run_id).update(payload)
+                row_touched = True
             except Exception:
-                # Row may be keyed by hash — find by field.
-                for snap in c.collection("runs_index").where("run_id", "==", run_id).stream():
-                    snap.reference.update({
-                        "youtube_video_id": vid,
-                        "youtube_account_id": yt_account_id,
-                        "youtube_url": f"https://youtube.com/watch?v={vid}",
-                        "published_at": time.time(),
+                pass
+            # 2) query by run_id field
+            if not row_touched:
+                try:
+                    for snap in c.collection("runs_index").where("run_id", "==", run_id).stream():
+                        snap.reference.update(payload)
+                        row_touched = True
+                except Exception:
+                    pass
+            # 3) upsert — no row anywhere, this is a storage_only orphan.
+            #    Create a minimal row so the Library card renders the
+            #    YouTube link + video_url preview.
+            if not row_touched:
+                pub_base = (os.getenv("S3_PUBLIC_BASE") or "").rstrip("/")
+                video_url = f"{pub_base}/videos/{run_id}.mp4" if pub_base else ""
+                try:
+                    c.collection("runs_index").document(run_id).set({
+                        "run_id":             run_id,
+                        "channel":            channel or "",
+                        "video_url":          video_url,
+                        "public_url":         video_url,
+                        "video_storage":      "primary",
+                        "finished_at":        time.time(),
+                        "status":             "complete",
+                        **payload,
                     })
+                    row_touched = True
+                    log.info(f"side_jobs: created runs_index row for storage-orphan {run_id} + youtube link")
+                except Exception as e:
+                    log.warning(f"side_jobs: runs_index upsert for {run_id} failed: {e}")
     except Exception as e:
-        log.warning(f"side_jobs: runs_index update failed: {e}")
+        log.warning(f"side_jobs: runs_index publish-writeback failed: {e}")
 
     return True, f"published as {vid}"
 

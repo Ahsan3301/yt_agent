@@ -562,7 +562,33 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror"):
     ai_prompt = shot.get("ai_prompt") or visual
     premise = shot.get("narration_excerpt") or ""
 
-    log.info(f"Shot fetch | query={query!r} | excerpt={premise[:60]!r}")
+    # Search-query sanity clamp. Storyboard LLMs sometimes emit very
+    # long / very specific queries (institutions, dates, unique research
+    # findings) that stock libraries have zero matches for. Cap to 6
+    # words for the primary attempt; if stock returns nothing we'll
+    # fall back to a 2-3 word generic derived from visual_description
+    # later in the chain. This clamp is defensive — the LLM prompt
+    # already asks for 3-5 words, but we don't trust it 100%.
+    def _shorten(q: str, max_words: int) -> str:
+        words = [w for w in q.split() if w]
+        return " ".join(words[:max_words])
+    if query and len(query.split()) > 6:
+        log.info(f"Shot fetch: clamping over-specific query {query!r} -> first 6 words")
+        query = _shorten(query, 6)
+
+    # Generic backup query built from visual_description keywords. Used
+    # by providers that return zero candidates for the specific query.
+    _stop = {"the","a","an","and","or","of","for","with","from","in","on",
+             "at","to","by","is","are","was","were","be","been","that",
+             "this","which","who","what","how","its","it","as","into"}
+    _visual_words = [
+        w.strip(".,;:'\"()") for w in (visual or "").lower().split()
+        if w.strip(".,;:'\"()") and w.lower().strip(".,;:'\"()") not in _stop
+        and not w[0].isdigit()
+    ]
+    query_generic = " ".join(_visual_words[:3]) if _visual_words else query
+
+    log.info(f"Shot fetch | query={query!r} | generic_fallback={query_generic!r} | excerpt={premise[:60]!r}")
 
     best = None  # (score, source_dict_or_lazy)
 
@@ -735,7 +761,38 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror"):
         else:
             return payload  # already-completed Pollinations dict
 
-    log.warning(f"  No image found for shot {query!r}")
+    # LAST-DITCH: try again with a channel-generic query drawn from the
+    # channel's own footage_keywords in CHANNEL_PRESETS. This kicks in
+    # when every previous branch produced nothing — usually because the
+    # LLM's search_query was too niche for stock providers AND the AI
+    # providers all rate-limited or errored on this shot. Better to fill
+    # the shot with an on-genre stock image than drop the shot entirely
+    # (dropped shots are what turned a 10-shot storyboard into 1-2 clips).
+    try:
+        from modules import channels as _ch
+        preset = _ch.CHANNEL_PRESETS.get(channel) or {}
+        keywords = preset.get("footage_keywords") or []
+    except Exception:
+        keywords = []
+    # Also add the shortened visual-description generic as an option.
+    fallback_queries = []
+    if query_generic and query_generic != query:
+        fallback_queries.append(query_generic)
+    fallback_queries.extend(keywords[:5])
+    for fq in fallback_queries:
+        log.info(f"  last-ditch fallback with generic query {fq!r}")
+        if providers.get("pexels", True):
+            previews = _pexels_search_previews(fq, count=4, exclude_ids=used_ids)
+            if previews:
+                pid, _, full = previews[0]
+                path = _pexels_download_full(pid, full, output_dir)
+                if path:
+                    used_ids.add(f"pexels_img:{pid}")
+                    F._remember_clip(f"pexels_img:{pid}")
+                    log.info(f"  fallback filled shot with pexels id {pid} (query={fq!r})")
+                    return {"type": "image", "path": path,
+                            "origin": "pexels_img_fallback", "score": -1}
+    log.warning(f"  No image found for shot {query!r} even after generic fallback")
     return None
 
 
