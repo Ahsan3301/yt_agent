@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminDb, FieldValue } from "@/lib/firebase-admin";
 import { newRequestId, logRoute } from "@/app/api/_lib/orchestrator";
 import { customAlphabet } from "nanoid";
+import { listStorageVideos } from "@/lib/storage-list";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -33,17 +34,39 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     if (!yt.exists) {
       return NextResponse.json({ error: `youtube account ${youtube_account_id} not found` }, { status: 404 });
     }
-    // Verify the run has a video.
+    // Verify the run has a video. Look in three places, any one is enough:
+    //   1. runs_index by doc id (the PB doc's own id)
+    //   2. runs_index by run_id field (worker-written rows use timestamp ids)
+    //   3. primary storage bucket (MinIO) — for `storage_only` orphans
+    //      that the Library synthesises from ListObjectsV2 when the DB
+    //      write failed post-upload. These are legitimate publishable
+    //      videos and should not 404.
     const runSnap = await adminDb().collection("runs_index").doc(id).get();
-    // If not found by direct id, try by run_id field.
     let hasVideo = runSnap.exists;
+    let source = "runs_index:doc";
     if (!hasVideo) {
       const hits = await adminDb().collection("runs_index")
         .where("run_id", "==", id).limit(1).get();
       hasVideo = !hits.empty;
+      if (hasVideo) source = "runs_index:field";
     }
     if (!hasVideo) {
-      return NextResponse.json({ error: `run ${id} not found in Library` }, { status: 404 });
+      // Storage fallback — synthesise-a-row check. If MinIO has the
+      // object at videos/<id>.mp4 the worker's _get_run_video will
+      // download from there via S3_PUBLIC_BASE.
+      try {
+        const inStorage = (await listStorageVideos()).some((v) => v.run_id === id);
+        if (inStorage) {
+          hasVideo = true;
+          source = "storage_only";
+        }
+      } catch { /* best-effort — a storage listing failure isn't fatal here */ }
+    }
+    if (!hasVideo) {
+      return NextResponse.json(
+        { error: `run ${id} not found in Library (no runs_index row + no storage object)` },
+        { status: 404 },
+      );
     }
 
     const jobId = _shortId();
@@ -71,6 +94,10 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       percent:       0,
       target_worker,
       run_at:        run_at > 0 ? run_at : 0,
+      // Source tag — worker uses this to know whether to trust PB
+      // (has row) or fall back to constructing the URL from
+      // S3_PUBLIC_BASE + videos/<run_id>.mp4 (storage_only).
+      video_source:  source,
       updated_at:    FieldValue.serverTimestamp(),
     });
     logRoute(reqId, "publish queued", { run_id: id, job_id: jobId, youtube_account_id });

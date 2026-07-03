@@ -46,25 +46,46 @@ def _get_run_video(run_id: str) -> str | None:
     if local.exists() and local.stat().st_size > 1024:
         return str(local.resolve())
 
-    # Fetch the runs_index / run_summaries row to find the public URL.
+    # Fetch the runs_index / run_summaries row to find the public URL,
+    # then fall back to a URL derived from S3_PUBLIC_BASE for
+    # storage-only orphans (video landed in MinIO but the DB write
+    # failed). Any of the three sources is enough.
+    url = ""
     try:
         from backend import db
-        if not db.is_configured():
-            return None
-        c = db.client()
-        idx = c.collection("runs_index").document(run_id).get()
-        url = ""
-        if idx.exists:
-            d = idx.to_dict() or {}
-            url = str(d.get("video_url") or d.get("public_url") or "")
-        if not url:
-            # Fall back to summary.
-            sm = c.collection("run_summaries").document(run_id).get()
-            if sm.exists:
-                data = (sm.to_dict() or {}).get("data") or {}
-                url = str(data.get("video_url") or data.get("public_url") or "")
-        if not url or not url.startswith("http"):
-            return None
+        if db.is_configured():
+            c = db.client()
+            idx = c.collection("runs_index").document(run_id).get()
+            if idx.exists:
+                d = idx.to_dict() or {}
+                url = str(d.get("video_url") or d.get("public_url") or "")
+            if not url:
+                sm = c.collection("run_summaries").document(run_id).get()
+                if sm.exists:
+                    data = (sm.to_dict() or {}).get("data") or {}
+                    url = str(data.get("video_url") or data.get("public_url") or "")
+    except Exception as e:
+        log.warning(f"side_jobs: PB lookup for {run_id} failed: {e}; will try storage fallback")
+    # Storage-only fallback — build the public URL from env. Matches the
+    # convention the frontend's storage-list.ts + the worker's uploader
+    # both use: {S3_PUBLIC_BASE}/videos/<run_id>.mp4.
+    if not url:
+        pub_base = (os.getenv("S3_PUBLIC_BASE") or "").rstrip("/")
+        if not pub_base:
+            # Derive from PUBLIC_BASE_URL + bucket for MinIO on Coolify.
+            pb = (os.getenv("PUBLIC_BASE_URL") or "").rstrip("/")
+            bucket = os.getenv("S3_BUCKET") or "yt-agent-videos"
+            if pb:
+                host = pb if pb.startswith("http") else f"https://{pb}"
+                pub_base = f"{host}/{bucket}"
+        if pub_base:
+            candidate = f"{pub_base}/videos/{run_id}.mp4"
+            log.info(f"side_jobs: no PB row for {run_id}; trying storage URL {candidate}")
+            url = candidate
+    if not url or not url.startswith("http"):
+        log.warning(f"side_jobs: cannot locate video for {run_id} (no PB row + no S3_PUBLIC_BASE)")
+        return None
+    try:
         # Stream to a temp file with retries — MinIO/Traefik can hiccup
         # on cold start and a bare requests.get can bail on any RST. A
         # 3-attempt loop with exponential backoff turns most flakes into

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminDb, FieldValue } from "@/lib/firebase-admin";
 import { newRequestId, logRoute } from "@/app/api/_lib/orchestrator";
 import { customAlphabet } from "nanoid";
+import { listStorageVideos } from "@/lib/storage-list";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -36,16 +37,32 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     if (pd.enabled === false) {
       return NextResponse.json({ error: `provider ${provider_id} is disabled` }, { status: 400 });
     }
-    // Verify the run has a video.
+    // Verify the run has a video. Same 3-place fallback as publish:
+    // runs_index by doc id, runs_index by run_id field, or the primary
+    // MinIO bucket (for storage_only orphans the Library synthesises).
     const runSnap = await adminDb().collection("runs_index").doc(id).get();
     let hasVideo = runSnap.exists;
+    let source = "runs_index:doc";
     if (!hasVideo) {
       const hits = await adminDb().collection("runs_index")
         .where("run_id", "==", id).limit(1).get();
       hasVideo = !hits.empty;
+      if (hasVideo) source = "runs_index:field";
     }
     if (!hasVideo) {
-      return NextResponse.json({ error: `run ${id} not found in Library` }, { status: 404 });
+      try {
+        const inStorage = (await listStorageVideos()).some((v) => v.run_id === id);
+        if (inStorage) {
+          hasVideo = true;
+          source = "storage_only";
+        }
+      } catch { /* best-effort */ }
+    }
+    if (!hasVideo) {
+      return NextResponse.json(
+        { error: `run ${id} not found in Library (no runs_index row + no storage object)` },
+        { status: 404 },
+      );
     }
 
     const jobId = _shortId();
@@ -71,6 +88,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       percent:       0,
       target_worker,
       run_at:        run_at > 0 ? run_at : 0,
+      video_source:  source,
       updated_at:    FieldValue.serverTimestamp(),
     });
     logRoute(reqId, "copy_storage queued", { run_id: id, job_id: jobId, provider_id, move });
