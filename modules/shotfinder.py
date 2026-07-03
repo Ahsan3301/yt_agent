@@ -192,12 +192,20 @@ def _pollinations_generate(prompt, output_dir, trial, negative_prompt=""):
     if negative_prompt and negative_prompt.strip():
         final_prompt = f"{prompt}. Avoid: {negative_prompt}"
     encoded = urllib.parse.quote(final_prompt, safe="")
+    # Rotate the Pollinations model across attempts. All three verified
+    # working (flux + sdxl + flux-pro) — cycling means a bad prompt on
+    # flux gets retried on sdxl instead of just failing. Also gives
+    # visual variety across shots so the video doesn't look monochrome.
+    # trial 0 → flux, 1 → sdxl, 2 → flux-pro, 3 → flux, 4 → sdxl ...
+    _POLL_MODELS = ("flux", "sdxl", "flux-pro")
+    poll_model = _POLL_MODELS[trial % len(_POLL_MODELS)]
     url = (
         f"https://image.pollinations.ai/prompt/{encoded}"
-        f"?width=1080&height=1920&seed={seed}&model=flux&nologo=true&private=true"
+        f"?width=1080&height=1920&seed={seed}&model={poll_model}&nologo=true&private=true"
         f"&safe={'true' if F._restrictions_on() else 'false'}"
     )
-    dest = os.path.join(output_dir, f"pollinations_{seed:08x}.jpg")
+    dest = os.path.join(output_dir, f"pollinations_{poll_model}_{seed:08x}.jpg")
+    log.debug(f"Pollinations: using model={poll_model} (attempt {trial+1})")
 
     try:
         # Serialise across threads + enforce a min interval between

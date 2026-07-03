@@ -154,10 +154,16 @@ DEFAULT_SETTINGS = {
         # both API-based, no VRAM, no torch drama — reliably ~10 sec /
         # image. Users who WANT local_sdxl can flip it on in Settings
         # after confirming their runtime is healthy.
-        "priority": ["huggingface", "pollinations", "local_sdxl"],
+        # Pollinations first — verified working in prod (rotates flux /
+        # sdxl / flux-pro across attempts). HuggingFace Inference API
+        # sits behind as a fallback but has been unreliable on the free
+        # tier (503 model-loading forever + endpoint DNS issues from the
+        # side-worker network); users can toggle it on if they want.
+        # local_sdxl still OFF by default (Kaggle CUDA torch fragility).
+        "priority": ["pollinations", "huggingface", "local_sdxl"],
         "enabled": {
-            "huggingface":  True,
             "pollinations": True,
+            "huggingface":  True,
             "local_sdxl":   False,
         },
         # `local_sdxl` uses diffusers on the worker's own GPU (T4/P100 on
