@@ -350,20 +350,42 @@ def _huggingface_generate(prompt, output_dir, trial, negative_prompt=""):
 _LOCAL_SDXL_PIPE = None
 _LOCAL_SDXL_BROKEN = False
 _LOCAL_SDXL_BROKEN_REASON = ""
+# Serialises the one-shot model load. Parallel shot fetches from
+# fetch_storyboard_footage's ThreadPoolExecutor would otherwise all
+# race on the None check → each allocate ~5 GB VRAM for its own copy
+# → CUDA OOM → EVERY concurrent shot fails → 15-shot storyboard
+# collapses to 2-3 clips. With this lock: thread 1 loads (once),
+# threads 2-N wait a few seconds then reuse the same pipe. Standard
+# double-checked locking — the fast path stays lock-free after warm-up.
+import threading as _sdxl_threading
+_LOCAL_SDXL_LOAD_LOCK = _sdxl_threading.Lock()
 
 
 def _local_sdxl_load():
-    """Lazy-load the diffusers pipeline. Kept out of module import path
-    so CPU workers never pay the diffusers/torch import tax.
+    """Lazy-load the diffusers pipeline (thread-safe).
 
-    Every failure path prints a distinct WARNING with actionable text
-    (previously most failures were logged at INFO or swallowed silently,
-    so the user saw the priority-loop skip the provider with no clue why)."""
-    global _LOCAL_SDXL_PIPE, _LOCAL_SDXL_BROKEN, _LOCAL_SDXL_BROKEN_REASON
+    Kept out of module import path so CPU workers never pay the
+    diffusers/torch import tax. All failure paths WARN with actionable
+    text so the priority loop's provider skip is diagnosable from logs.
+    """
+    # Fast path — no lock needed once the pipeline exists (or is known broken).
     if _LOCAL_SDXL_BROKEN:
         return None
     if _LOCAL_SDXL_PIPE is not None:
         return _LOCAL_SDXL_PIPE
+    # Slow path — grab the lock and re-check inside so exactly ONE
+    # thread performs the download + CUDA move.
+    with _LOCAL_SDXL_LOAD_LOCK:
+        if _LOCAL_SDXL_BROKEN:
+            return None
+        if _LOCAL_SDXL_PIPE is not None:
+            return _LOCAL_SDXL_PIPE
+        return _local_sdxl_load_locked()
+
+
+def _local_sdxl_load_locked():
+    """Actual load path. Caller must hold _LOCAL_SDXL_LOAD_LOCK."""
+    global _LOCAL_SDXL_PIPE, _LOCAL_SDXL_BROKEN, _LOCAL_SDXL_BROKEN_REASON
     # Import torch first — every other failure depends on it.
     try:
         import torch
@@ -777,6 +799,24 @@ def fetch_shots(shots, output_dir, channel="horror", preset_sources=None):
     # by handing each preset to the corresponding shot index. Remaining
     # shots get None → falls through to the provider chain.
     preset_by_idx = {i: presets[i] for i in range(min(len(presets), len(shots)))}
+
+    # Pre-warm local_sdxl on the main thread if it's enabled + first in
+    # the priority list. Without this, thread 1 in the pool triggers a
+    # 60-120 sec model download; thread 2+3 grab the load lock and wait
+    # idle for that long, wasting their attempt budget. Warming here
+    # means all N threads start with the pipeline ready and can gen
+    # concurrently from the first attempt. No-op on CPU-only workers.
+    try:
+        _priority_head = (
+            (load_settings().get("image_gen") or {}).get("priority")
+            or ["huggingface", "local_sdxl", "pollinations"]
+        )
+        _ig_enabled = (load_settings().get("image_gen") or {}).get("enabled") or {}
+        if "local_sdxl" in _priority_head and _ig_enabled.get("local_sdxl", True):
+            log.info("shot fetch pre-warm: loading local_sdxl (blocks pool start)")
+            _local_sdxl_load()
+    except Exception as _e:
+        log.debug(f"local_sdxl pre-warm skipped: {_e}")
 
     results: list[dict | None] = [None] * len(shots)
     done_count = 0
