@@ -808,8 +808,9 @@ def clear_logs():
     try:
         from backend import logbuf
         logbuf.clear()
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning(f"clear_logs failed: {e}")
+        return {"ok": False, "error": str(e)}
     return {"ok": True}
 
 

@@ -141,10 +141,12 @@ def get_rss_topics(feeds=None):
     return [t for t in topics if t]
 
 
-def research(channel_type="horror"):
+def research(channel_type: str):
     """
     Main entry point. Returns a content dict ready for the script writer.
-    channel_type: "horror" | "wisdom"
+    channel_type: any channel niche name (horror / wisdom / science / ...).
+    Required — no default. Previously defaulted to 'horror' which silently
+    produced horror content when a caller forgot to pass the channel.
 
     If settings.content.manual_premise is set, it overrides the auto-generated
     premise (so users can run a specific story idea from the GUI).

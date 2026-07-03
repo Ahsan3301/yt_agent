@@ -550,7 +550,7 @@ def write_script(research_data, max_attempts=3):
             word_min=word_min, word_max=word_max, hard_cap=hard_cap,
         )
 
-    primary = "NIM (" + nim.TEXT_MODEL + ")" if nim.is_available() else f"Groq ({GROQ_MODEL})"
+    primary = "NIM (" + nim.TEXT_MODEL_PRIMARY + ")" if nim.is_available() else f"Groq ({GROQ_MODEL})"
     log.info(f"Calling LLM | primary={primary} | prompt_version={PROMPT_VERSION} "
              f"| tone={tone} | words={word_min}-{word_max}")
     extra = None
