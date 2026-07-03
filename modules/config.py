@@ -146,11 +146,19 @@ DEFAULT_SETTINGS = {
     # Keys/tokens flow through the api_keys collection or worker env; the
     # UI toggle just gates whether we EVEN TRY the provider.
     "image_gen": {
-        "priority": ["huggingface", "local_sdxl", "pollinations"],
+        # local_sdxl DISABLED by default. The on-device pipeline sits at
+        # the mercy of Kaggle/Colab's dep resolver (which occasionally
+        # clobbers CUDA torch → sm_60 kernel-missing → 2-hour hang), and
+        # the 7 GB model download eats free-tier bandwidth for the first
+        # render. HuggingFace SDXL Inference API + Pollinations Flux are
+        # both API-based, no VRAM, no torch drama — reliably ~10 sec /
+        # image. Users who WANT local_sdxl can flip it on in Settings
+        # after confirming their runtime is healthy.
+        "priority": ["huggingface", "pollinations", "local_sdxl"],
         "enabled": {
-            "huggingface": True,
-            "local_sdxl":  True,
+            "huggingface":  True,
             "pollinations": True,
+            "local_sdxl":   False,
         },
         # `local_sdxl` uses diffusers on the worker's own GPU (T4/P100 on
         # Colab or Kaggle). Free, fast (~5-8 sec/image), no rate limits,

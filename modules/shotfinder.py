@@ -932,7 +932,12 @@ def fetch_shots(shots, output_dir, channel="horror", preset_sources=None):
             or ["huggingface", "local_sdxl", "pollinations"]
         )
         _ig_enabled = (load_settings().get("image_gen") or {}).get("enabled") or {}
-        if "local_sdxl" in _priority_head and _ig_enabled.get("local_sdxl", True):
+        # Only pre-warm if the user has EXPLICITLY opted in — default is
+        # off now that HF Inference API + Pollinations handle image gen
+        # reliably. Old code defaulted the toggle to True which meant a
+        # 2-hour model-download stall on any Kaggle session where torch
+        # got clobbered by a dep upgrade.
+        if "local_sdxl" in _priority_head and _ig_enabled.get("local_sdxl", False):
             log.info("shot fetch pre-warm: loading local_sdxl (blocks pool start)")
             _local_sdxl_load()
     except Exception as _e:
