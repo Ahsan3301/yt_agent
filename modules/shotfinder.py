@@ -187,10 +187,16 @@ def _pollinations_generate(prompt, output_dir, trial, negative_prompt=""):
         log.info(f"Pollinations: breaker OPEN (skipping; reopens in {wait}s)")
         return None, seed
 
-    # Bolt the negative clause onto the prompt for Flux (no native field).
-    final_prompt = prompt
-    if negative_prompt and negative_prompt.strip():
-        final_prompt = f"{prompt}. Avoid: {negative_prompt}"
+    # Pollinations URL-encodes the prompt into a GET URL — very long
+    # prompts (>~800 chars) intermittently 500. craft_image_prompt +
+    # style keywords + Avoid: <negative> was easily 1500+ chars, causing
+    # the 500 storm the user saw. Two guards:
+    #   1. Cap the raw prompt at 500 chars (Flux ignores the tail
+    #      anyway; the model only weights the first ~77 tokens meaningfully).
+    #   2. Skip the negative-prompt clause entirely — Flux Pro / SDXL
+    #      via Pollinations don't respect it strongly, and appending it
+    #      pushed the URL over the length threshold.
+    final_prompt = (prompt or "").strip()[:500]
     encoded = urllib.parse.quote(final_prompt, safe="")
     # Rotate the Pollinations model across attempts. All three verified
     # working (flux + sdxl + flux-pro) — cycling means a bad prompt on
