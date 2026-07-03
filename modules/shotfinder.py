@@ -158,6 +158,20 @@ def _pollinations_breaker_record(success: bool, http_status: int | None = None):
             )
 
 
+# Serialise Pollinations requests across threads. The public endpoint
+# returns 429 aggressively when two calls land within a few hundred ms
+# of each other — which happens instantly with the ThreadPoolExecutor.
+# Three consecutive 429s trips the circuit breaker for 90s and the rest
+# of the shots get dropped. This lock + a 1.5 sec min-interval turns
+# the parallel pool into serialised Pollinations calls (still faster
+# than the OLD serial-shot code because stock lookups + other providers
+# still run in parallel — only Pollinations itself is one-at-a-time).
+import threading as _poll_threading
+_POLL_CALL_LOCK = _poll_threading.Lock()
+_POLL_LAST_CALL_AT = 0.0
+_POLL_MIN_INTERVAL = 1.5
+
+
 def _pollinations_generate(prompt, output_dir, trial, negative_prompt=""):
     """Generate one image via Pollinations, respecting the circuit breaker.
     Returns (path, seed) on success, (None, seed) on any failure.
@@ -186,9 +200,18 @@ def _pollinations_generate(prompt, output_dir, trial, negative_prompt=""):
     dest = os.path.join(output_dir, f"pollinations_{seed:08x}.jpg")
 
     try:
-        # Single attempt — we don't retry inside the breaker; the breaker
-        # itself is the retry policy. A 429 trips it; a 5xx is one-shot.
-        r = requests.get(url, stream=True, timeout=120)
+        # Serialise across threads + enforce a min interval between
+        # successive calls. Two parallel threads used to hit the endpoint
+        # simultaneously, both get 429, and the breaker trips after 3 in
+        # a row — killing the rest of the shots.
+        global _POLL_LAST_CALL_AT
+        with _POLL_CALL_LOCK:
+            _now = time.time()
+            gap = _now - _POLL_LAST_CALL_AT
+            if gap < _POLL_MIN_INTERVAL:
+                time.sleep(_POLL_MIN_INTERVAL - gap)
+            _POLL_LAST_CALL_AT = time.time()
+            r = requests.get(url, stream=True, timeout=120)
         if r.status_code == 429:
             _pollinations_breaker_record(success=False, http_status=429)
             log.warning("Pollinations 429 — breaker counter bumped")

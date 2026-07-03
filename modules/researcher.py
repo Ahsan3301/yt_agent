@@ -211,13 +211,33 @@ def _generic_research(channel_type: str) -> dict | None:
             f"Pick something fresh — avoid the obvious top-of-mind subject for this niche."
         )
         try:
+            # Use the 70b instruct model rather than the default
+            # nemotron reasoning model — the earlier 120-token budget
+            # let reasoning fragments leak into the topic ('What if
+            # the: Just. seeks a to'), which then propagated garbage
+            # into the storyboard. 70b llama produces clean single-
+            # sentence topics at temp 0.9 without the reasoning trace.
             raw = _nim.chat(
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=120,
-                temperature=0.95,
+                model="meta/llama-3.3-70b-instruct",
+                max_tokens=200,
+                temperature=0.9,
                 stream=False,
             )
-            premise = (raw or "").strip().strip('"').strip().split("\n")[0][:280]
+            # Strip any leftover reasoning markers + take the first
+            # coherent line + reject if suspiciously short or has
+            # colon/period soup that looks like a reasoning fragment.
+            cleaned = (raw or "").strip().strip('"').strip()
+            cleaned = cleaned.split("\n")[0][:280].strip()
+            # Heuristic: a valid topic is >= 20 chars AND doesn't have
+            # more than 1 colon (reasoning models produce 'x: y. z: w').
+            if len(cleaned) < 20 or cleaned.count(":") > 1 or cleaned.count(". ") > 3:
+                log.warning(
+                    f"researcher: rejecting garbled NIM topic {cleaned!r} "
+                    f"(short/colon-soup — likely reasoning fragment)"
+                )
+                cleaned = ""
+            premise = cleaned
         except Exception as e:
             log.warning(f"researcher._generic_research: NIM call failed ({e})")
             premise = ""
