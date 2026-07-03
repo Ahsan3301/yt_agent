@@ -159,12 +159,14 @@ DEFAULT_SETTINGS = {
         # different HF-repo checkpoint.
         "local_sdxl_model": "stabilityai/sdxl-turbo",
         # How many shots to fetch in parallel. Each worker thread runs
-        # one shot's full provider chain end-to-end. Raise to use more
-        # VRAM (SDXL at 1024x576 ~ 4-5 GB/shot on P100). Cap 6 for
-        # sanity — beyond that HF Inference rate-limits + Pollinations
-        # circuit-breakers kick in. Default 3 → ~12-15 GB VRAM on P100
-        # / T4 16 GB, ~3x faster storyboard fetch step.
-        "shot_parallelism": 3,
+        # one shot's full provider chain end-to-end. Default 2 (was 3)
+        # — three concurrent HF Inference requests were hitting the
+        # free tier's per-minute rate limit and cascading failures
+        # into 'shot dropped'. Two threads is a safe middle: still
+        # ~2x faster than serial, doesn't trip HF's limiter, and
+        # local_sdxl (with the load lock) still gets its GPU-side
+        # parallelism. Cap 6 if the user manually bumps it.
+        "shot_parallelism": 2,
         # Applied to every provider that has a native negative_prompt
         # parameter (HF SDXL, local SDXL). For Pollinations Flux we
         # append a "avoid:" clause to the prompt since Flux has no

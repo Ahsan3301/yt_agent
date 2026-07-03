@@ -562,19 +562,17 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror"):
     ai_prompt = shot.get("ai_prompt") or visual
     premise = shot.get("narration_excerpt") or ""
 
-    # Search-query sanity clamp. Storyboard LLMs sometimes emit very
-    # long / very specific queries (institutions, dates, unique research
-    # findings) that stock libraries have zero matches for. Cap to 6
-    # words for the primary attempt; if stock returns nothing we'll
-    # fall back to a 2-3 word generic derived from visual_description
-    # later in the chain. This clamp is defensive — the LLM prompt
-    # already asks for 3-5 words, but we don't trust it 100%.
+    # Very defensive clamp — only if the query is absurdly long. The
+    # LLM's own query is left alone otherwise; the earlier 6-word cap
+    # was truncating good 7-8 word queries and hurting match quality.
+    # If stock returns nothing on the original, the generic fallback
+    # below still fires as a safety net.
     def _shorten(q: str, max_words: int) -> str:
         words = [w for w in q.split() if w]
         return " ".join(words[:max_words])
-    if query and len(query.split()) > 6:
-        log.info(f"Shot fetch: clamping over-specific query {query!r} -> first 6 words")
-        query = _shorten(query, 6)
+    if query and len(query.split()) > 12:
+        log.info(f"Shot fetch: query >12 words, clamping to 10")
+        query = _shorten(query, 10)
 
     # Generic backup query built from visual_description keywords. Used
     # by providers that return zero candidates for the specific query.
@@ -666,6 +664,24 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror"):
     # threshold-passing image. A disabled or key-less provider is
     # skipped with a log line so it's obvious in the output.
     ai_attempts = int(vid_cfg.get("ai_image_attempts_per_shot", 3))
+    # If stock (Shutterstock + Pexels) returned literally nothing, this
+    # shot has no fallback to below-threshold stock — every failed AI
+    # attempt is a dropped shot. Bump the AI budget to 5 in that case
+    # + drop the vision-judge threshold to 1 so an on-topic AI image
+    # isn't rejected for being "not amazing enough". This turns 'niche
+    # science shots' from '0-1 clips out of 15' into 'most shots
+    # filled with an on-topic Flux/HF image'.
+    stock_yielded_nothing = best is None
+    if stock_yielded_nothing:
+        ai_attempts = max(ai_attempts, 5)
+        # Save the original then relax the local judge threshold. We
+        # do this AFTER the stock branches so it doesn't affect them.
+        threshold = min(threshold, 1)
+        log.info(
+            f"  stock returned no candidates; boosting AI budget to "
+            f"{ai_attempts} attempts + relaxing vision threshold to "
+            f"{threshold} so shots don't drop"
+        )
     ig_cfg = (load_settings().get("image_gen") or {})
     priority = ig_cfg.get("priority") or ["huggingface", "local_sdxl", "pollinations"]
     ig_enabled = ig_cfg.get("enabled") or {}
