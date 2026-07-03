@@ -548,7 +548,31 @@ def _local_sdxl_generate(prompt, output_dir, trial, negative_prompt=""):
             return None, seed
         return dest, seed
     except Exception as e:
-        log.warning(f"local_sdxl gen failed: {e}")
+        global _LOCAL_SDXL_BROKEN, _LOCAL_SDXL_BROKEN_REASON
+        msg = str(e)
+        # Terminal errors: CUDA capability mismatch means the torch
+        # wheel doesn't have kernels for this GPU (P100 / T4 on
+        # Kaggle where diffusers pulled a newer torch that dropped
+        # sm_60 support). OOM means the model can't run at all on
+        # this device. Both are permanent for this session — mark
+        # broken so we don't waste 5 attempts per shot repeating the
+        # same failure.
+        terminal_markers = (
+            "no kernel image is available",
+            "cudaErrorNoKernelImageForDevice",
+            "CUDA out of memory",
+            "CUDA driver version is insufficient",
+        )
+        if any(m in msg for m in terminal_markers):
+            _LOCAL_SDXL_BROKEN = True
+            _LOCAL_SDXL_BROKEN_REASON = msg[:200]
+            log.warning(
+                f"local_sdxl: TERMINAL error, provider DISABLED for "
+                f"this process — {msg[:200]}. Priority loop will skip to "
+                f"the next AI provider."
+            )
+        else:
+            log.warning(f"local_sdxl gen failed: {e}")
         return None, seed
 
 
