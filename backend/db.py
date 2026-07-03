@@ -163,23 +163,36 @@ def _init_firestore():
     if pk and "\\n" in pk and "\n" not in pk:
         payload["private_key"] = pk.replace("\\n", "\n")
 
+    # Private_key material is written to a temp file only long enough
+    # for firebase_admin to load it into memory, then deleted. Mode 0600
+    # while it exists so other processes can't read it, and finally
+    # os.unlink so it doesn't sit around after every worker restart.
     tmp = tempfile.NamedTemporaryFile(
         "w", delete=False, suffix=".json", prefix="firebase-"
     )
-    json.dump(payload, tmp)
-    tmp.close()
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = tmp.name
-
+    tmp_path = tmp.name
     try:
+        json.dump(payload, tmp)
+        tmp.close()
+        try:
+            os.chmod(tmp_path, 0o600)
+        except Exception:
+            pass
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = tmp_path
         import firebase_admin
         from firebase_admin import credentials, firestore
         if not firebase_admin._apps:
-            firebase_admin.initialize_app(credentials.Certificate(tmp.name))
+            firebase_admin.initialize_app(credentials.Certificate(tmp_path))
         _client = firestore.client()
         log.info("firestore: connected (project=%s)", payload.get("project_id"))
         return _client
     except Exception as e:
         raise RuntimeError(f"firebase-admin init failed: {e}")
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
 
 
 def server_timestamp():

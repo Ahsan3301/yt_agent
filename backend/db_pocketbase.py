@@ -67,7 +67,14 @@ def _pb_id(raw_id: str) -> str:
     Algorithm: sha256(rawId) → base64 → lowercase → strip non-alphanum
     → take first 15 chars. Same as Node's createHash.digest('base64').
     """
-    raw = (raw_id or "").lower()
+    # Match JS _pbId() byte-for-byte: the pre-check must run on the
+    # RAW input (case-sensitive). Previously Python lowercased first,
+    # so an all-uppercase 15-char alphanumeric id was returned as
+    # lowercase here while JS returned it as-is and used it verbatim,
+    # producing two different PB doc ids for the same logical id.
+    # Never bites our timestamp run_ids (they contain underscores and
+    # fall to the hash branch) but bites any 15-char-clean input.
+    raw = raw_id or ""
     if _VALID_PB_ID.match(raw):
         return raw
     import base64 as _b64

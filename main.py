@@ -309,7 +309,17 @@ def run_pipeline(
     channel_type = channel_type or config.CHANNEL_TYPE
     # Resolve the channel config UP FRONT — every later step reads from it.
     channel_cfg = _ch.resolve(channel_type, manual_channel_desc)
-    run_id = resume_run_id or datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    # run_id — timestamp + 3-char random tail. Two workers that boot
+    # the exact same second would previously collide on the timestamp
+    # alone and overwrite each other's output/videos/<run_id>/ dir.
+    # The random suffix costs nothing and closes that race.
+    if resume_run_id:
+        run_id = resume_run_id
+    else:
+        import secrets, string
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        tail = "".join(secrets.choice(string.ascii_lowercase + string.digits) for _ in range(3))
+        run_id = f"{ts}_{tail}"
     if resume_run_id:
         log.info(f"resume mode: run_id={run_id} — completed stages will be skipped")
     work_dir = os.path.join("output", "videos", run_id)
