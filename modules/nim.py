@@ -81,9 +81,15 @@ NIM_KEY = _KeyProxy()
 #   images (root of the user's 'clips are irrelevant' report). Falls
 #   back to 11B if 90B is briefly unavailable so scoring never fully
 #   breaks.
-TEXT_MODEL_PRIMARY   = os.getenv("NIM_TEXT_MODEL",   "nvidia/nemotron-3-super-120b-a12b")
+TEXT_MODEL_PRIMARY   = os.getenv("NIM_TEXT_MODEL",   "minimaxai/minimax-m3")
 TEXT_MODEL_FALLBACKS = [
+    # Strong general-purpose fallback, no reasoning trace to strip.
     "meta/llama-3.3-70b-instruct",
+    # Nemotron 120B — kept as LAST resort. It's a reasoning model,
+    # which is why it was leaking 'reasoning-soup' fragments into
+    # topic/script when the token budget was tight. Still valuable
+    # for genuinely hard reasoning but not the default anymore.
+    "nvidia/nemotron-3-super-120b-a12b",
     "meta/llama-3.1-70b-instruct",
 ]
 
