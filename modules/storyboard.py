@@ -18,7 +18,7 @@ from modules import nim
 
 log = logging.getLogger(__name__)
 
-STORYBOARD_PROMPT = """You are a horror-film storyboard artist.
+STORYBOARD_PROMPT = """You are a professional storyboard artist.
 
 Below is a 60-second YouTube Short NARRATION. Break it into exactly {n} SHOTS
 in narrative order. Each shot must cover 1-3 sentences of the narration so
@@ -29,30 +29,39 @@ NARRATION:
 {narration}
 \"\"\"
 
-GENRE: chilling gothic horror. The viewer should be physically uneasy by
-the end. Visual style: Hereditary / The Witch / Midsommar — atmospheric,
-decaying, candlelit, victorian-gothic, fog, occult, supernatural threat.
+CHANNEL GENRE + TONE:
+  {genre_tone}
+
+VISUAL STYLE FOR THIS CHANNEL:
+  {visual_style}
+
+STOCK-FOOTAGE KEYWORDS THAT WORK FOR THIS CHANNEL (use as inspiration,
+not verbatim — expand into concrete per-shot subjects that MATCH the
+specific sentence being narrated):
+  {keyword_examples}
 
 For EACH shot return:
   - narration_excerpt: the exact substring of the narration this shot covers.
     Concatenated in order, the excerpts must reconstruct the full narration
     (you may collapse whitespace, but otherwise verbatim).
   - visual_description: 1-2 sentences describing what we see on screen during
-    these words. Cinematic, dread-soaked, specific. Mention lighting and
-    composition.
-  - search_query: 3-6 word stock-photo search phrase that will surface real
-    gothic-horror imagery on Shutterstock/Pexels/Pixabay. Concrete subject +
-    setting + mood (e.g. "abandoned victorian asylum corridor candlelight").
-    AVOID safe modern imagery ("rain on window", "coffee mug").
-  - ai_prompt: a full text-to-image generation prompt (1-3 sentences). Style
-    keywords at the end: "cinematic, 35mm film, candlelight, fog, victorian
-    gothic, atmospheric horror, dramatic shadows, dread-soaked".
+    these words. Concrete subject, lighting, composition. Grounded in what
+    the sentence is literally about — not decorative genre atmosphere.
+  - search_query: 3-6 word stock-footage search phrase that will surface
+    real imagery on Shutterstock/Pexels/Pixabay for THIS specific shot's
+    subject. Concrete subject + setting + tone. Example for a science
+    channel line 'the probe launched from Baikonur at dawn': "rocket
+    launch cosmodrome sunrise vapor".
+  - ai_prompt: a full text-to-image generation prompt (1-3 sentences).
+    Describe the specific subject the shot depicts. End with the
+    channel's style keywords: "{style_keywords_tail}".
 
 RULES:
-  - Shots must flow narratively — the visuals escalate dread alongside the
-    narration.
+  - Shots must flow narratively — the visuals must MATCH what each
+    specific sentence is describing. Do not sprinkle generic
+    channel-atmosphere imagery in place of the actual subject.
   - No two consecutive shots should depict the same subject in the same way.
-  - No daylight, no contemporary office/urban imagery, no comic/cartoon.
+  - Stay on-genre for the channel: {avoid_line}
 
 Respond with ONLY a JSON object in this shape:
 {{
@@ -67,6 +76,61 @@ Respond with ONLY a JSON object in this shape:
   ]
 }}
 The "shots" array MUST contain exactly {n} entries."""
+
+
+# Per-channel guidance blocks. Keys match modules.channels.CHANNEL_PRESETS
+# names. `default` is used for unknown channels (or custom user channels).
+_GENRE_TONE_BY_CHANNEL: dict[str, dict[str, str]] = {
+    "horror": {
+        "genre_tone":       "chilling gothic horror. Viewer should feel physically uneasy by the end. Visual reference: Hereditary / The Witch / Midsommar — atmospheric, decaying, candlelit, victorian, fog, occult, supernatural threat.",
+        "visual_style":     "low-key lighting, cool desaturated palette, fog, film grain, victorian/period detail, night-time or candlelit interiors.",
+        "avoid_line":       "no daylight, no contemporary office/urban imagery, no cartoons or illustrations.",
+        "style_keywords_tail": "cinematic, 35mm film, candlelight, fog, victorian gothic, atmospheric horror, dramatic shadows, dread-soaked",
+    },
+    "wisdom": {
+        "genre_tone":       "inspirational, contemplative, uplifting. Viewer should feel encouraged and thoughtful.",
+        "visual_style":     "warm cinematic tones, golden-hour lighting, natural landscapes, soft focus, professional photography.",
+        "avoid_line":       "no dark/gothic imagery, no cluttered scenes, no cartoons.",
+        "style_keywords_tail": "cinematic, golden hour, soft focus, professional photography, inspirational",
+    },
+    "science": {
+        "genre_tone":       "clear, awe-inspiring science communication. Viewer should feel curious and informed.",
+        "visual_style":     "sharp, clean, high-detail. Space photography, laboratory shots, microscopy, technical diagrams, telescope imagery, well-lit modern research settings.",
+        "avoid_line":       "no cartoons, no vague abstract shots, no horror atmosphere, no daylight rejection — daylight is often correct (labs, observatories).",
+        "style_keywords_tail": "photorealistic, high-detail, cinematic, professional science photography, crisp lighting",
+    },
+    "finance": {
+        "genre_tone":       "sharp, analytical, contemporary business. Viewer should feel informed and slightly urgent.",
+        "visual_style":     "modern office, market charts, city skylines, close-ups of currency/screens, motion-blurred trading floors.",
+        "avoid_line":       "no horror imagery, no rural/nature-only imagery, no cartoons.",
+        "style_keywords_tail": "cinematic, high-contrast, modern business, sharp focus, professional photography",
+    },
+}
+
+
+def _genre_block(channel: str) -> dict[str, str]:
+    """Return the storyboard prompt slot values for `channel`. Falls back
+    to a neutral default for unknown/custom channels so their scripts
+    still get channel-relevant shots instead of hardcoded horror."""
+    if channel in _GENRE_TONE_BY_CHANNEL:
+        d = _GENRE_TONE_BY_CHANNEL[channel]
+    else:
+        d = {
+            "genre_tone":       f"channel niche: {channel}. Match tone + subject to what the narration actually describes.",
+            "visual_style":     "photorealistic, cinematic, grounded in the specific subject of each sentence.",
+            "avoid_line":       "no cartoons or illustrations unless the narration explicitly calls for them.",
+            "style_keywords_tail": "cinematic, photorealistic, professional photography, sharp focus",
+        }
+    # Try to pull channel footage_keywords for keyword_examples if
+    # channels.py knows about the channel.
+    try:
+        from modules import channels as _ch
+        preset = _ch.CHANNEL_PRESETS.get(channel) or {}
+        kws = preset.get("footage_keywords") or []
+        keyword_examples = ", ".join(kws[:6]) if kws else "(no channel keywords defined — infer from the narration itself)"
+    except Exception:
+        keyword_examples = "(unknown)"
+    return {**d, "keyword_examples": keyword_examples}
 
 
 def _strip_fences(text):
@@ -89,9 +153,15 @@ def _well_formed(shot):
     return True
 
 
-def plan_shots(narration, num_shots, max_attempts=2):
+def plan_shots(narration, num_shots, channel: str = "horror", max_attempts=2):
     """
     Ask NIM to break `narration` into ~`num_shots` storyboard shots.
+
+    `channel` selects the genre/tone/visual-style/keyword block injected
+    into the prompt. Previously the prompt was hardcoded for gothic-horror
+    which produced off-topic shots (and thus off-topic images) for
+    science / wisdom / finance channels. Now every channel gets prompts
+    grounded in its actual subject matter.
 
     Returns a list of shot dicts (only the well-formed ones — the LLM
     sometimes emits a trailing empty entry, especially near the token
@@ -104,7 +174,11 @@ def plan_shots(narration, num_shots, max_attempts=2):
         log.warning("NIM not available — cannot generate storyboard")
         return None
 
-    prompt = STORYBOARD_PROMPT.format(narration=narration.strip(), n=num_shots)
+    prompt = STORYBOARD_PROMPT.format(
+        narration=narration.strip(),
+        n=num_shots,
+        **_genre_block(channel),
+    )
     last_raw = ""
     best_partial = None  # remember the best partial across attempts
 
@@ -113,7 +187,10 @@ def plan_shots(narration, num_shots, max_attempts=2):
             raw = nim.chat(
                 [
                     {"role": "system", "content":
-                        "You are a horror-film storyboard artist. Reply with a single JSON object only."},
+                        "You are a professional storyboard artist. Reply with a single JSON object only. "
+                        "Match the visual language to the channel genre described in the user message; "
+                        "each shot's visual_description must depict what the assigned narration excerpt "
+                        "is literally about, not generic channel atmosphere."},
                     {"role": "user", "content": prompt},
                 ],
                 # 4096 is plenty for ~15 detailed shots now that thinking

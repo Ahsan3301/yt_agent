@@ -67,15 +67,34 @@ class _KeyProxy:
 
 NIM_KEY = _KeyProxy()
 
-# Model picks (verified working on the free tier as of June 2026):
-#   - Nemotron 3 Super 120B (a12b MoE: 120B params, ~12B active per token)
-#     is a reasoning model — it thinks out loud then writes the final
-#     content. Faster wall-clock than the dense 70b llama AND noticeably
-#     more specific in storyboard / image-prompt work.
-#   - Vision: meta/llama-3.2-11b-vision-instruct — only multimodal option
-#     verified on the free tier; the 120b text model is text-only.
-TEXT_MODEL   = os.getenv("NIM_TEXT_MODEL",   "nvidia/nemotron-3-super-120b-a12b")
-VISION_MODEL = os.getenv("NIM_VISION_MODEL", "meta/llama-3.2-11b-vision-instruct")
+# Model picks (all verified working on NVIDIA NIM free tier):
+#
+#   TEXT — used for script writing, storyboard planning, image prompt
+#   crafting. Nemotron 3 Super 120B (a12b MoE, ~12B active/token) is a
+#   reasoning model that thinks then writes; strong on structured JSON.
+#   Fallback llama-3.3-70b is the classic dense workhorse — very clean
+#   instruction following, no reasoning trace to strip.
+#
+#   VISION — 90B llama vision is 8x larger than the previous 11B pick
+#   and dramatically better at spatial reasoning + composition
+#   judgement. The 11B was accepting too many 'kinda maybe on-topic'
+#   images (root of the user's 'clips are irrelevant' report). Falls
+#   back to 11B if 90B is briefly unavailable so scoring never fully
+#   breaks.
+TEXT_MODEL_PRIMARY   = os.getenv("NIM_TEXT_MODEL",   "nvidia/nemotron-3-super-120b-a12b")
+TEXT_MODEL_FALLBACKS = [
+    "meta/llama-3.3-70b-instruct",
+    "meta/llama-3.1-70b-instruct",
+]
+
+VISION_MODEL_PRIMARY   = os.getenv("NIM_VISION_MODEL", "meta/llama-3.2-90b-vision-instruct")
+VISION_MODEL_FALLBACKS = [
+    "meta/llama-3.2-11b-vision-instruct",
+]
+
+# Backwards-compat aliases — older code paths may still import these.
+TEXT_MODEL   = TEXT_MODEL_PRIMARY
+VISION_MODEL = VISION_MODEL_PRIMARY
 
 # ── Rate limiter ──────────────────────────────────────────────
 # NVIDIA's free tier is 40 RPM. We give a 2-request safety margin so a
@@ -213,51 +232,70 @@ def chat(messages, model=None, max_tokens=2048, temperature=0.7,
     tool_calls from the response. Passing tools= directly here also
     works but you get the raw string and must parse yourself.
     """
-    payload = {
-        "model": model or TEXT_MODEL,
-        "messages": messages,
-        "max_tokens": max_tokens,
-        "temperature": temperature,
-    }
-    if response_format:
-        payload["response_format"] = response_format
-    if tools:
-        payload["tools"] = tools
-        # Force tool-calling on if requested. Streaming gets disabled
-        # automatically below because tool-call responses are non-text.
-        if tool_choice is not None:
-            payload["tool_choice"] = tool_choice
-    if not thinking:
-        # Reasoning models eat the entire token budget on internal
-        # monologue otherwise. With thinking off they go straight to
-        # the answer — same quality, ~5x fewer tokens, ~3x faster.
-        payload["chat_template_kwargs"] = {"thinking": False}
+    # Model fallback chain — caller-supplied model wins alone; otherwise
+    # walk the configured primary + fallbacks so a transient outage on
+    # any one model doesn't kill the whole render.
+    model_chain = [model] if model else [TEXT_MODEL_PRIMARY, *TEXT_MODEL_FALLBACKS]
 
-    if stream is None:
-        # Tools responses are JSON, not text — streaming would garble them.
-        stream = (max_tokens > 1024) and not tools
+    last_err: Exception | None = None
+    for m_name in model_chain:
+        payload = {
+            "model": m_name,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        if response_format:
+            payload["response_format"] = response_format
+        if tools:
+            payload["tools"] = tools
+            if tool_choice is not None:
+                payload["tool_choice"] = tool_choice
+        if not thinking:
+            # Reasoning models eat the entire token budget on internal
+            # monologue otherwise. With thinking off they go straight to
+            # the answer — same quality, ~5x fewer tokens, ~3x faster.
+            payload["chat_template_kwargs"] = {"thinking": False}
 
-    if stream:
-        content, reasoning = _post_chat_streamed_pair(
-            payload, read_timeout=60, total_timeout=max(120, timeout)
-        )
-    else:
-        data = _post_chat(payload, timeout=timeout)
-        msg = data["choices"][0]["message"]
-        content = msg.get("content") or ""
-        reasoning = msg.get("reasoning_content") or ""
+        # Decide stream mode inside the loop — same rule, but tools disable it.
+        if stream is None:
+            use_stream = (max_tokens > 1024) and not tools
+        else:
+            use_stream = stream
 
-    if content.strip():
-        return content
-    # Empty content but reasoning present = the model ran out of budget
-    # mid-reasoning before producing the final answer. Warn and surface
-    # the reasoning anyway — usually still useful.
-    if reasoning.strip():
-        log.warning(
-            f"NIM returned reasoning but no final content (max_tokens={max_tokens} "
-            f"may be too low for this reasoning model). Using reasoning trace."
-        )
-        return reasoning
+        try:
+            if use_stream:
+                content, reasoning = _post_chat_streamed_pair(
+                    payload, read_timeout=60, total_timeout=max(120, timeout)
+                )
+            else:
+                data = _post_chat(payload, timeout=timeout)
+                msg = data["choices"][0]["message"]
+                content = msg.get("content") or ""
+                reasoning = msg.get("reasoning_content") or ""
+        except Exception as e:
+            log.warning(f"NIM chat {m_name} failed: {e}; trying next model in chain")
+            last_err = e
+            continue
+
+        if content.strip():
+            if m_name != model_chain[0]:
+                log.info(f"NIM chat: succeeded on fallback model {m_name}")
+            return content
+        # Empty content but reasoning present = model ran out of budget
+        # mid-reasoning. Warn + surface it anyway.
+        if reasoning.strip():
+            log.warning(
+                f"NIM {m_name} returned reasoning but no final content "
+                f"(max_tokens={max_tokens} may be too low for a reasoning model). "
+                f"Using reasoning trace."
+            )
+            return reasoning
+        # Empty everything — retry on next model (some free-tier models
+        # transiently return no content under load).
+        log.warning(f"NIM {m_name} returned empty response; trying next model")
+    if last_err:
+        raise last_err
     return ""
 
 
@@ -305,38 +343,61 @@ _INT_RE = re.compile(r"\b(10|[0-9])\b")
 
 def vision_score(image_url, fit_description, premise="", model=None, timeout=90):
     """
-    Ask the vision model to score how well `image_url` fits `fit_description`
-    (and optionally a `premise` describing the story). Returns an int 0-10,
-    or -1 on error (caller should treat -1 as "unknown, fall through").
+    Score how well `image_url` matches `fit_description` (the per-shot
+    visual description the storyboard produced) and, optionally, the
+    story premise. Returns an int 0-10, or -1 on parse/network failure
+    (caller treats -1 as 'unknown, fall through').
 
-    Watermarked previews are completely fine — the model judges aesthetic
-    fit, and Shutterstock previews include the full image just with a
-    diagonal Shutterstock watermark.
+    Channel-agnostic: previously the prompt hard-coded a gothic-horror
+    rubric and rejected e.g. bright science-lab shots for the Orbitarium
+    channel. Now the rubric is expressed in terms of the shot's own
+    visual_description + narration excerpt, so 'a clean lab with glass
+    beakers' scores highly for a science channel and low for a horror one.
+
+    Vision model fallback chain: tries VISION_MODEL_PRIMARY first
+    (llama-3.2-90b-vision-instruct), falls back to 11b if the 90b is
+    temporarily unavailable — scoring never silently disables.
+
+    Watermarked previews are fine — the model judges composition, and
+    Shutterstock previews contain the full image just under a diagonal
+    watermark we tell the model to ignore.
     """
     prompt_parts = [
-        "You are a strict art director picking images for a gothic-horror "
-        "YouTube short. Most images you see will NOT fit. Be harsh.\n\n",
-        f"Required visual style: {fit_description}.",
+        "You are a rigorous stock-footage editor picking the ONE image "
+        "that best illustrates a specific line of narration for a "
+        "vertical short-form video. Be strict: most candidates you see "
+        "will NOT fit and should score below 6.",
     ]
-    if premise:
-        prompt_parts.append(f"\nStory premise: {premise}")
     prompt_parts.append(
-        "\n\nRate the image strictly using this rubric:\n"
-        "  0 = totally wrong (sunny outdoors, beach, office, cartoon, food, daylight portrait, sports)\n"
-        "  1-2 = dark or moody but contemporary/clinical (modern bedroom, parking garage, "
-        "highway, lab, generic urban night)\n"
-        "  3-4 = horror-adjacent but generic (just-a-dark-room, generic forest, "
-        "ordinary fog, no gothic detail)\n"
-        "  5-6 = clearly horror but missing gothic specificity\n"
-        "  7-8 = solid gothic horror — abandoned/decayed setting, victorian/period detail, "
-        "candlelight, fog, occult symbols, supernatural silhouette, cemetery, mansion\n"
-        "  9-10 = exceptional gothic horror — every element on-style, immediately chilling\n\n"
-        "RULES:\n"
-        "  • Daylight or sunny → max 2.\n"
-        "  • Modern/contemporary setting without visible decay → max 4.\n"
-        "  • Cartoon, illustration, or text-heavy → max 2.\n"
-        "  • Ignore any Shutterstock watermark.\n\n"
-        "Reply with ONLY the integer. No words, no explanation."
+        f"\n\nTHE SHOT WE WANT:\n{fit_description.strip()}"
+    )
+    if premise:
+        prompt_parts.append(
+            f"\n\nOVERALL STORY (for tone/setting context only):\n{premise.strip()}"
+        )
+    prompt_parts.append(
+        "\n\nRUBRIC — score 0 to 10 for how well the image supports THIS shot:\n"
+        "  0-2 = wrong subject or wrong genre entirely (e.g. sunny beach for "
+        "a night-time horror shot; office desk for a wilderness shot; cartoon "
+        "for a live-action premise; text-heavy graphic; unrelated object)\n"
+        "  3-4 = right rough category but missing the specific subject the shot "
+        "asks for (e.g. shot wants 'a lab with beakers', image is 'a generic "
+        "office')\n"
+        "  5-6 = correct subject and setting but composition is average, "
+        "cluttered, or lit differently than the shot asks for\n"
+        "  7-8 = correct subject + setting + tone; visually strong and could "
+        "cut into the video as-is\n"
+        "  9-10 = exceptional match — the image is essentially what the shot "
+        "description describes, no compromise\n"
+        "\n"
+        "HARD RULES:\n"
+        "  • Cartoon/illustration when the shot implies photorealism → max 2.\n"
+        "  • Wrong time-of-day (day vs night, indoor vs outdoor) → max 4.\n"
+        "  • Wrong subject entirely → max 2.\n"
+        "  • Ignore any Shutterstock / iStock / Getty watermark.\n"
+        "\n"
+        "Reply with ONLY the integer 0-10. No words, no explanation, no "
+        "punctuation. Just the number."
     )
     prompt = "".join(prompt_parts)
 
@@ -348,16 +409,25 @@ def vision_score(image_url, fit_description, premise="", model=None, timeout=90)
         ],
     }]
 
-    try:
-        text = chat(messages, model=model or VISION_MODEL,
-                    max_tokens=16, temperature=0.0, timeout=timeout)
-    except Exception as e:
-        log.warning(f"vision_score error: {e}")
-        return -1
-
-    m = _INT_RE.search(text or "")
-    if not m:
-        log.warning(f"vision_score: couldn't parse integer from {text!r}")
-        return -1
-    score = int(m.group(1))
-    return max(0, min(10, score))
+    # Try the primary model then the fallback chain. Note we treat parse
+    # failures (returning -1) as retriable too since a bigger model may
+    # comply with 'integer only' formatting where a smaller one waffled.
+    models = [model] if model else [VISION_MODEL_PRIMARY, *VISION_MODEL_FALLBACKS]
+    last_err: Exception | None = None
+    for m_name in models:
+        try:
+            text = chat(messages, model=m_name,
+                        max_tokens=16, temperature=0.0, timeout=timeout)
+        except Exception as e:
+            log.warning(f"vision_score: {m_name} error: {e}")
+            last_err = e
+            continue
+        m = _INT_RE.search(text or "")
+        if not m:
+            log.debug(f"vision_score: {m_name} unparseable output {text!r}; trying next model")
+            continue
+        score = max(0, min(10, int(m.group(1))))
+        return score
+    if last_err:
+        log.warning(f"vision_score: all models failed; last error {last_err}")
+    return -1

@@ -458,7 +458,7 @@ def run_pipeline(
 
         # Storyboard: NIM breaks the narration into shots with per-shot
         # visual_description, search_query, and ai_prompt.
-        shots = plan_shots(script["narration"], num_shots)
+        shots = plan_shots(script["narration"], num_shots, channel=channel_type)
         footage = None
 
         if shots:
