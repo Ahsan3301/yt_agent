@@ -4,12 +4,16 @@ import { useEffect, useState, useMemo } from "react";
 import clsx from "clsx";
 import {
   ListChecks, Loader2, Play, Pause, Trash2, X, RefreshCcw,
-  CheckCircle2, AlertCircle, Clock, Activity,
+  CheckCircle2, AlertCircle, Clock, Activity, RotateCw,
+  Radio, HardDrive, Film,
 } from "lucide-react";
 
 type Job = {
   id: string;
   status: string;
+  // Job kind — "render" (default when missing), "publish_youtube",
+  // "copy_storage". Governs which icon + resume affordance we show.
+  kind?: string;
   channel?: string;
   dry_run?: boolean;
   queued_at?: number;
@@ -22,6 +26,16 @@ type Job = {
   error?: string | null;
   run_id?: string | null;
   public_url?: string | null;
+  // Side-job specific — carried in the row so Resume can inspect what
+  // settings the failed attempt used.
+  youtube_account_id?: string | null;
+  provider_id?: string | null;
+  move?: boolean;
+  title?: string;
+  description?: string;
+  tags?: string[];
+  // Audit link — set when this job is a retry of an earlier failed job.
+  resumed_from?: string | null;
   // Manual-mode payload (any present = "manual mode" badge shows).
   manual_topic?: string;
   manual_script?: string;
@@ -159,6 +173,28 @@ export default function QueuePage() {
     try {
       await fetch(`/api/jobs/${encodeURIComponent(id)}`, { method: "DELETE" });
       await refresh();
+    } catch (e) {
+      setLastError(String(e));
+    }
+    setBusyAction(null);
+  };
+
+  /** Resume a failed side-job. Creates a NEW queued job with the same
+   *  payload; the failed original stays as an audit trail. */
+  const resumeOne = async (id: string) => {
+    setBusyAction(`resume-${id}`);
+    try {
+      const r = await fetch(
+        `/api/jobs/${encodeURIComponent(id)}/resume`,
+        { method: "POST" },
+      );
+      const d = await r.json();
+      if (!r.ok) {
+        setLastError(d.error || `HTTP ${r.status}`);
+      } else {
+        setLastError(null);
+        await refresh();
+      }
     } catch (e) {
       setLastError(String(e));
     }
@@ -343,7 +379,9 @@ export default function QueuePage() {
                     selected={selected.has(j.id)}
                     toggle={() => toggleSelected(j.id)}
                     onCancel={() => cancelOne(j.id)}
-                    busy={busyAction === `cancel-${j.id}`}
+                    onResume={() => resumeOne(j.id)}
+                    busy={busyAction === `cancel-${j.id}` || busyAction === `resume-${j.id}`}
+                    resuming={busyAction === `resume-${j.id}`}
                   />
                 ))}
               </tbody>
@@ -356,15 +394,22 @@ export default function QueuePage() {
 }
 
 function JobRow({
-  job, selected, toggle, onCancel, busy,
+  job, selected, toggle, onCancel, onResume, busy, resuming,
 }: {
   job: Job;
   selected: boolean;
   toggle: () => void;
   onCancel: () => void;
+  onResume: () => void;
   busy: boolean;
+  resuming: boolean;
 }) {
   const canCancel = job.status === "queued" || job.status === "running";
+  const kind = job.kind || "render";
+  const isSideJob = kind === "publish_youtube" || kind === "copy_storage";
+  // Resume is only meaningful for FAILED side-jobs. Render jobs are
+  // re-triggered by re-running the pipeline from Library, not resumed.
+  const canResume = isSideJob && job.status === "failed";
   return (
     <tr className="border-t border-line hover:bg-bg-2/50">
       <td className="px-3 py-2">
@@ -376,16 +421,29 @@ function JobRow({
         />
       </td>
       <td className="px-2 py-2">
-        <a
-          href={`/queue/${encodeURIComponent(job.id)}`}
-          className="font-mono text-xs text-accent hover:underline"
-          title="Open detail view"
-        >
-          {job.id.slice(0, 12)}
-        </a>
+        <div className="flex items-center gap-1.5">
+          <KindPill kind={kind} />
+          <a
+            href={`/queue/${encodeURIComponent(job.id)}`}
+            className="font-mono text-xs text-accent hover:underline"
+            title="Open detail view"
+          >
+            {job.id.slice(0, 12)}
+          </a>
+        </div>
         {job.run_id && (
           <div className="font-mono text-[10px] text-neutral-500">
             run {job.run_id}
+          </div>
+        )}
+        {job.resumed_from && (
+          <div className="text-[10px] text-sky-400" title={`Retry of ${job.resumed_from}`}>
+            ↺ retry of {job.resumed_from.slice(0, 8)}
+          </div>
+        )}
+        {job.status === "failed" && job.error && (
+          <div className="text-[10px] text-red-300 mt-0.5 max-w-[240px] truncate" title={job.error}>
+            {job.error}
           </div>
         )}
       </td>
@@ -437,29 +495,79 @@ function JobRow({
       </td>
       <td className="px-2 py-2 text-xs text-neutral-500">{fmtAge(job.queued_at)}</td>
       <td className="px-3 py-2 text-right">
-        {canCancel && (
-          <button
-            onClick={onCancel}
-            disabled={busy}
-            className="btn btn-ghost h-7 text-xs"
-            title="Cancel this job"
-          >
-            {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <X className="h-3 w-3" />}
-            Cancel
-          </button>
-        )}
-        {job.public_url && (
-          <a
-            href={job.public_url}
-            target="_blank"
-            rel="noreferrer"
-            className="btn btn-ghost h-7 text-xs"
-          >
-            View
-          </a>
-        )}
+        <div className="inline-flex items-center gap-1 justify-end">
+          {canResume && (
+            <button
+              onClick={onResume}
+              disabled={busy}
+              className="btn h-7 text-xs border-sky-500/40 bg-sky-500/10 text-sky-300"
+              title={
+                kind === "publish_youtube"
+                  ? `Retry YouTube upload with the same settings (account ${job.youtube_account_id || "?"})`
+                  : `Retry storage copy with the same settings (provider ${job.provider_id || "?"})`
+              }
+            >
+              {resuming ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCw className="h-3 w-3" />}
+              Resume
+            </button>
+          )}
+          {canCancel && (
+            <button
+              onClick={onCancel}
+              disabled={busy}
+              className="btn btn-ghost h-7 text-xs"
+              title="Cancel this job"
+            >
+              {busy && !resuming ? <Loader2 className="h-3 w-3 animate-spin" /> : <X className="h-3 w-3" />}
+              Cancel
+            </button>
+          )}
+          {job.public_url && (
+            <a
+              href={job.public_url}
+              target="_blank"
+              rel="noreferrer"
+              className="btn btn-ghost h-7 text-xs"
+            >
+              View
+            </a>
+          )}
+        </div>
       </td>
     </tr>
+  );
+}
+
+/** Small pill showing job kind — render / publish / storage-copy.
+ *  Icon-only for compactness; hover for the full label. */
+function KindPill({ kind }: { kind: string }) {
+  if (kind === "publish_youtube") {
+    return (
+      <span
+        title="publish_youtube — upload existing video to YouTube"
+        className="inline-flex items-center h-5 px-1.5 rounded border border-red-500/30 bg-red-500/10 text-red-300"
+      >
+        <Radio className="h-3 w-3" />
+      </span>
+    );
+  }
+  if (kind === "copy_storage") {
+    return (
+      <span
+        title="copy_storage — mirror or move video to another storage provider"
+        className="inline-flex items-center h-5 px-1.5 rounded border border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+      >
+        <HardDrive className="h-3 w-3" />
+      </span>
+    );
+  }
+  return (
+    <span
+      title="render — full pipeline (research → script → voiceover → footage → edit → upload)"
+      className="inline-flex items-center h-5 px-1.5 rounded border border-line bg-bg-2 text-neutral-400"
+    >
+      <Film className="h-3 w-3" />
+    </span>
   );
 }
 
