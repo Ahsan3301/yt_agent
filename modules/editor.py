@@ -368,13 +368,172 @@ def plan_word_events(narration_text, audio_duration, max_words_per_chunk=5):
     return events
 
 
-def create_caption_file(narration_text, audio_duration, output_path):
+def plan_word_events_from_timing(narration_text, word_timing, audio_duration, max_words_per_chunk=5):
+    """Same event shape as plan_word_events, but with each per-word start/end
+    taken from the TTS engine's actual timings (edge-tts WordBoundary).
+
+    Chunks are still formed by `caption_chunks` for readable line breaks.
+    We match narration words → timing entries in order; when a chunk's
+    words all resolve, we anchor the chunk to real times. When the
+    alignment slips (usually because the narration has punctuation/
+    hyphenation the TTS engine collapses differently), we fall back to
+    the previous chunk's end + a proportional split for just that chunk.
+    """
+    import re as _re
+    chunks = caption_chunks(narration_text, max_words=max_words_per_chunk)
+    if not chunks or not word_timing:
+        return []
+    style = _caption_style()
+    hl_color = style["highlight_bgr"]
+    hl_size = style["highlight_size"]
+
+    # Normalise timing texts to bare words so we can match against
+    # `narration_text.split()`. edge-tts words already lack punctuation
+    # but casing/apostrophes can vary — lowercase-alnum for matching.
+    def _norm(s: str) -> str:
+        return _re.sub(r"[^a-z0-9]", "", s.lower())
+
+    timing_norm = [_norm(w.get("text", "")) for w in word_timing]
+    cursor = 0
+    events: list[dict] = []
+    chunk_prev_end = 0.0
+
+    for chunk in chunks:
+        words = chunk.split()
+        # Try to find each chunk word in the remaining timing entries in order.
+        chunk_word_times: list[tuple[float, float, str]] = []
+        for w in words:
+            target = _norm(w)
+            hit = -1
+            # Look ahead up to a small window to allow the TTS engine to
+            # skip / merge tokens (numbers, contractions, etc.).
+            for k in range(cursor, min(len(timing_norm), cursor + 5)):
+                if timing_norm[k] and timing_norm[k] == target:
+                    hit = k
+                    break
+            if hit >= 0:
+                wt = word_timing[hit]
+                chunk_word_times.append((wt["start_ms"] / 1000.0, wt["end_ms"] / 1000.0, w))
+                cursor = hit + 1
+            else:
+                # Miss — mark with sentinel; we'll interpolate below.
+                chunk_word_times.append((None, None, w))  # type: ignore[arg-type]
+        # Anchor the chunk: use the first + last real times we found.
+        anchors = [t for t in chunk_word_times if t[0] is not None]
+        if not anchors:
+            # Whole chunk missed — proportional-split against remaining
+            # audio budget so we don't emit zero-duration events.
+            fallback_dur = max(0.5, (audio_duration - chunk_prev_end) / max(1, len(chunks)))
+            start = chunk_prev_end
+            per = fallback_dur / max(1, len(words))
+            for i, w in enumerate(words):
+                s, e = start + i * per, start + (i + 1) * per
+                events.append(_emit_event(s, e, words, i, hl_color, hl_size))
+            chunk_prev_end = start + fallback_dur
+            continue
+        chunk_start = anchors[0][0]
+        chunk_end   = anchors[-1][1]
+        # Emit one event per word, using real start/end where we have
+        # them and linear interpolation between neighbouring anchors
+        # for words that missed.
+        real_times: list[float | None] = []
+        for (s, e, _) in chunk_word_times:
+            real_times.append(s)
+            real_times.append(e)
+        # Fill None gaps by linear interpolation between neighbouring
+        # non-None entries.
+        real_times = _interp_none(real_times, chunk_start, chunk_end)
+        for i, w in enumerate(words):
+            s = real_times[i * 2]
+            e = real_times[i * 2 + 1]
+            if s is None or e is None or e <= s:
+                continue
+            events.append(_emit_event(s, e, words, i, hl_color, hl_size))
+        chunk_prev_end = chunk_end
+    return events
+
+
+def _emit_event(start: float, end: float, words: list[str], active_idx: int, hl_color: str, hl_size: int) -> dict:
+    parts = []
+    for j, ww in enumerate(words):
+        safe = _ass_escape(ww)
+        if j == active_idx:
+            parts.append(f"{{\\c&H{hl_color}&\\b1\\fs{hl_size}}}{safe}{{\\r}}")
+        else:
+            parts.append(safe)
+    return {"start": start, "end": end, "text": " ".join(parts)}
+
+
+def _interp_none(vals: list[float | None], lo: float, hi: float) -> list[float]:
+    """Linear-interpolate None entries between anchor floats. Endpoints
+    default to lo/hi if the sequence begins/ends with None."""
+    n = len(vals)
+    if n == 0:
+        return []
+    out: list[float] = [0.0] * n
+    # Prefix anchors
+    prev_idx = -1
+    prev_val: float = lo
+    for i in range(n):
+        if vals[i] is not None:
+            v = float(vals[i])  # type: ignore[arg-type]
+            # Fill Nones between prev_idx and i.
+            for k in range(prev_idx + 1, i):
+                if prev_idx == -1:
+                    out[k] = lo + (v - lo) * (k + 1) / (i + 1)
+                else:
+                    out[k] = prev_val + (v - prev_val) * (k - prev_idx) / (i - prev_idx)
+            out[i] = v
+            prev_idx = i
+            prev_val = v
+    # Trailing Nones after the last anchor
+    if prev_idx < n - 1:
+        for k in range(prev_idx + 1, n):
+            out[k] = prev_val + (hi - prev_val) * (k - prev_idx) / (n - prev_idx)
+    return out
+
+
+def _load_word_timing_sidecar(audio_path: str) -> list[dict] | None:
+    """Return per-word timing from the edge-tts .words.json sidecar if it
+    exists next to the audio. Returns None on any error so the caller
+    falls back to the character-count heuristic."""
+    import json as _json
+    import os as _os
+    sidecar = audio_path + ".words.json" if audio_path else None
+    if not sidecar or not _os.path.exists(sidecar):
+        return None
+    try:
+        with open(sidecar, encoding="utf-8") as f:
+            data = _json.load(f)
+        words = data.get("words") or []
+        # Sanity: need at least a handful of boundaries; empty sidecars
+        # aren't better than the heuristic.
+        if isinstance(words, list) and len(words) >= 4:
+            return words
+    except Exception:
+        pass
+    return None
+
+
+def create_caption_file(narration_text, audio_duration, output_path, audio_path: str | None = None):
     """
     Generate an ASS subtitle file with CapCut-style word-by-word highlighting:
     the whole sentence is visible, and the currently-spoken word is bolded,
     enlarged, and tinted yellow as the narration progresses.
+
+    When `audio_path` is provided AND its .words.json sidecar exists
+    (edge-tts writes it during synthesis), we use the ACTUAL per-word
+    start/end timing captured from the TTS engine — millisecond-accurate,
+    no drift. Falls back to the character-count heuristic when the
+    sidecar is absent (Kokoro path, older cached audio, etc.).
     """
-    events = plan_word_events(narration_text, audio_duration)
+    word_timing = _load_word_timing_sidecar(audio_path) if audio_path else None
+    if word_timing:
+        events = plan_word_events_from_timing(narration_text, word_timing, audio_duration)
+        log.info(f"captions: using {len(word_timing)} TTS-emitted word timings (drift-free)")
+    else:
+        events = plan_word_events(narration_text, audio_duration)
+        log.info("captions: using character-count heuristic (no TTS word-timing sidecar)")
     if not events:
         # Degenerate input — still emit a single placeholder so ffmpeg's
         # ass filter doesn't choke on an empty events block.
@@ -782,7 +941,7 @@ def assemble_video(voiceover_path, sources, music_path, narration_text, output_d
     # Step 2: Create caption file
     caption_filename = "captions.ass"
     caption_path = os.path.join(work_dir, caption_filename)
-    create_caption_file(narration_text, duration, caption_path)
+    create_caption_file(narration_text, duration, caption_path, audio_path=voiceover_path)
 
     final_path = os.path.join(output_dir, "final_video.mp4")
 

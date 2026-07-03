@@ -111,11 +111,13 @@ DEFAULT_SETTINGS = {
         # below-threshold result.
         "ai_image_attempts_per_shot": 3,
         "vision_judge_enabled": True,
-        # Threshold is intentionally low — the 11b vision model is more
-        # reliable at RANKING than absolute scoring. We over-fetch
-        # candidates and let the model surface the best of the batch; the
-        # threshold filters only truly off-genre images.
-        "vision_judge_threshold": 4,
+        # Threshold: images below this score are treated as too off-topic
+        # and rejected. Was 4 (very permissive) — too many off-topic clips
+        # slipped through. 6 is the sweet spot for the 11b vision model:
+        # rejects clearly wrong images (score 3-5) while accepting
+        # 'imperfect but on-topic' (6-8). Users can lower it back to 4 in
+        # Settings if they want a rougher-cut mode with more variety.
+        "vision_judge_threshold": 6,
         "vision_judge_candidates_multiplier": 4,  # search 4x what we need
         # Content restrictions for footage providers.
         # When False (default for horror channel), the local adult-term

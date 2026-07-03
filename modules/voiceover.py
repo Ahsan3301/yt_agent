@@ -127,8 +127,40 @@ EDGE_TTS_TIMEOUT = 90  # seconds per attempt — generous; normal runs take 5-15
 async def _edge_tts_async(text, voice, output_path, rate="+0%", pitch="+0Hz"):
     """Generate audio using edge-tts (async). Supports rate/pitch prosody."""
     import edge_tts
+    # Capture the audio AND the WordBoundary events edge-tts emits
+    # during synthesis. WordBoundary carries millisecond-accurate
+    # per-word start/duration; we persist them next to the .mp3 as a
+    # .words.json sidecar so the editor can build word-locked
+    # subtitles instead of estimating timing from character counts
+    # (which drifted noticeably on longer narrations — every user
+    # complaint of 'subtitles not syncing' traces here).
     communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
-    await asyncio.wait_for(communicate.save(output_path), timeout=EDGE_TTS_TIMEOUT)
+    boundaries: list[dict] = []
+
+    async def _drive():
+        with open(output_path, "wb") as f:
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    f.write(chunk["data"])
+                elif chunk["type"] == "WordBoundary":
+                    # offset + duration are in 100-nanosecond units.
+                    boundaries.append({
+                        "start_ms": int(chunk["offset"]) / 10_000,
+                        "end_ms":   (int(chunk["offset"]) + int(chunk["duration"])) / 10_000,
+                        "text":     str(chunk["text"]),
+                    })
+
+    await asyncio.wait_for(_drive(), timeout=EDGE_TTS_TIMEOUT)
+
+    if boundaries:
+        sidecar = output_path + ".words.json"
+        try:
+            import json as _json
+            with open(sidecar, "w", encoding="utf-8") as f:
+                _json.dump({"words": boundaries, "count": len(boundaries)}, f)
+            log.info(f"edge-tts: captured {len(boundaries)} word timings → {sidecar}")
+        except Exception as e:
+            log.warning(f"edge-tts: failed to write word-timing sidecar: {e}")
 
 
 def generate_with_edge_tts(text, channel_type, output_path, language=None):
