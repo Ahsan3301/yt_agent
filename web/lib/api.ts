@@ -72,7 +72,7 @@ let _cached: { at: number; url: string } | null = null;
  * a CPU instance takes 5-10 min. Queueing on a free GPU is faster than
  * starting fresh on a slow CPU.
  */
-export function rankBackend(a: RegistryEntry, b: RegistryEntry): number {
+function rankBackend(a: RegistryEntry, b: RegistryEntry): number {
   const score = (e: RegistryEntry) => {
     const tier = e.tier === "cpu" ? 2 : 0;              // GPU = 0, CPU = 2
     const busy = e.status === "available" ? 0 : 1;

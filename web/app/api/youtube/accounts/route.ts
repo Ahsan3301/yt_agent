@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase-admin";
+import { toEpochMs } from "@/lib/timestamps";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -32,7 +33,7 @@ export async function GET() {
         youtube_channel_id: (d.youtube_channel_id as string) || doc.id,
         title:     (d.title as string) || "",
         thumbnail: (d.thumbnail as string) || "",
-        updated_at: _toEpochMs(d.updated_at),
+        updated_at: toEpochMs(d.updated_at),
       });
     });
     out.sort((a, b) => Number(b.updated_at || 0) - Number(a.updated_at || 0));
@@ -40,22 +41,6 @@ export async function GET() {
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }
-}
-
-/** Normalize any timestamp shape to epoch ms.
- *  Handles: Firestore Timestamp (.toMillis), epoch number (sec or ms),
- *  ISO string, or null. */
-function _toEpochMs(v: unknown): number | null {
-  if (v == null) return null;
-  if (typeof v === "number") return v > 10_000_000_000 ? v : v * 1000;
-  if (typeof v === "string") {
-    const parsed = Date.parse(v);
-    return isNaN(parsed) ? null : parsed;
-  }
-  if (typeof (v as { toMillis?: () => number }).toMillis === "function") {
-    return (v as { toMillis: () => number }).toMillis();
-  }
-  return null;
 }
 
 /** DELETE /api/youtube/accounts?id=<youtube_channel_id> */

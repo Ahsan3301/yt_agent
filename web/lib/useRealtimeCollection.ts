@@ -277,5 +277,3 @@ export function useRealtimeCollection(
   return { snapshot, error, reconnectCount };
 }
 
-// Back-compat alias — existing imports keep working.
-export const useFirestoreCollection = useRealtimeCollection;
