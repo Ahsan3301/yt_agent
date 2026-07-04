@@ -154,14 +154,15 @@ DEFAULT_SETTINGS = {
         # both API-based, no VRAM, no torch drama — reliably ~10 sec /
         # image. Users who WANT local_sdxl can flip it on in Settings
         # after confirming their runtime is healthy.
-        # Pollinations first — verified working in prod (rotates flux /
-        # sdxl / flux-pro across attempts). HuggingFace Inference API
-        # sits behind as a fallback but has been unreliable on the free
-        # tier (503 model-loading forever + endpoint DNS issues from the
-        # side-worker network); users can toggle it on if they want.
-        # local_sdxl still OFF by default (Kaggle CUDA torch fragility).
-        "priority": ["pollinations", "huggingface", "local_sdxl"],
+        # Together.ai FIRST when TOGETHER_API_KEY is set — it serves
+        # the real Black Forest Labs Flux.1-schnell (200-400 free
+        # renders/day), which is materially higher quality than
+        # Pollinations' free Flux wrapper. Falls through gracefully
+        # if no key. Pollinations remains the always-available default.
+        # HF Inference API and local_sdxl kept for user opt-in.
+        "priority": ["together", "pollinations", "huggingface", "local_sdxl"],
         "enabled": {
+            "together":     True,
             "pollinations": True,
             "huggingface":  True,
             "local_sdxl":   False,

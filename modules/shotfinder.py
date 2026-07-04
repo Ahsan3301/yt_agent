@@ -158,6 +158,144 @@ def _pollinations_breaker_record(success: bool, http_status: int | None = None):
             )
 
 
+# Flux prompt distiller — condenses long visual_description prose into
+# a 15-25 word tag-style prompt. Flux only weights the first ~77 tokens
+# meaningfully; sending a 500-char poetic description caused Flux to
+# truncate and hallucinate a generic image. Distilled output is
+# comma-separated subject + key details + style tags, which is what
+# every stable-diffusion / Flux fine-tune expects.
+_FLUX_DISTILL_CACHE: dict[str, str] = {}
+
+
+def _distill_prompt_for_flux(visual_description: str, channel: str = "") -> str:
+    """Return a Flux-optimised ~20-word tag-style prompt derived from
+    the shot's visual_description. Falls back to the original text
+    trimmed to 200 chars if the LLM call fails — never blocks the
+    render. Cached per-visual so subsequent shots reusing the same
+    description don't re-call NIM."""
+    key = (visual_description or "").strip()
+    if not key:
+        return ""
+    if key in _FLUX_DISTILL_CACHE:
+        return _FLUX_DISTILL_CACHE[key]
+    try:
+        prompt = (
+            "Rewrite the scene below into a short image-generation prompt "
+            "for Flux / SDXL. Format: 15 to 25 words, comma-separated, "
+            "structured as: MAIN SUBJECT, key visual details, environment, "
+            "lighting/mood, style tags at the end (photorealistic, "
+            "cinematic, sharp focus).\n"
+            "Rules:\n"
+            "  - No poetic prose, no metaphors, no complete sentences.\n"
+            "  - Concrete nouns beat adjectives.\n"
+            "  - Do NOT include the words 'shot' / 'scene' / 'image'.\n"
+            "  - Do NOT invent named people, places, or brands.\n"
+            f"  - Match visual language to channel niche: {channel or 'generic'}.\n\n"
+            f"SCENE:\n{key[:600]}\n\n"
+            "Reply with ONLY the prompt string. No preamble, no explanation."
+        )
+        raw = nim.chat(
+            messages=[{"role": "user", "content": prompt}],
+            model="meta/llama-3.3-70b-instruct",
+            max_tokens=80,
+            temperature=0.5,
+            stream=False,
+            timeout=30,
+            attempts=1,
+        )
+        distilled = (raw or "").strip().strip('"').strip().split("\n")[0]
+        # Clean any residual leading label / colon.
+        for pfx in ("Prompt:", "prompt:", "PROMPT:", "-"):
+            if distilled.lower().startswith(pfx.lower()):
+                distilled = distilled[len(pfx):].strip()
+        # Hard cap 240 chars — Flux tokenizer stops caring past that.
+        distilled = distilled[:240]
+        if len(distilled) < 15:
+            # Degenerate — fall back to trimmed original.
+            distilled = key[:200]
+        _FLUX_DISTILL_CACHE[key] = distilled
+        log.info(f"  flux prompt distilled: {distilled!r}")
+        return distilled
+    except Exception as e:
+        log.debug(f"flux distiller failed ({e}); using trimmed original")
+        return key[:200]
+
+
+# ── Together.ai (real Flux.1-schnell on their free tier) ───────
+# 200-400 free renders per day on the schnell endpoint. Real Black
+# Forest Labs weights, not the Pollinations wrapper. Materially
+# higher quality than Pollinations for the same input prompt.
+_TOGETHER_CONSEC_FAIL = 0
+_TOGETHER_OPEN_UNTIL = 0.0
+_TOGETHER_LOCK = _poll_threading.Lock() if 'threading' not in dir() else None  # deferred
+
+
+def _together_generate(prompt, output_dir, trial, negative_prompt=""):
+    """Generate one image via Together.ai's Flux.1-schnell-Free endpoint.
+    Returns (path, seed) on success, (None, seed) on failure.
+    Skips silently if TOGETHER_API_KEY isn't set."""
+    seed = int(hashlib.md5(f"{prompt}|{trial}|together".encode()).hexdigest()[:8], 16)
+    token = os.getenv("TOGETHER_API_KEY", "").strip()
+    if not token:
+        return None, seed
+    global _TOGETHER_CONSEC_FAIL, _TOGETHER_OPEN_UNTIL
+    if time.time() < _TOGETHER_OPEN_UNTIL:
+        return None, seed
+    # Distil for Flux (short tag-style) — same reasoning as Pollinations.
+    final_prompt = _distill_prompt_for_flux(prompt)[:400]
+    dest = os.path.join(output_dir, f"together_{seed:08x}.jpg")
+    try:
+        r = requests.post(
+            "https://api.together.xyz/v1/images/generations",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type":  "application/json",
+            },
+            json={
+                "model":  "black-forest-labs/FLUX.1-schnell-Free",
+                "prompt": final_prompt,
+                "width":  576,
+                "height": 1024,
+                "steps":  4,
+                "n":      1,
+                "seed":   seed,
+                "response_format": "url",
+            },
+            timeout=60,
+        )
+        if r.status_code == 429:
+            _TOGETHER_CONSEC_FAIL += 1
+            if _TOGETHER_CONSEC_FAIL >= 3:
+                _TOGETHER_OPEN_UNTIL = time.time() + 120
+                log.warning("Together.ai: circuit breaker OPEN (3x 429s)")
+            log.warning("Together.ai 429 — rate limited")
+            return None, seed
+        if r.status_code == 401:
+            log.warning("Together.ai 401 — TOGETHER_API_KEY invalid; disabling")
+            _TOGETHER_OPEN_UNTIL = time.time() + 3600  # stop trying this session
+            return None, seed
+        r.raise_for_status()
+        data = r.json()
+        img_url = (data.get("data") or [{}])[0].get("url")
+        if not img_url:
+            log.warning(f"Together.ai: no image url in response: {str(data)[:200]}")
+            return None, seed
+        # Download the generated image to disk.
+        img_r = requests.get(img_url, timeout=30)
+        img_r.raise_for_status()
+        with open(dest, "wb") as f:
+            f.write(img_r.content)
+        if os.path.getsize(dest) < 4096:
+            return None, seed
+        _TOGETHER_CONSEC_FAIL = 0
+        log.info(f"Together.ai: image ok (seed {seed}, {os.path.getsize(dest)//1024} KB)")
+        return dest, seed
+    except Exception as e:
+        _TOGETHER_CONSEC_FAIL += 1
+        log.warning(f"Together.ai gen failed: {e}")
+        return None, seed
+
+
 # Serialise Pollinations requests across threads. The public endpoint
 # returns 429 aggressively when two calls land within a few hundred ms
 # of each other — which happens instantly with the ThreadPoolExecutor.
@@ -187,16 +325,17 @@ def _pollinations_generate(prompt, output_dir, trial, negative_prompt=""):
         log.info(f"Pollinations: breaker OPEN (skipping; reopens in {wait}s)")
         return None, seed
 
-    # Pollinations URL-encodes the prompt into a GET URL — very long
-    # prompts (>~800 chars) intermittently 500. craft_image_prompt +
-    # style keywords + Avoid: <negative> was easily 1500+ chars, causing
-    # the 500 storm the user saw. Two guards:
-    #   1. Cap the raw prompt at 500 chars (Flux ignores the tail
-    #      anyway; the model only weights the first ~77 tokens meaningfully).
-    #   2. Skip the negative-prompt clause entirely — Flux Pro / SDXL
-    #      via Pollinations don't respect it strongly, and appending it
-    #      pushed the URL over the length threshold.
-    final_prompt = (prompt or "").strip()[:500]
+    # Pollinations URL-encodes the prompt into a GET URL.
+    # Two coordinated changes that materially improved output quality:
+    #   1. DISTILL the prompt to a 15-25 word tag-style Flux prompt.
+    #      Flux only weights the first ~77 tokens, so sending 500-char
+    #      poetic prose caused it to truncate + hallucinate a generic
+    #      image. Comma-separated subject + details + style at the end
+    #      is what stable-diffusion + Flux fine-tunes were trained on.
+    #   2. No negative-prompt clause — Flux via Pollinations doesn't
+    #      respect it strongly, and appending it just pushed the URL
+    #      past Pollinations' 500-storm threshold.
+    final_prompt = _distill_prompt_for_flux(prompt)[:400]
     encoded = urllib.parse.quote(final_prompt, safe="")
     # Rotate the Pollinations model across attempts. All three verified
     # working (flux + sdxl + flux-pro) — cycling means a bad prompt on
@@ -762,9 +901,13 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror"):
         if name == "local_sdxl":
             if _LOCAL_SDXL_BROKEN:
                 return False, f"local pipeline broken ({_LOCAL_SDXL_BROKEN_REASON})"
+        if name == "together":
+            if not os.getenv("TOGETHER_API_KEY", "").strip():
+                return False, "no TOGETHER_API_KEY"
         return True, ""
 
     _AI_PROVIDERS = {
+        "together":    _together_generate,   # real Flux.1-schnell (best free quality)
         "huggingface": _huggingface_generate,
         "local_sdxl":  _local_sdxl_generate,
         "pollinations": _pollinations_generate,
