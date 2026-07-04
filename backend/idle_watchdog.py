@@ -42,15 +42,33 @@ IDLE_TIMEOUT_SECONDS = _KAGGLE_OVERRIDE or int(os.getenv("IDLE_TIMEOUT_SECONDS",
 IDLE_CHECK_INTERVAL  = int(os.getenv("IDLE_CHECK_INTERVAL",  "30")  or 30)
 IDLE_STARTUP_GRACE   = int(os.getenv("IDLE_STARTUP_GRACE",   "300") or 300)
 
-# Absolute ceiling on session lifetime regardless of activity. Prevents
-# a worker from running forever when something gets stuck OR when stale
-# queued jobs in Firestore keep the activity check artificially busy.
-# Default 1 h on Kaggle, off elsewhere (Colab + HF Space should never
-# be auto-killed against the user's will).
+# Detect if we're on Kaggle even without the env var set. Kaggle's
+# runtime always mounts /kaggle. Users forget to set the env var and
+# then watch their weekly GPU quota disappear when a stuck job pins
+# is_busy()=True for hours.
+_ON_KAGGLE = os.path.isdir("/kaggle") or bool(os.getenv("KAGGLE_KERNEL_RUN_TYPE"))
+
+# Absolute ceiling on session lifetime regardless of activity.
+# 2 h on Kaggle (auto-detected — user report: worker ran 14 h and
+# burned weekly quota when SDXL model download stalled + is_busy
+# stuck True → watchdog kept resetting), off elsewhere (Colab + HF
+# Space should never be auto-killed against user's will).
 HARD_MAX_LIFETIME_SECONDS = int(
     os.getenv("HARD_MAX_LIFETIME_SECONDS",
-              "3600" if _KAGGLE_OVERRIDE else "0") or 0
+              "7200" if _ON_KAGGLE else "0") or 0
 )
+
+# Stuck-busy cap. If jobs.is_busy() returns True continuously for this
+# long, treat the worker as WEDGED and force shutdown. Real renders
+# finish in 5-10 min; if we've been "busy" for 30+ min the job has
+# hung (SDXL stall, ffmpeg deadlock, network drop mid-upload). Better
+# to kill and let the next Kaggle wake pick up a fresh session than
+# waste hours of the free-tier weekly quota. Off if <= 0.
+BUSY_STUCK_SECONDS = int(
+    os.getenv("BUSY_STUCK_SECONDS",
+              "1800" if _ON_KAGGLE else "0") or 0
+)
+_busy_since: float | None = None
 
 _lock = threading.Lock()
 _last_active = time.time()
@@ -184,6 +202,26 @@ def start():
                 f"idle={int(idle)}s/{IDLE_TIMEOUT_SECONDS}s "
                 f"local_busy={local_busy} local_q={local_q} remote_q={remote_q}"
             )
+
+            # Stuck-busy detection. is_busy() gets pinned True if a
+            # render step hangs (SDXL model download stall, ffmpeg
+            # wait-forever, TCP drop mid-upload). Without this check the
+            # watchdog resets on every tick and never shuts down.
+            global _busy_since
+            if local_busy:
+                if _busy_since is None:
+                    _busy_since = time.time()
+                busy_for = time.time() - _busy_since
+                if BUSY_STUCK_SECONDS > 0 and busy_for >= BUSY_STUCK_SECONDS:
+                    log.warning(
+                        f"idle watchdog: STUCK-BUSY {int(busy_for)}s "
+                        f">= BUSY_STUCK_SECONDS={BUSY_STUCK_SECONDS}s — "
+                        f"job wedged, force-shutdown to preserve quota"
+                    )
+                    _shutdown()
+                    return
+            else:
+                _busy_since = None
 
             if local_busy or local_q > 0:
                 touch()
