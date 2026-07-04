@@ -333,8 +333,14 @@ def _horde_generate(prompt, output_dir, trial, negative_prompt=""):
         if not job_id:
             log.warning(f"Stable Horde: no job id in response: {submit.text[:200]}")
             return None, seed
-        # Poll until done (or 5 min hard cap).
-        deadline = time.time() + 300
+        # Poll until done (or 90 sec hard cap).
+        # Previously 300 sec (5 min) — but Horde's queue is often congested
+        # even with a priority API key. Waiting 5 min per stuck shot and
+        # then falling through to Pollinations meant a 9-shot render
+        # could take 45+ min. 90 sec is enough for a healthy queue
+        # (typical priority-key completion is 15-40 sec); stuck jobs
+        # fall through to Pollinations faster and the render moves on.
+        deadline = time.time() + 90
         img_url = ""
         while time.time() < deadline:
             time.sleep(3)

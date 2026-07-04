@@ -197,7 +197,11 @@ class DocumentReference:
 
     def set(self, data: dict, merge: bool = False) -> None:
         body = {**self._auto_inject, **_serialise(data), "id": self._pb_id}
-        # PATCH first when merge=True; else try PATCH and fall back.
+        # PATCH first; on 404 try POST create; if THAT hits a
+        # unique-index conflict (an older row under a different PB id
+        # but same run_id/name field), find the offending row by the
+        # conflicted field and PATCH it. Was previously bubbling
+        # 'validation_not_unique' up and dropping the write entirely.
         url = f"/api/collections/{self._collection}/records/{self._pb_id}"
         r = self._client._http("PATCH", url, json=body)
         if r.status_code == 404:
@@ -206,9 +210,46 @@ class DocumentReference:
                 f"/api/collections/{self._collection}/records",
                 json=body,
             )
-            if not r2.ok:
-                raise RuntimeError(f"PB create {self.path}: HTTP {r2.status_code}: {r2.text[:200]}")
-            return
+            if r2.ok:
+                return
+            # Unique-index conflict recovery. PB returns:
+            #   {"data": {"<field>": {"code":"validation_not_unique", ...}}}
+            try:
+                import json as _json
+                err = _json.loads(r2.text or "{}")
+                dup_fields = list((err.get("data") or {}).keys())
+            except Exception:
+                dup_fields = []
+            if r2.status_code == 400 and dup_fields:
+                for fld in dup_fields:
+                    val = body.get(fld)
+                    if not val:
+                        continue
+                    # Look up the row that already occupies this
+                    # unique-field slot, then PATCH it.
+                    q = self._client._http(
+                        "GET",
+                        f"/api/collections/{self._collection}/records",
+                        params={"filter": f"{fld}='{str(val)}'", "perPage": 1},
+                    )
+                    if q.ok:
+                        items = (q.json() or {}).get("items") or []
+                        if items:
+                            existing_id = items[0].get("id")
+                            if existing_id:
+                                patch_body = {k: v for k, v in body.items() if k != "id"}
+                                r3 = self._client._http(
+                                    "PATCH",
+                                    f"/api/collections/{self._collection}/records/{existing_id}",
+                                    json=patch_body,
+                                )
+                                if r3.ok:
+                                    return
+                                raise RuntimeError(
+                                    f"PB unique-conflict recovery PATCH failed: "
+                                    f"HTTP {r3.status_code}: {r3.text[:200]}"
+                                )
+            raise RuntimeError(f"PB create {self.path}: HTTP {r2.status_code}: {r2.text[:200]}")
         if not r.ok:
             raise RuntimeError(f"PB set {self.path}: HTTP {r.status_code}: {r.text[:200]}")
 
