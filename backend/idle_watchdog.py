@@ -58,17 +58,22 @@ HARD_MAX_LIFETIME_SECONDS = int(
               "7200" if _ON_KAGGLE else "0") or 0
 )
 
-# Stuck-busy cap. If jobs.is_busy() returns True continuously for this
-# long, treat the worker as WEDGED and force shutdown. Real renders
-# finish in 5-10 min; if we've been "busy" for 30+ min the job has
-# hung (SDXL stall, ffmpeg deadlock, network drop mid-upload). Better
-# to kill and let the next Kaggle wake pick up a fresh session than
-# waste hours of the free-tier weekly quota. Off if <= 0.
+# Stuck-busy cap — WITH PROGRESS TRACKING.
+# Previously fired after 30 min of `is_busy()==True`. But real renders
+# with slow Stable Horde queues (5+ min per shot × 9 shots) legitimately
+# take 45-60+ min, so the raw-time watchdog was killing healthy renders
+# mid-way. Now: reset the clock every time run_state.percent MOVES —
+# a stalled render (percent stuck for BUSY_STUCK_SECONDS) fires the
+# watchdog; a slow-but-progressing render does not.
+# Raised default from 1800 to 3600 (1 hr no forward progress) as a
+# safety margin on top.
 BUSY_STUCK_SECONDS = int(
     os.getenv("BUSY_STUCK_SECONDS",
-              "1800" if _ON_KAGGLE else "0") or 0
+              "3600" if _ON_KAGGLE else "0") or 0
 )
 _busy_since: float | None = None
+_last_progress_percent: float = -1.0
+_last_progress_at: float = time.time()
 
 _lock = threading.Lock()
 _last_active = time.time()
@@ -203,25 +208,38 @@ def start():
                 f"local_busy={local_busy} local_q={local_q} remote_q={remote_q}"
             )
 
-            # Stuck-busy detection. is_busy() gets pinned True if a
-            # render step hangs (SDXL model download stall, ffmpeg
-            # wait-forever, TCP drop mid-upload). Without this check the
-            # watchdog resets on every tick and never shuts down.
-            global _busy_since
+            # Stuck-busy detection with FORWARD-PROGRESS tracking.
+            # Reset the clock every time the render's percent moves —
+            # a slow-but-progressing render (e.g. Horde queue congested,
+            # each shot taking 90 sec) stays alive; only a genuinely
+            # stalled render fires the kill.
+            global _busy_since, _last_progress_percent, _last_progress_at
             if local_busy:
+                # Sample current progress from run_state (if importable).
+                try:
+                    from modules import run_state as _rs
+                    _cur = float(getattr(_rs, "percent", None) or _rs.snapshot().get("percent") or 0.0)
+                except Exception:
+                    _cur = -1.0
+                if _cur != _last_progress_percent:
+                    _last_progress_percent = _cur
+                    _last_progress_at = time.time()
                 if _busy_since is None:
                     _busy_since = time.time()
-                busy_for = time.time() - _busy_since
-                if BUSY_STUCK_SECONDS > 0 and busy_for >= BUSY_STUCK_SECONDS:
+                stalled_for = time.time() - _last_progress_at
+                if BUSY_STUCK_SECONDS > 0 and stalled_for >= BUSY_STUCK_SECONDS:
                     log.warning(
-                        f"idle watchdog: STUCK-BUSY {int(busy_for)}s "
-                        f">= BUSY_STUCK_SECONDS={BUSY_STUCK_SECONDS}s — "
-                        f"job wedged, force-shutdown to preserve quota"
+                        f"idle watchdog: STALLED — percent={_last_progress_percent} "
+                        f"hasn't advanced for {int(stalled_for)}s "
+                        f">= BUSY_STUCK_SECONDS={BUSY_STUCK_SECONDS}s. "
+                        f"Force-shutdown."
                     )
                     _shutdown()
                     return
             else:
                 _busy_since = None
+                _last_progress_percent = -1.0
+                _last_progress_at = time.time()
 
             if local_busy or local_q > 0:
                 touch()
