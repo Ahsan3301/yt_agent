@@ -103,11 +103,13 @@ TEXT_MODEL   = TEXT_MODEL_PRIMARY
 VISION_MODEL = VISION_MODEL_PRIMARY
 
 # ── Rate limiter ──────────────────────────────────────────────
-# NVIDIA's free tier is 40 RPM. We give a 2-request safety margin so a
-# burst doesn't trip the limit. Implementation: a sliding window of
-# request timestamps; before each call we wait until <38 fall in the
-# last 60s.
-_RATE_LIMIT = int(os.getenv("NIM_RATE_LIMIT_PER_MIN", "38"))
+# NVIDIA free tier is 40 RPM. Dropping our ceiling to 30 gives a
+# 10-request safety margin — the burstiness of the pipeline (research
+# + script + storyboard + vision judge scoring multiple images per
+# shot) was pushing right up against 40 and hitting 429s. 30 RPM is
+# still enough to keep the pipeline unblocked and avoids the retry
+# storms 429s trigger.
+_RATE_LIMIT = int(os.getenv("NIM_RATE_LIMIT_PER_MIN", "30"))
 _WINDOW = 60.0
 _request_log = []
 _rate_lock = threading.Lock()
@@ -276,7 +278,14 @@ def chat(messages, model=None, max_tokens=2048, temperature=0.7,
                 )
             else:
                 data = _post_chat(payload, timeout=timeout, attempts=attempts)
-                msg = data["choices"][0]["message"]
+                # Defensive unpacking — NIM occasionally returns a
+                # malformed body with no choices array (was crashing
+                # with 'list index out of range' and killing the
+                # fallback loop). Treat empty-shape as a retry signal.
+                choices = (data or {}).get("choices") or []
+                if not choices:
+                    raise RuntimeError(f"NIM {m_name}: empty choices in response")
+                msg = choices[0].get("message") or {}
                 content = msg.get("content") or ""
                 reasoning = msg.get("reasoning_content") or ""
         except Exception as e:

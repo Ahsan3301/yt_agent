@@ -205,19 +205,27 @@ def _regex_distill(text: str) -> str:
 def _distill_prompt_for_flux(visual_description: str, channel: str = "") -> str:
     """Return a Flux-optimised tag-style prompt.
 
-    Tries NIM first (llama-3.3-70b, tight 10-sec timeout). If NIM is
-    slow / down (very common on the free tier during peak hours), falls
-    back to a deterministic regex-based shortener. After the first NIM
-    timeout in a session, all subsequent calls skip NIM entirely — no
-    more 30-sec waits per shot burning render wall-clock.
+    Uses ONLY the deterministic regex distiller. NIM was previously used
+    for a per-shot LLM rewrite, but the free tier's 40 rpm limit + our
+    10 sec timeout meant every render burned quota on retries AND still
+    fell back to regex. Skipping NIM entirely: same net output for
+    slow-NIM renders (99% of them), zero rate-limit burn, no wasted
+    wall-clock. The user can enable LLM distillation via the
+    NIM_DISTILLER=1 env var if their NIM tier is genuinely fast.
     """
-    global _FLUX_DISTILLER_NIM_BROKEN
     key = (visual_description or "").strip()
     if not key:
         return ""
     if key in _FLUX_DISTILL_CACHE:
         return _FLUX_DISTILL_CACHE[key]
-    # If NIM already failed once this session, skip straight to regex.
+    if os.getenv("NIM_DISTILLER", "").strip() not in ("1", "true", "yes"):
+        out = _regex_distill(key)
+        _FLUX_DISTILL_CACHE[key] = out
+        return out
+    # Opt-in NIM path (user set NIM_DISTILLER=1). Same guard as before —
+    # first NIM failure of the session flips the session-wide broken
+    # flag so subsequent shots go straight to regex.
+    global _FLUX_DISTILLER_NIM_BROKEN
     if _FLUX_DISTILLER_NIM_BROKEN:
         out = _regex_distill(key)
         _FLUX_DISTILL_CACHE[key] = out
@@ -238,7 +246,7 @@ def _distill_prompt_for_flux(visual_description: str, channel: str = "") -> str:
             max_tokens=80,
             temperature=0.5,
             stream=False,
-            timeout=10,   # was 30 — free tier is too slow, bail fast
+            timeout=10,
             attempts=1,
         )
         distilled = (raw or "").strip().strip('"').strip().split("\n")[0]
@@ -249,16 +257,10 @@ def _distill_prompt_for_flux(visual_description: str, channel: str = "") -> str:
         if len(distilled) < 15:
             distilled = _regex_distill(key)
         _FLUX_DISTILL_CACHE[key] = distilled
-        log.info(f"  flux prompt distilled (NIM): {distilled!r}")
         return distilled
     except Exception as e:
-        # NIM is slow / down. Flip the session-wide flag so we don't
-        # keep waiting 10 sec per subsequent shot.
         _FLUX_DISTILLER_NIM_BROKEN = True
-        log.warning(
-            f"flux distiller: NIM slow ({e}); switching to regex "
-            f"distiller for the rest of this render"
-        )
+        log.warning(f"flux distiller (NIM opt-in): failed ({e}); regex from now on")
         out = _regex_distill(key)
         _FLUX_DISTILL_CACHE[key] = out
         return out
