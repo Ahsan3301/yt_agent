@@ -167,32 +167,70 @@ def _pollinations_breaker_record(success: bool, http_status: int | None = None):
 _FLUX_DISTILL_CACHE: dict[str, str] = {}
 
 
+# One-shot session flag — after the first NIM distiller timeout we
+# stop calling NIM entirely and use the regex-based shortener for the
+# rest of the render. Was previously burning ~30 sec per shot on NIM
+# timeouts, one per shot × 8 shots = 4 minutes wasted per video.
+_FLUX_DISTILLER_NIM_BROKEN = False
+
+
+def _regex_distill(text: str) -> str:
+    """Deterministic prompt shortener — no LLM. Strips filler, keeps
+    concrete nouns, comma-splits into tag style, hard-caps at 200 chars.
+    Not as elegant as an LLM rewrite but fast (< 1 ms) and never
+    times out. Used as fallback when NIM is slow, AND for every
+    subsequent shot after the first NIM failure."""
+    import re
+    t = (text or "").strip()
+    # Kill filler phrases the LLM loves that add nothing for Flux.
+    for junk in [
+        "wide establishing shot of", "wide shot of", "low-angle shot of",
+        "close-up of", "extreme close-up of", "overhead shot of",
+        "wide angle view of", "camera focuses on", "we see",
+        "the frame captures", "in the foreground", "in the background",
+        "the composition", "the shot", "the scene", "the image",
+        "cinematic depth of field", "with a shallow depth of field",
+    ]:
+        t = re.sub(re.escape(junk), "", t, flags=re.IGNORECASE)
+    # Collapse whitespace + break long sentences into comma tags.
+    t = re.sub(r"[;.]\s*", ", ", t)
+    t = re.sub(r"\s+", " ", t).strip(" ,.")
+    # Hard cap 200 chars for Flux's 77-token limit + append style tags.
+    t = t[:200].rstrip(" ,.")
+    if not t.lower().endswith(("photorealistic", "cinematic", "sharp focus")):
+        t += ", photorealistic, cinematic, sharp focus"
+    return t
+
+
 def _distill_prompt_for_flux(visual_description: str, channel: str = "") -> str:
-    """Return a Flux-optimised ~20-word tag-style prompt derived from
-    the shot's visual_description. Falls back to the original text
-    trimmed to 200 chars if the LLM call fails — never blocks the
-    render. Cached per-visual so subsequent shots reusing the same
-    description don't re-call NIM."""
+    """Return a Flux-optimised tag-style prompt.
+
+    Tries NIM first (llama-3.3-70b, tight 10-sec timeout). If NIM is
+    slow / down (very common on the free tier during peak hours), falls
+    back to a deterministic regex-based shortener. After the first NIM
+    timeout in a session, all subsequent calls skip NIM entirely — no
+    more 30-sec waits per shot burning render wall-clock.
+    """
+    global _FLUX_DISTILLER_NIM_BROKEN
     key = (visual_description or "").strip()
     if not key:
         return ""
     if key in _FLUX_DISTILL_CACHE:
         return _FLUX_DISTILL_CACHE[key]
+    # If NIM already failed once this session, skip straight to regex.
+    if _FLUX_DISTILLER_NIM_BROKEN:
+        out = _regex_distill(key)
+        _FLUX_DISTILL_CACHE[key] = out
+        return out
     try:
         prompt = (
             "Rewrite the scene below into a short image-generation prompt "
-            "for Flux / SDXL. Format: 15 to 25 words, comma-separated, "
-            "structured as: MAIN SUBJECT, key visual details, environment, "
-            "lighting/mood, style tags at the end (photorealistic, "
-            "cinematic, sharp focus).\n"
-            "Rules:\n"
-            "  - No poetic prose, no metaphors, no complete sentences.\n"
-            "  - Concrete nouns beat adjectives.\n"
-            "  - Do NOT include the words 'shot' / 'scene' / 'image'.\n"
-            "  - Do NOT invent named people, places, or brands.\n"
-            f"  - Match visual language to channel niche: {channel or 'generic'}.\n\n"
-            f"SCENE:\n{key[:600]}\n\n"
-            "Reply with ONLY the prompt string. No preamble, no explanation."
+            "for Flux / SDXL. Format: 15 to 25 words, comma-separated. "
+            "Structure: MAIN SUBJECT, key visual details, environment, "
+            "lighting/mood, style tags. No poetic prose, no complete "
+            "sentences, no 'shot' / 'scene' / 'image' words. "
+            f"Channel: {channel or 'generic'}.\n\nSCENE: {key[:400]}\n\n"
+            "Reply with ONLY the prompt string."
         )
         raw = nim.chat(
             messages=[{"role": "user", "content": prompt}],
@@ -200,25 +238,30 @@ def _distill_prompt_for_flux(visual_description: str, channel: str = "") -> str:
             max_tokens=80,
             temperature=0.5,
             stream=False,
-            timeout=30,
+            timeout=10,   # was 30 — free tier is too slow, bail fast
             attempts=1,
         )
         distilled = (raw or "").strip().strip('"').strip().split("\n")[0]
-        # Clean any residual leading label / colon.
         for pfx in ("Prompt:", "prompt:", "PROMPT:", "-"):
             if distilled.lower().startswith(pfx.lower()):
                 distilled = distilled[len(pfx):].strip()
-        # Hard cap 240 chars — Flux tokenizer stops caring past that.
         distilled = distilled[:240]
         if len(distilled) < 15:
-            # Degenerate — fall back to trimmed original.
-            distilled = key[:200]
+            distilled = _regex_distill(key)
         _FLUX_DISTILL_CACHE[key] = distilled
-        log.info(f"  flux prompt distilled: {distilled!r}")
+        log.info(f"  flux prompt distilled (NIM): {distilled!r}")
         return distilled
     except Exception as e:
-        log.debug(f"flux distiller failed ({e}); using trimmed original")
-        return key[:200]
+        # NIM is slow / down. Flip the session-wide flag so we don't
+        # keep waiting 10 sec per subsequent shot.
+        _FLUX_DISTILLER_NIM_BROKEN = True
+        log.warning(
+            f"flux distiller: NIM slow ({e}); switching to regex "
+            f"distiller for the rest of this render"
+        )
+        out = _regex_distill(key)
+        _FLUX_DISTILL_CACHE[key] = out
+        return out
 
 
 # ── Stable Horde (community-run, genuinely free, SDXL) ────────
