@@ -160,9 +160,14 @@ DEFAULT_SETTINGS = {
         # Pollinations' free Flux wrapper. Falls through gracefully
         # if no key. Pollinations remains the always-available default.
         # HF Inference API and local_sdxl kept for user opt-in.
-        "priority": ["together", "pollinations", "huggingface", "local_sdxl"],
+        # Stable Horde first (real SDXL, genuinely free, no signup) →
+        # falls back to Pollinations for shots the horde takes too long
+        # on → HF SDXL for user-provided-token backup → local_sdxl if
+        # user explicitly enables. Anonymous horde is slower on busy
+        # queue days; set STABLEHORDE_API_KEY for priority.
+        "priority": ["horde", "pollinations", "huggingface", "local_sdxl"],
         "enabled": {
-            "together":     True,
+            "horde":        True,
             "pollinations": True,
             "huggingface":  True,
             "local_sdxl":   False,

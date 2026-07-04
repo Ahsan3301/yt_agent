@@ -221,78 +221,123 @@ def _distill_prompt_for_flux(visual_description: str, channel: str = "") -> str:
         return key[:200]
 
 
-# ── Together.ai (real Flux.1-schnell on their free tier) ───────
-# 200-400 free renders per day on the schnell endpoint. Real Black
-# Forest Labs weights, not the Pollinations wrapper. Materially
-# higher quality than Pollinations for the same input prompt.
-_TOGETHER_CONSEC_FAIL = 0
-_TOGETHER_OPEN_UNTIL = 0.0
-_TOGETHER_LOCK = _poll_threading.Lock() if 'threading' not in dir() else None  # deferred
+# ── Stable Horde (community-run, genuinely free, SDXL) ────────
+# Works anonymously (no signup, no card) — that's the whole point vs
+# Together.ai which now gates every key behind a deposit. Anonymous
+# uses a shared kudos queue (slower under load, ~30-60 sec typical);
+# a free STABLEHORDE_API_KEY unlocks priority. Real Stable Diffusion
+# XL weights — materially higher quality than Pollinations Flux.
+#
+# API: https://stablehorde.net/api/v2/
+#   POST /generate/async  → returns { id }
+#   GET  /generate/check/<id> → poll until { done: true }
+#   GET  /generate/status/<id> → returns final { generations: [{ img: <b64> }] }
+_HORDE_CONSEC_FAIL = 0
+_HORDE_OPEN_UNTIL  = 0.0
 
 
-def _together_generate(prompt, output_dir, trial, negative_prompt=""):
-    """Generate one image via Together.ai's Flux.1-schnell-Free endpoint.
-    Returns (path, seed) on success, (None, seed) on failure.
-    Skips silently if TOGETHER_API_KEY isn't set."""
-    seed = int(hashlib.md5(f"{prompt}|{trial}|together".encode()).hexdigest()[:8], 16)
-    token = os.getenv("TOGETHER_API_KEY", "").strip()
-    if not token:
+def _horde_generate(prompt, output_dir, trial, negative_prompt=""):
+    """Generate one image via Stable Horde's SDXL crowdsourced endpoint.
+    Returns (path, seed) on success, (None, seed) on failure/timeout.
+
+    Uses the STABLEHORDE_API_KEY env var if set (priority in the queue),
+    otherwise falls back to '0000000000' which the horde treats as
+    anonymous — still works, just slower under load.
+    """
+    seed = int(hashlib.md5(f"{prompt}|{trial}|horde".encode()).hexdigest()[:8], 16)
+    global _HORDE_CONSEC_FAIL, _HORDE_OPEN_UNTIL
+    if time.time() < _HORDE_OPEN_UNTIL:
         return None, seed
-    global _TOGETHER_CONSEC_FAIL, _TOGETHER_OPEN_UNTIL
-    if time.time() < _TOGETHER_OPEN_UNTIL:
-        return None, seed
-    # Distil for Flux (short tag-style) — same reasoning as Pollinations.
-    final_prompt = _distill_prompt_for_flux(prompt)[:400]
-    dest = os.path.join(output_dir, f"together_{seed:08x}.jpg")
+    api_key = os.getenv("STABLEHORDE_API_KEY", "").strip() or "0000000000"
+    # Distil to a Flux/SDXL-style tag prompt for best-quality output.
+    final_prompt = _distill_prompt_for_flux(prompt)[:600]
+    dest = os.path.join(output_dir, f"horde_{seed:08x}.jpg")
     try:
-        r = requests.post(
-            "https://api.together.xyz/v1/images/generations",
+        # Submit async job.
+        submit = requests.post(
+            "https://stablehorde.net/api/v2/generate/async",
             headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type":  "application/json",
+                "apikey": api_key,
+                "Client-Agent": "yt-agent:1.0:https://github.com/Ahsan3301/yt_agent",
+                "Content-Type": "application/json",
             },
             json={
-                "model":  "black-forest-labs/FLUX.1-schnell-Free",
-                "prompt": final_prompt,
-                "width":  576,
-                "height": 1024,
-                "steps":  4,
-                "n":      1,
-                "seed":   seed,
-                "response_format": "url",
+                "prompt":  final_prompt + (f" ### {negative_prompt}" if negative_prompt else ""),
+                "params":  {
+                    "sampler_name":     "k_euler",
+                    "cfg_scale":        6.0,
+                    "steps":            20,
+                    "width":            576,
+                    "height":           1024,
+                    "seed":             str(seed),
+                    "n":                1,
+                },
+                "models":  ["AlbedoBase XL (SDXL)", "Fustercluck", "Juggernaut XL"],
+                "nsfw":    False,
+                "trusted_workers": True,
+                "r2":       True,
             },
-            timeout=60,
+            timeout=30,
         )
-        if r.status_code == 429:
-            _TOGETHER_CONSEC_FAIL += 1
-            if _TOGETHER_CONSEC_FAIL >= 3:
-                _TOGETHER_OPEN_UNTIL = time.time() + 120
-                log.warning("Together.ai: circuit breaker OPEN (3x 429s)")
-            log.warning("Together.ai 429 — rate limited")
+        if submit.status_code == 429:
+            _HORDE_CONSEC_FAIL += 1
+            if _HORDE_CONSEC_FAIL >= 3:
+                _HORDE_OPEN_UNTIL = time.time() + 120
+                log.warning("Stable Horde: 3x 429 -> circuit break 120 sec")
             return None, seed
-        if r.status_code == 401:
-            log.warning("Together.ai 401 — TOGETHER_API_KEY invalid; disabling")
-            _TOGETHER_OPEN_UNTIL = time.time() + 3600  # stop trying this session
+        submit.raise_for_status()
+        job_id = submit.json().get("id")
+        if not job_id:
+            log.warning(f"Stable Horde: no job id in response: {submit.text[:200]}")
             return None, seed
-        r.raise_for_status()
-        data = r.json()
-        img_url = (data.get("data") or [{}])[0].get("url")
-        if not img_url:
-            log.warning(f"Together.ai: no image url in response: {str(data)[:200]}")
+        # Poll until done (or 5 min hard cap).
+        deadline = time.time() + 300
+        img_url = ""
+        while time.time() < deadline:
+            time.sleep(3)
+            check = requests.get(
+                f"https://stablehorde.net/api/v2/generate/check/{job_id}",
+                timeout=15,
+            )
+            if not check.ok:
+                continue
+            js = check.json()
+            if js.get("done"):
+                break
+            if js.get("faulted"):
+                log.warning(f"Stable Horde: job faulted after {int(time.time()-(deadline-300))}s")
+                return None, seed
+        else:
+            log.warning("Stable Horde: 5 min timeout, no result")
             return None, seed
-        # Download the generated image to disk.
-        img_r = requests.get(img_url, timeout=30)
-        img_r.raise_for_status()
-        with open(dest, "wb") as f:
-            f.write(img_r.content)
+        status = requests.get(
+            f"https://stablehorde.net/api/v2/generate/status/{job_id}",
+            timeout=30,
+        )
+        status.raise_for_status()
+        gens = status.json().get("generations") or []
+        if not gens:
+            return None, seed
+        # r2=True → generations[0].img is a URL. Otherwise it's base64.
+        img_field = gens[0].get("img", "")
+        if img_field.startswith("http"):
+            img_url = img_field
+            img_r = requests.get(img_url, timeout=30)
+            img_r.raise_for_status()
+            with open(dest, "wb") as f:
+                f.write(img_r.content)
+        else:
+            import base64 as _b64
+            with open(dest, "wb") as f:
+                f.write(_b64.b64decode(img_field))
         if os.path.getsize(dest) < 4096:
             return None, seed
-        _TOGETHER_CONSEC_FAIL = 0
-        log.info(f"Together.ai: image ok (seed {seed}, {os.path.getsize(dest)//1024} KB)")
+        _HORDE_CONSEC_FAIL = 0
+        log.info(f"Stable Horde: image ok (seed {seed}, {os.path.getsize(dest)//1024} KB)")
         return dest, seed
     except Exception as e:
-        _TOGETHER_CONSEC_FAIL += 1
-        log.warning(f"Together.ai gen failed: {e}")
+        _HORDE_CONSEC_FAIL += 1
+        log.warning(f"Stable Horde gen failed: {e}")
         return None, seed
 
 
@@ -901,13 +946,11 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror"):
         if name == "local_sdxl":
             if _LOCAL_SDXL_BROKEN:
                 return False, f"local pipeline broken ({_LOCAL_SDXL_BROKEN_REASON})"
-        if name == "together":
-            if not os.getenv("TOGETHER_API_KEY", "").strip():
-                return False, "no TOGETHER_API_KEY"
+        # 'horde' + 'together' have no required key (horde works anon).
         return True, ""
 
     _AI_PROVIDERS = {
-        "together":    _together_generate,   # real Flux.1-schnell (best free quality)
+        "horde":       _horde_generate,        # real SDXL crowdsourced, works anon
         "huggingface": _huggingface_generate,
         "local_sdxl":  _local_sdxl_generate,
         "pollinations": _pollinations_generate,
