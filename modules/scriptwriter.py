@@ -110,25 +110,55 @@ NON-NEGOTIABLE RETENTION RULES:
      violence beyond what the channel naturally requires (e.g. mild
      dread for horror). No content targeting minors as a subject.
 
-YOUTUBE TITLE (under 60 chars):
-  Curiosity gap, not hype. Strong nouns beat adjectives. Numbers and
-  questions outperform statements. NO ALL CAPS, NO emoji, NO clickbait
-  ("you won't believe", "shocked everyone", etc).
+YOUTUBE TITLE (50-70 chars — VIRAL SHORTS FORMAT):
+  Formats that outperform on YouTube Shorts (pick the best one for
+  this content):
+    • Question hook:  "Why does <X> actually <do Y>?"
+    • Number + noun:  "The 3 <things> nobody tells you about <X>"
+    • Contradiction:  "<Common belief> is wrong. Here's why."
+    • Reveal setup:   "What <X> looks like from the inside"
+    • Time pressure:  "You have <N> seconds to see this"
+  Rules:
+    • Strong nouns beat adjectives. Concrete beats abstract.
+    • Numbers outperform prose ("3", "$1000", "6 hours").
+    • NO ALL CAPS, NO emoji in the title itself, NO clickbait
+      ("you won't believe", "shocked everyone", "gone wrong").
+    • Include the primary keyword in the FIRST 40 chars for search.
+    • Aim for the curiosity gap — the viewer clicks because they
+      need to close a loop the title opened.
 
-DESCRIPTION (150-200 words, SEO-aware):
-  First two sentences re-hook the click. Then briefly previews the
-  video's value WITHOUT spoiling the payoff. Natural keyword density —
-  no keyword stuffing.
+DESCRIPTION (180-250 words — SEO-optimised, publish-ready):
+  Structure (mandatory):
+    1. HOOK LINE (first sentence): re-states the curiosity gap in the
+       title. This is what YouTube shows below the title.
+    2. VALUE PROMISE (2-3 sentences): tells the viewer what they'll
+       learn / see / feel in the next 60 seconds. Natural keyword
+       density — DO NOT stuff keywords, YouTube penalises it.
+    3. CONTEXT / SOURCE (1-2 sentences): the credibility hook. What
+       makes this claim / topic real. Cite by name if applicable.
+    4. CALL-TO-ACTION (1 sentence): "Subscribe for more on <niche>."
+       Keep it simple — one CTA outperforms three.
+    5. HASHTAGS (line break, then exactly 3): #primaryKeyword
+       #broadNiche #shorts. YouTube surfaces videos with matching
+       hashtags in related searches.
+    6. TAG STRIP (line break, then a comma-separated list of the
+       10 tags). Not a ranking factor directly but helps YouTube
+       understand the topic.
 
-SEARCH_KEYWORDS (5-8 phrases, 4-7 words each):
-  These feed a stock-footage / image search. Each phrase must describe
-  a SHOT — subject + lighting/mood + setting in one. Visual style
-  target for this channel: {image_style}.
-  Bad: "money", "office", "nature". Good: "stock chart green spike
-  monitor close up", "ancient cathedral candlelight stone arches".
+SEARCH_KEYWORDS (5-8 phrases, 3-6 words each):
+  These feed a stock-footage / image search. GENERIC subjects only —
+  the stock library must actually have matches. Bad: "MIT visual
+  cortex 2019". Good: "brain scan neurons close up".
+  Visual style target for this channel: {image_style}.
 
-TAGS (5-10 YouTube tags, short):
-  Mix specific (the actual topic) + broad (the niche).
+TAGS (exactly 10 YouTube tags, ranked most→least specific):
+  1-3: the exact topic phrase (e.g. "phone network crash 1994",
+       "AT&T system 7 failure")
+  4-6: the broader theme (e.g. "telecommunications history",
+       "software bug disaster")
+  7-10: the umbrella niche + format (e.g. "science shorts",
+        "tech explained", "history shorts", "did you know")
+  Order matters — YouTube weights the first tag most.
 
 Respond with ONLY this JSON object — no markdown fences, no prose
 around it:

@@ -157,13 +157,36 @@ def _publish_youtube(job: dict[str, Any]) -> tuple[bool, str]:
     try:
         from backend import db
         if db.is_configured():
-            sm = db.client().collection("run_summaries").document(run_id).get()
+            c = db.client()
+            # Read title/desc/tags from run_summaries.data first (script
+            # writer stores under youtube_title/description/tags), then
+            # fall back to runs_index for storage-only orphans that
+            # never had a summary row. Bug that used to bite here: the
+            # worker was reading data.get("title") but the scriptwriter
+            # writes youtube_title — so every publish got 'Run <id>'
+            # as its title regardless of what the SEO step produced.
+            sm = c.collection("run_summaries").document(run_id).get()
             if sm.exists:
                 data = (sm.to_dict() or {}).get("data") or {}
-                title = title or str(data.get("title") or f"Run {run_id}")
+                title = title or str(
+                    data.get("youtube_title") or data.get("title") or ""
+                )
                 description = description or str(data.get("description") or "")
                 if not tags:
                     tags = data.get("tags") or []
+            # Runs_index fallback — set by earlier scriptwriter runs
+            # that landed the SEO fields directly on the index doc.
+            if not (title and description and tags):
+                idx = c.collection("runs_index").document(run_id).get()
+                if idx.exists:
+                    d = idx.to_dict() or {}
+                    title = title or str(d.get("title") or d.get("youtube_title") or "")
+                    description = description or str(d.get("description") or "")
+                    if not tags:
+                        tags = d.get("tags") or []
+            # Absolute final fallback so we never publish an empty title.
+            if not title:
+                title = f"Run {run_id}"
     except Exception:
         pass
 
