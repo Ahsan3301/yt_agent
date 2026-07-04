@@ -118,13 +118,14 @@ export default function LogsPanel({
     if (!runId) return;   // legacy dashboard poll path handled below
     let cancelled = false;
     let sinceTs = 0;
+    let sinceSeq = 0;
     const tick = async () => {
       if (cancelled) return;
       const delay = active ? 2500 : 8000;
       if (!paused) {
         try {
           const r = await fetch(
-            `/api/runs/${encodeURIComponent(runId)}/logs?since=${sinceTs}`,
+            `/api/runs/${encodeURIComponent(runId)}/logs?since=${sinceTs}&since_seq=${sinceSeq}`,
             { cache: "no-store" },
           );
           if (r.ok) {
@@ -134,11 +135,23 @@ export default function LogsPanel({
             };
             if (!cancelled && j.lines?.length) {
               sinceTs = j.latest_ts || sinceTs;
+              // Advance seq cursor to the max seq we've seen — prevents
+              // re-fetching lines whose ts collides at the same millisecond.
+              const maxSeq = j.lines.reduce((m, e) => (e.seq > m ? e.seq : m), sinceSeq);
+              sinceSeq = maxSeq;
               setEntries((prev) => {
-                const merged = [...prev, ...j.lines.map((e) => ({
-                  seq:   e.seq, time: e.ts,
-                  level: e.level, name: e.name, msg: e.msg,
-                }))];
+                // Dedup by seq — if the server ever returns a line we
+                // already have (edge cases: ts precision, retry), don't
+                // append it again.
+                const seen = new Set(prev.map((e) => e.seq));
+                const fresh = j.lines
+                  .filter((e) => !seen.has(e.seq))
+                  .map((e) => ({
+                    seq:   e.seq, time: e.ts,
+                    level: e.level, name: e.name, msg: e.msg,
+                  }));
+                if (fresh.length === 0) return prev;
+                const merged = [...prev, ...fresh];
                 return merged.length > 2000
                   ? merged.slice(merged.length - 2000)
                   : merged;

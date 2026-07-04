@@ -27,13 +27,15 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   const { id } = await ctx.params;
   const sinceRaw = req.nextUrl.searchParams.get("since") || "0";
   const since = Number(sinceRaw) || 0;
+  const sinceSeqRaw = req.nextUrl.searchParams.get("since_seq") || "0";
+  const sinceSeq = Number(sinceSeqRaw) || 0;
   const limit = Math.min(1000, Math.max(1, Number(req.nextUrl.searchParams.get("limit") || "500")));
 
   try {
     let q = adminDb().collection("run_logs").where("run_id", "==", id);
     if (since > 0) q = q.where("ts", ">", since);
     const snap = await q.limit(limit).get();
-    logRoute(reqId, "run logs", { run_id: id, since, returned: snap.docs.length });
+    logRoute(reqId, "run logs", { run_id: id, since, since_seq: sinceSeq, returned: snap.docs.length });
     const lines = snap.docs
       .map((d) => {
         const v = d.data() as Record<string, unknown>;
@@ -45,9 +47,12 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
           msg:   String(v.msg || ""),
         };
       })
-      // In-code sort — PB's sort by 'ts' works but 'seq' can tie-break
-      // faster than the ts resolution (multiple sub-millisecond
-      // adjacent messages otherwise reorder each poll).
+      // Drop anything the client already has by seq. PB's `ts` filter is
+      // datetime-typed and truncates at millisecond resolution, so lines
+      // that share the same millisecond survive the `ts > since` filter
+      // and get re-served on every poll. Seq is monotonic + unique per
+      // worker, so this cleanly de-dupes.
+      .filter((e) => e.seq > sinceSeq)
       .sort((a, b) => a.ts - b.ts || a.seq - b.seq);
 
     const latest_ts = lines.length ? lines[lines.length - 1].ts : since;
