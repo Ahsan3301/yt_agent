@@ -47,12 +47,12 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
           msg:   String(v.msg || ""),
         };
       })
-      // Drop anything the client already has by seq. PB's `ts` filter is
-      // datetime-typed and truncates at millisecond resolution, so lines
-      // that share the same millisecond survive the `ts > since` filter
-      // and get re-served on every poll. Seq is monotonic + unique per
-      // worker, so this cleanly de-dupes.
-      .filter((e) => e.seq > sinceSeq)
+      // Drop anything the client already has by seq. Only apply this
+      // filter when the client passed a real cursor (sinceSeq > 0) AND
+      // the row itself has a real seq — historical rows in PB were
+      // written with the seq column missing, and we don't want to drop
+      // those. Client-side dedup by (ts,msg) covers seqless rows.
+      .filter((e) => !(sinceSeq > 0 && e.seq > 0) || e.seq > sinceSeq)
       .sort((a, b) => a.ts - b.ts || a.seq - b.seq);
 
     const latest_ts = lines.length ? lines[lines.length - 1].ts : since;

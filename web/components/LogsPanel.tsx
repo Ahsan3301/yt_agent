@@ -140,12 +140,15 @@ export default function LogsPanel({
               const maxSeq = j.lines.reduce((m, e) => (e.seq > m ? e.seq : m), sinceSeq);
               sinceSeq = maxSeq;
               setEntries((prev) => {
-                // Dedup by seq — if the server ever returns a line we
-                // already have (edge cases: ts precision, retry), don't
-                // append it again.
-                const seen = new Set(prev.map((e) => e.seq));
+                // Dedup key: seq when we have one, else (ts,msg).
+                // Historical PB rows have seq=0/missing (schema had no
+                // seq column), so seq-only dedup would erase every log
+                // beyond the first poll for old runs.
+                const keyOf = (e: { seq: number; time?: number; ts?: number; msg: string }) =>
+                  e.seq > 0 ? `s:${e.seq}` : `t:${e.time ?? e.ts}|${e.msg}`;
+                const seen = new Set(prev.map((e) => keyOf(e)));
                 const fresh = j.lines
-                  .filter((e) => !seen.has(e.seq))
+                  .filter((e) => !seen.has(keyOf(e)))
                   .map((e) => ({
                     seq:   e.seq, time: e.ts,
                     level: e.level, name: e.name, msg: e.msg,
