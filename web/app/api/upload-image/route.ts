@@ -1,69 +1,123 @@
 import { NextRequest, NextResponse } from "next/server";
-import { pickWorkers } from "@/app/api/_lib/orchestrator";
+import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { randomUUID } from "crypto";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-// Vercel has a 4.5 MB default body limit on serverless functions. The
-// worker accepts up to 8 MB; we keep the Vercel-side limit at 4 MB so
-// the proxy can buffer the upload. Larger images get downscaled
-// client-side in the dashboard before hitting this route.
+// Dashboard container is directly wired to MinIO in Coolify — we upload
+// straight there instead of proxying to a worker. The old proxy path
+// only worked in tunnel-mode when workers exposed HTTP endpoints; in
+// outbound-poll mode (the only mode Coolify+Kaggle uses today) workers
+// have no callable URL, so pickWorkers() returned empty and /create
+// showed "no worker available to stage the upload" indefinitely.
+//
+// Multipart body limit stays at 4 MB — same as the old proxy — because
+// the client already downscales anything larger.
 export const maxDuration = 30;
+
+const _ALLOWED_EXT: Record<string, string> = {
+  "image/png":  ".png",
+  "image/webp": ".webp",
+  "image/gif":  ".gif",
+  "image/jpeg": ".jpg",
+  "image/jpg":  ".jpg",
+};
+
+const _MAX_BYTES = 8 * 1024 * 1024;   // 8 MB, matches backend/server.py
+
+function _s3Client() {
+  return new S3Client({
+    endpoint:
+      process.env.S3_ENDPOINT_INTERNAL ||
+      process.env.S3_ENDPOINT ||
+      "http://minio:9000",
+    region: process.env.S3_REGION || "us-east-1",
+    credentials: {
+      accessKeyId:
+        process.env.S3_ACCESS_KEY_ID    || process.env.MINIO_ROOT_USER     || "",
+      secretAccessKey:
+        process.env.S3_SECRET_ACCESS_KEY || process.env.MINIO_ROOT_PASSWORD || "",
+    },
+    forcePathStyle: true,
+  });
+}
 
 /**
  * POST /api/upload-image (multipart/form-data, field: file)
  *
- * Proxies the upload to an alive worker's /api/upload-image which
- * stages it on R2 and returns the public URL. The URL gets passed
- * into POST /api/jobs as manual_images[] so the worker can fetch it
- * when claiming the render.
+ * Uploads a user-provided image (JPG / PNG / WebP / GIF, up to 8 MB) to
+ * MinIO at key `staging/<uuid>.<ext>` and returns:
  *
- * Why proxy through a worker instead of writing to R2 from Vercel?
- * Because R2 creds live in Firestore api_keys now — they're not on
- * Vercel. The worker is the only thing with R2 SDK + creds in scope.
+ *   { ok: true, url, key, size }
+ *
+ * Same response shape as the old worker-proxy handler (and the
+ * matching backend/server.py:upload_image), so no client-side change
+ * needed. The `staging/*` prefix is what the existing cleanup-stale
+ * cron already prunes after 7 days.
  */
 export async function POST(req: NextRequest) {
-  const workers = await pickWorkers();
-  // We only need ANY worker — R2 is shared. Prefer GPU since they
-  // tend to be more recent, but any alive instance works.
-  const target = workers[0];
-  if (!target) {
+  const bucket    = process.env.S3_BUCKET || "yt-agent-videos";
+  const accessKey = process.env.S3_ACCESS_KEY_ID    || process.env.MINIO_ROOT_USER     || "";
+  const secretKey = process.env.S3_SECRET_ACCESS_KEY || process.env.MINIO_ROOT_PASSWORD || "";
+  if (!accessKey || !secretKey) {
     return NextResponse.json(
       {
-        error: "no worker available to stage the upload",
-        next_step:
-          "Launch a Colab/Kaggle/HF worker first. Image staging happens worker-side because that's where the R2 credentials live.",
+        error:  "storage not configured",
+        detail: "S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY (or MINIO_ROOT_USER / MINIO_ROOT_PASSWORD) must be set on the dashboard container",
       },
       { status: 503 },
     );
   }
 
-  // Stream the multipart body through unchanged.
-  const formData = await req.formData();
-  const file = formData.get("file");
-  if (!file || typeof file === "string") {
-    return NextResponse.json({ error: "missing 'file' field" }, { status: 400 });
+  let file: File;
+  try {
+    const formData = await req.formData();
+    const raw = formData.get("file");
+    if (!raw || typeof raw === "string") {
+      return NextResponse.json({ error: "missing 'file' field" }, { status: 400 });
+    }
+    file = raw as File;
+  } catch (e) {
+    return NextResponse.json({ error: "invalid multipart body", detail: String(e) }, { status: 400 });
   }
 
-  // Rebuild a fresh FormData (Next.js' parsed FormData isn't directly
-  // re-usable as a fetch body across all runtimes).
-  const upstream = new FormData();
-  upstream.append("file", file);
+  const contentType = (file.type || "").toLowerCase();
+  if (!contentType.startsWith("image/")) {
+    return NextResponse.json({ error: `expected image/*, got '${contentType || "unknown"}'` }, { status: 400 });
+  }
+  if (file.size > _MAX_BYTES) {
+    return NextResponse.json({ error: `image must be < ${_MAX_BYTES / (1024 * 1024)} MB` }, { status: 413 });
+  }
+
+  const ext = _ALLOWED_EXT[contentType] ?? ".jpg";
+  const key = `staging/${randomUUID().replace(/-/g, "")}${ext}`;
+  const body = Buffer.from(await file.arrayBuffer());
 
   try {
-    const r = await fetch(`${target.url.replace(/\/$/, "")}/api/upload-image`, {
-      method: "POST",
-      body: upstream,
-    });
-    const body = await r.json().catch(() => ({}));
-    if (!r.ok) {
-      return NextResponse.json(
-        { error: `worker returned ${r.status}`, detail: body },
-        { status: 502 },
-      );
-    }
-    return NextResponse.json({ ...body, worker: target.instance_id });
+    const s3 = _s3Client();
+    await s3.send(new PutObjectCommand({
+      Bucket:      bucket,
+      Key:         key,
+      Body:        body,
+      ContentType: contentType,
+    }));
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: "MinIO upload failed", detail: String(e) }, { status: 500 });
   }
+
+  // Public URL. Prefer S3_PUBLIC_BASE (Caddy path-routes /yt-agent-videos/
+  // straight to MinIO). Fall back to reconstructing from the request
+  // origin so this still works if PUBLIC_BASE isn't set.
+  const base = (process.env.S3_PUBLIC_BASE || "").replace(/\/$/, "");
+  const url = base
+    ? `${base}/${key}`
+    : `${req.nextUrl.origin}/${bucket}/${key}`;
+
+  return NextResponse.json({
+    ok:   true,
+    url,
+    key,
+    size: file.size,
+  });
 }
