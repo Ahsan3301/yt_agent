@@ -106,13 +106,29 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "MinIO upload failed", detail: String(e) }, { status: 500 });
   }
 
-  // Public URL. Prefer S3_PUBLIC_BASE (Caddy path-routes /yt-agent-videos/
-  // straight to MinIO). Fall back to reconstructing from the request
-  // origin so this still works if PUBLIC_BASE isn't set.
-  const base = (process.env.S3_PUBLIC_BASE || "").replace(/\/$/, "");
-  const url = base
-    ? `${base}/${key}`
-    : `${req.nextUrl.origin}/${bucket}/${key}`;
+  // Public URL — the base the worker will download from. Priority:
+  //   1. S3_PUBLIC_BASE (server-side, wins on Coolify).
+  //   2. NEXT_PUBLIC_S3_PUBLIC_BASE (already set on current deploy for
+  //      the frontend video player; safe to reuse here).
+  //   3. Reconstruct from X-Forwarded-Host/Proto (Caddy sets these).
+  //   4. Fall back to req.nextUrl.origin — LAST resort, breaks when
+  //      Next.js binds to 0.0.0.0 (Kaggle worker downloads got
+  //      http://0.0.0.0:3000/... and connection-refused'd).
+  const rawBase =
+    process.env.S3_PUBLIC_BASE ||
+    process.env.NEXT_PUBLIC_S3_PUBLIC_BASE ||
+    "";
+  let baseUrl = rawBase.trim().replace(/\/$/, "");
+  if (!baseUrl) {
+    const fwdHost  = req.headers.get("x-forwarded-host")  || req.headers.get("host") || "";
+    const fwdProto = req.headers.get("x-forwarded-proto") || "https";
+    if (fwdHost && fwdHost !== "0.0.0.0:3000") {
+      baseUrl = `${fwdProto}://${fwdHost}/${bucket}`;
+    } else {
+      baseUrl = `${req.nextUrl.origin.replace(/\/$/, "")}/${bucket}`;
+    }
+  }
+  const url = `${baseUrl}/${key}`;
 
   return NextResponse.json({
     ok:   true,

@@ -356,14 +356,68 @@ def run_pipeline(
     try:
         # ── STEP 1: Research (or manual topic) ───────────────────
         if manual_script:
-            log.info("[1/6] Manual script provided — skipping research.")
+            log.info("[1/6] Manual script provided — script generation skipped.")
             content = {
                 "raw_title": manual_title or (manual_topic[:80] if manual_topic else "user-provided script"),
                 "type":      channel_type,
                 "keywords":  [],
                 "manual":    True,
             }
-            summary["steps"]["research"] = {"ok": True, "seconds": 0.0, "skipped_manual": True}
+            # BUT still run the browser research agent when the user
+            # asked for it — they want supporting hero images and facts
+            # even though the narration is fixed. Query is derived from
+            # the script's first two sentences so the agent knows what
+            # to search for. Facts don't overwrite the script (they
+            # wrote it deliberately); image_urls DO feed manual_images
+            # so shot fetching uses real photos instead of AI-generating
+            # everything.
+            if web_research is None:
+                want_research = bool(channel_cfg.get("web_research_enabled"))
+            else:
+                want_research = bool(web_research)
+            if want_research:
+                try:
+                    from modules import research_agent as _ra
+                    import re as _re
+                    _sents = _re.split(r"(?<=[.!?])\s+", manual_script.strip())
+                    _q = " ".join(_sents[:2])[:220].strip()
+                    if not _q:
+                        _q = (manual_title or manual_topic or "").strip()
+                    if _ra.is_available() and _q:
+                        log.info(f"  research_agent (manual-script mode): "
+                                 f"query='{_q[:80]}...'")
+                        bundle = _ra.research_topic(
+                            topic=_q,
+                            max_steps=6,
+                            channel_cfg=channel_cfg,
+                            overall_timeout_sec=180,
+                        )
+                        if bundle:
+                            content["facts"]   = bundle.get("facts") or []
+                            content["sources"] = bundle.get("sources") or []
+                            content["keywords"] = bundle.get("search_keywords") or []
+                            imgs = bundle.get("image_urls") or []
+                            if imgs:
+                                seen = set(manual_images or [])
+                                added = 0
+                                for u in imgs:
+                                    if u and u not in seen and len(manual_images) < 8:
+                                        manual_images.append(u)
+                                        seen.add(u)
+                                        added += 1
+                                if added:
+                                    log.info(f"  research_agent contributed {added} hero images "
+                                             f"(total manual_images now {len(manual_images)})")
+                    elif not _ra.is_available():
+                        log.info("  research_agent: requested but playwright unavailable — skipping")
+                    else:
+                        log.info("  research_agent: no query derivable from script — skipping")
+                except Exception as e:
+                    log.warning(f"  research_agent (manual-script mode) failed: {e}")
+            summary["steps"]["research"] = {
+                "ok": True, "seconds": 0.0, "skipped_manual": True,
+                "manual_script_agent_facts": len(content.get("facts") or []),
+            }
         elif manual_topic:
             log.info(f"[1/6] Manual topic: {manual_topic[:80]} — building research bundle.")
             # Decide whether to run the NIM-controlled browser agent.
