@@ -377,16 +377,38 @@ def run_pipeline(
             if want_research:
                 try:
                     from modules import research_agent as _ra
-                    if _ra.is_available():
-                        log.info("  research_agent: starting NIM-driven browser research")
+                    # Build a research query the browser agent can act on.
+                    # Priority:
+                    #   1. manual_topic — the user typed a topic explicitly.
+                    #   2. First 2 sentences (or 220 chars) of manual_script —
+                    #      when the user pasted a full script but no topic,
+                    #      we derive the search query from what the script
+                    #      is ABOUT so the agent fetches images/facts that
+                    #      match the story, not generic channel-niche stuff.
+                    #   3. manual_title — last-resort seed.
+                    _research_query = (manual_topic or "").strip()
+                    if not _research_query and manual_script:
+                        _script_txt = manual_script.strip()
+                        import re as _re
+                        # Grab the first 2 sentences, capped at 220 chars.
+                        _sents = _re.split(r"(?<=[.!?])\s+", _script_txt)
+                        _research_query = " ".join(_sents[:2])[:220].strip()
+                    if not _research_query and manual_title:
+                        _research_query = manual_title.strip()
+
+                    if _ra.is_available() and _research_query:
+                        log.info(f"  research_agent: starting NIM-driven browser research "
+                                 f"| query='{_research_query[:80]}...'")
                         research_bundle = _ra.research_topic(
-                            topic=manual_topic,
+                            topic=_research_query,
                             max_steps=6,
                             channel_cfg=channel_cfg,
                             overall_timeout_sec=180,
                         )
-                    else:
+                    elif not _ra.is_available():
                         log.info("  research_agent: requested but playwright unavailable — skipping")
+                    else:
+                        log.info("  research_agent: no research query available (no topic/script/title) — skipping")
                 except Exception as e:
                     log.warning(f"  research_agent failed: {e} — continuing without research")
             else:
@@ -399,12 +421,26 @@ def run_pipeline(
                 "sources":   (research_bundle or {}).get("sources") or [],
                 "manual":    True,
             }
-            # If the agent surfaced hero images and the user didn't
-            # supply their own, feed them into the manual_images slot.
+            # Merge agent-scraped hero images WITH the user's uploaded
+            # images. Previously the agent's images were dropped when
+            # the user provided their own — which is exactly when web
+            # research + evidence is most valuable (they picked a
+            # reference and want more like it). Now: user's images go
+            # first (they wanted THOSE specifically), agent's images
+            # fill remaining slots up to 8. Dedup by URL so we don't
+            # queue the same photo twice.
             agent_imgs = (research_bundle or {}).get("image_urls") or []
-            if agent_imgs and not manual_images:
-                manual_images = agent_imgs[:8]
-                log.info(f"  research_agent contributed {len(manual_images)} hero images")
+            if agent_imgs:
+                seen = set(manual_images or [])
+                added = 0
+                for u in agent_imgs:
+                    if u and u not in seen and len(manual_images) < 8:
+                        manual_images.append(u)
+                        seen.add(u)
+                        added += 1
+                if added:
+                    log.info(f"  research_agent contributed {added} hero images "
+                             f"(total manual_images now {len(manual_images)})")
             summary["steps"]["research"] = {
                 "ok": True, "seconds": 0.0, "skipped_manual": True,
                 "agent_used": bool(research_bundle),
