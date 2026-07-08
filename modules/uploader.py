@@ -316,14 +316,34 @@ def upload_video(video_path, script_data, channel_type="horror", youtube_account
 
     log.info(f"Upload complete! https://youtu.be/{video_id}")
 
-    # Notify Discord (best-effort, never fails the upload).
+    # Notify Discord (best-effort, never fails the upload). Resolve the
+    # YouTube account's display title from PB so operators can see which
+    # channel got the video without opening YouTube Studio.
     try:
         from backend import notifier
+        acct_label = ""
+        if youtube_account_id:
+            try:
+                from backend import db as _db
+                if _db.is_configured():
+                    ydoc = _db.client().collection("youtube_accounts").document(youtube_account_id).get()
+                    if ydoc.exists:
+                        acct_label = str((ydoc.to_dict() or {}).get("title") or "")
+            except Exception:
+                pass
+        fields = [("video_id", video_id, True), ("channel", channel_type, True)]
+        if acct_label:
+            fields.append(("youtube_account", acct_label, True))
+        elif youtube_account_id:
+            fields.append(("youtube_account_id", youtube_account_id, True))
         notifier.info(
             f"📺 Published to YouTube · {channel_type}",
-            body=f"`{script_data.get('youtube_title', '(no title)')[:120]}`",
+            body=(
+                f"`{script_data.get('youtube_title', '(no title)')[:120]}`\n"
+                f"https://youtu.be/{video_id}"
+            ),
             url=f"https://youtu.be/{video_id}",
-            fields=[("video_id", video_id, True), ("channel", channel_type, True)],
+            fields=fields,
         )
     except Exception as _e:
         log.debug(f"notifier on upload skipped: {_e}")

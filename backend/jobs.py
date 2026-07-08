@@ -483,7 +483,15 @@ def _run_one(job: dict[str, Any]):
                         "has_video":     bool(public),
                         "video_storage": "primary" if public else "local",
                         "upload_error":  upload_error[:400] if upload_error else "",
-                        "title":         (summary.get("title") or "").strip(),
+                        # SEO metadata mirror. side_jobs._publish_youtube reads
+                        # runs_index.title / .youtube_title / .description / .tags
+                        # as its 3rd-tier fallback — populating them here lets
+                        # publish work even when run_summaries.data is unreadable.
+                        "title":         (summary.get("youtube_title") or summary.get("title") or "").strip()[:100],
+                        "youtube_title": (summary.get("youtube_title") or "").strip()[:100],
+                        "description":   (summary.get("description") or "")[:500],
+                        "tags":          summary.get("tags") or [],
+                        "youtube_url":   (summary.get("published") or {}).get("youtube_url", ""),
                     },
                 )
             except Exception as _e:

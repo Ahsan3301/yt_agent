@@ -457,6 +457,86 @@ def run_pipeline(
             log.error("Voiceover generation failed. Aborting.")
             return _finish(summary, work_dir, False)
 
+        # ── STEP 3.5: Publish-ready SEO metadata ─────────────────
+        # Narration is now frozen. Run the SEO writer BEFORE render so
+        # every published video ships with per-niche viral metadata
+        # (title/description/tags/hashtags/pinned comment/thumbnail
+        # ideas/category id) tuned to the actual chosen words. Persisted
+        # into summary so autopublish + manual publish both find it —
+        # replaces the old "Run <id>" default that shipped when
+        # summary didn't carry script metadata.
+        log.info("[3.5/6] Writing publish-ready SEO metadata...")
+        try:
+            from modules import seo_writer
+            # Optional: borrow top-ranking peer title(s) to inform tone.
+            borrowed_titles = None
+            try:
+                from modules.config import load_settings as _ls
+                _seo_cfg = (_ls().get("seo") or {})
+                if _seo_cfg.get("borrow_from_ranking", True):
+                    from modules import seo_borrower as _sb
+                    topic_seed = (content or {}).get("raw_title") or script.get("youtube_title") or ""
+                    if topic_seed:
+                        try:
+                            viral = _sb.find_viral(topic_seed)
+                            if viral and viral.get("title"):
+                                borrowed_titles = [viral["title"]]
+                        except Exception as _sb_e:
+                            log.debug(f"seo_borrower.find_viral skipped: {_sb_e}")
+            except Exception:
+                pass
+            publish_ready = _step(summary, "seo", lambda: seo_writer.write_seo_metadata(
+                narration=script["narration"],
+                script=script,
+                channel_cfg=channel_cfg,
+                research_data=content,
+                borrowed_titles=borrowed_titles,
+            ), run_id=run_id)
+        except Exception as _seo_err:
+            log.warning(f"SEO writer failed hard, using script metadata only: {_seo_err}")
+            publish_ready = None
+
+        if publish_ready:
+            # Merge canonical fields into script so uploader.upload_video
+            # (which reads youtube_title/description/tags off script)
+            # picks up the SEO-tuned metadata without a signature change.
+            script["youtube_title"] = publish_ready.get("youtube_title") or script.get("youtube_title") or ""
+            script["description"]   = publish_ready.get("description")   or script.get("description") or ""
+            script["tags"]          = publish_ready.get("tags")          or script.get("tags") or []
+            # Persist BOTH the raw script AND the publish_ready block so
+            # side_jobs.py + history UI can render either shape.
+            summary["script"] = {
+                "narration":       script.get("narration", ""),
+                "youtube_title":   script.get("youtube_title", ""),
+                "description":     script.get("description", ""),
+                "tags":            script.get("tags", []),
+                "search_keywords": script.get("search_keywords", []),
+            }
+            summary["publish_ready"] = publish_ready
+            # Top-level mirrors — side_jobs.py:_publish_youtube walks
+            # data.youtube_title → data.title → data.description → data.tags.
+            summary["youtube_title"] = script.get("youtube_title", "")
+            summary["title"]         = script.get("youtube_title", "")
+            summary["description"]   = script.get("description", "")
+            summary["tags"]          = script.get("tags", [])
+            log.info(f"SEO metadata locked | source={publish_ready.get('_source','?')} "
+                     f"title='{summary['youtube_title'][:60]}' tags={len(summary['tags'])} "
+                     f"hashtags={len(publish_ready.get('hashtags',[]))} "
+                     f"category={publish_ready.get('youtube_category_id')}")
+        else:
+            # Fallback: still persist whatever the scriptwriter produced.
+            summary["script"] = {
+                "narration":       script.get("narration", ""),
+                "youtube_title":   script.get("youtube_title", ""),
+                "description":     script.get("description", ""),
+                "tags":            script.get("tags", []),
+                "search_keywords": script.get("search_keywords", []),
+            }
+            summary["youtube_title"] = script.get("youtube_title", "")
+            summary["title"]         = script.get("youtube_title", "")
+            summary["description"]   = script.get("description", "")
+            summary["tags"]          = script.get("tags", [])
+
         # ── STEP 4: Footage ───────────────────────────────────────
         log.info("[4/6] Fetching stock footage (storyboard-driven)...")
         clips_dir = os.path.join(work_dir, "clips")
@@ -559,26 +639,26 @@ def run_pipeline(
             summary["steps"]["upload"] = {"ok": True, "skipped": True, "seconds": 0}
         else:
             log.info("[6/6] Uploading to YouTube...")
-            # SEO borrow — when enabled in settings, replace our script's
-            # title/desc/tags with a remix of the top viral Shorts on
-            # the same topic. Falls back to the LLM's metadata on any
-            # failure (missing API key, no viral video, quota hit).
-            try:
-                from modules import seo_borrower as _seo
-                from modules.config import load_settings as _ls
-                if _ls().get("upload", {}).get("seo_borrow", True):
-                    topic_seed = (content or {}).get("raw_title") or script.get("youtube_title")
-                    if topic_seed:
-                        script = _seo.borrow_seo(topic_seed, script)
-            except Exception as e:
-                log.warning(f"SEO borrow skipped: {e}")
+            # NOTE: legacy seo_borrower.borrow_seo call was here — it now
+            # runs inside seo_writer.write_seo_metadata (step 3.5) via the
+            # borrow_from_ranking toggle, so the borrowed material makes
+            # it into the persisted publish_ready block instead of
+            # mutating script at upload time.
             video_id = _step(summary, "upload", lambda: upload_video(
                 final_video, script, channel_type,
                 youtube_account_id=youtube_account_id,
             ), run_id=run_id)
             if video_id:
-                summary["video_id"] = video_id
+                summary["video_id"]  = video_id
                 summary["video_url"] = f"https://youtu.be/{video_id}"
+                summary["published"] = {
+                    "video_id":   video_id,
+                    "youtube_url": f"https://youtu.be/{video_id}",
+                    "account_id": youtube_account_id or "",
+                    "channel":    channel_type,
+                    "title":      script.get("youtube_title", ""),
+                    "at":         int(time.time()),
+                }
                 log.info(f"Published: {summary['video_url']}")
             else:
                 log.error("Upload failed.")

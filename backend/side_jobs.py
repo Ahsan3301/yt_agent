@@ -143,8 +143,46 @@ def _get_run_video(run_id: str) -> str | None:
 def _publish_youtube(job: dict[str, Any]) -> tuple[bool, str]:
     run_id = str(job.get("run_id") or "").strip()
     yt_account_id = str(job.get("youtube_account_id") or "").strip()
-    if not run_id or not yt_account_id:
-        return False, "publish_youtube requires run_id + youtube_account_id"
+    if not run_id:
+        return False, "publish_youtube requires run_id"
+
+    # Safety net: if the job carries no explicit yt_account_id (this
+    # happens on the legacy scheduled-render fallback path with
+    # daily_targets → null bindings, and on manually-submitted publish
+    # jobs where the UI didn't have an account picker yet), resolve it
+    # from the run's channel → channels/<niche>.youtube_account_id.
+    # Prevents silent publish-to-legacy-default behavior for scheduled
+    # runs. Logs whichever branch was taken.
+    if not yt_account_id:
+        try:
+            from backend import db
+            if db.is_configured():
+                c = db.client()
+                # Find the run's channel niche first.
+                niche = ""
+                idx = c.collection("runs_index").document(run_id).get()
+                if idx.exists:
+                    niche = str((idx.to_dict() or {}).get("channel") or "").strip()
+                if niche:
+                    # channels docs are keyed by user-chosen id, so search by
+                    # niche field. We take the FIRST enabled row that matches.
+                    for ch_doc in c.collection("channels").where("niche", "==", niche).limit(5).stream():
+                        d = ch_doc.to_dict() or {}
+                        if d.get("enabled") is False:
+                            continue
+                        binding = str(d.get("youtube_account_id") or "").strip()
+                        if binding:
+                            yt_account_id = binding
+                            log.info(
+                                f"side_jobs: publish job for run={run_id} had no yt_account_id; "
+                                f"resolved binding via channels/{ch_doc.id} → {binding} (niche={niche})"
+                            )
+                            break
+        except Exception as _bind_err:
+            log.warning(f"side_jobs: channel-binding fallback failed for run={run_id}: {_bind_err}")
+
+    if not yt_account_id:
+        return False, "publish_youtube requires youtube_account_id (no channel binding available)"
 
     video_path = _get_run_video(run_id)
     if not video_path:

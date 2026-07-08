@@ -80,13 +80,25 @@ export async function POST(req: NextRequest) {
       language: string | null;
       voice: string | null;
       youtube_account_id: string | null;
+      unbound: boolean;
     }> = [];
+    // Build a niche→binding lookup so the legacy fallback path (below)
+    // can inherit a YouTube account from the channels row of the same
+    // niche instead of silently publishing to the "legacy default"
+    // account. This closes a gap where scheduled runs from the legacy
+    // daily_targets map always shipped null bindings.
+    const bindingByNiche: Record<string, string> = {};
     try {
       const channelsSnap = await adminDb().collection("channels").get();
       channelsSnap.forEach((doc) => {
         const c = doc.data() as Record<string, unknown>;
         if (!c.enabled) return;
         const niche = String(c.niche || "").trim();
+        const yt = (typeof c.youtube_account_id === "string" && c.youtube_account_id) ? String(c.youtube_account_id) : null;
+        // Populate lookup table even for count==0 rows — an operator
+        // may have a channel row bound to an account but be temporarily
+        // running via daily_targets during migration.
+        if (niche && yt && !bindingByNiche[niche]) bindingByNiche[niche] = yt;
         const count = Math.max(0, Math.min(10, Number(c.daily_count) || 0));
         if (!niche || count === 0) return;
         for (let i = 0; i < count; i++) {
@@ -101,8 +113,8 @@ export async function POST(req: NextRequest) {
               c.real_events === false ? false : null,
             language: (typeof c.language === "string" && c.language) ? String(c.language) : null,
             voice:    (typeof c.voice === "string" && c.voice) ? String(c.voice) : null,
-            youtube_account_id:
-              (typeof c.youtube_account_id === "string" && c.youtube_account_id) ? String(c.youtube_account_id) : null,
+            youtube_account_id: yt,
+            unbound: !yt,
           });
         }
         targets[niche] = (targets[niche] || 0) + count;
@@ -115,11 +127,18 @@ export async function POST(req: NextRequest) {
       const legacy = (data.daily_targets || {}) as Record<string, number>;
       for (const [niche, count] of Object.entries(legacy)) {
         const n = Math.max(0, Math.min(10, Number(count) || 0));
+        // Inherit binding from the channels collection if a matching
+        // niche row exists — closes the gap where legacy daily_targets
+        // always published null bindings. If no binding found, mark
+        // the slot `unbound` so publish shows a warning chip and
+        // side_jobs' safety net can still resolve at publish time.
+        const inherited = bindingByNiche[niche] || null;
         for (let i = 0; i < n; i++) {
           channelMeta.push({
             niche, channel_name: niche,
             web_research: null, real_events: null, language: null, voice: null,
-            youtube_account_id: null,
+            youtube_account_id: inherited,
+            unbound: !inherited,
           });
         }
         if (n > 0) targets[niche] = (targets[niche] || 0) + n;
@@ -170,6 +189,12 @@ export async function POST(req: NextRequest) {
         language:     slot.language,
         voice_override: slot.voice,
         youtube_account_id: slot.youtube_account_id,
+        // When true, this scheduled slot didn't find a bound YouTube
+        // account — publish will either fall back to legacy default OR
+        // side_jobs' safety net will resolve from a matching channels
+        // row at publish time. The Queue UI shows a warning chip so the
+        // user knows to bind an account.
+        unbound: slot.unbound,
         // Track which dashboard-channel this job belongs to so the
         // /queue page can group jobs by channel later.
         source_channel_name: slot.channel_name,

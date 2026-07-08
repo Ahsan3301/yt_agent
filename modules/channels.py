@@ -199,6 +199,26 @@ CHANNEL_PRESETS: dict[str, dict] = {
         "youtube_category": "24",
         "hook_style":       "open with a chilling sensory question or unsettling fact",
         "research_mode":    "trend_aggregator",
+        "viral_seo": {
+            "hook_patterns": [
+                "What was in {place} that night...",
+                "The {noun} they found in {place}",
+                "Nobody warned her about the {noun}",
+                "This {place} has been abandoned for {years} years — for a reason",
+                "The {number} disappearances no one can explain",
+            ],
+            "banned_openers": ["Learn about", "In this video", "Did you know", "Today we", "Let me tell", "Have you ever"],
+            "tag_seeds": [
+                "true horror stories", "unexplained mysteries", "paranormal encounter",
+                "scary stories", "creepy stories", "horror shorts",
+                "true scary stories", "unsolved mysteries", "haunted",
+                "chilling stories", "horror narration",
+            ],
+            "hashtag_seeds": ["#horrorstory", "#truescary", "#unexplained"],
+            "description_first_two_lines": "Open with the eeriest single line from the story — a question or reveal that makes the reader HAVE to click 'more'. Never summarize; tease.",
+            "youtube_category_id": 24,
+            "engagement_cta": "Comment which story you want next — I read every one.",
+        },
     },
     "wisdom": {
         "display_name":   "Wisdom + motivation",
@@ -223,6 +243,26 @@ CHANNEL_PRESETS: dict[str, dict] = {
         "youtube_category": "27",
         "hook_style":       "open with a stark truth or a question that challenges assumption",
         "research_mode":    "trend_aggregator",
+        "viral_seo": {
+            "hook_patterns": [
+                "The one habit that separates {group_a} from {group_b}",
+                "Why {famous_person} refuses to {action}",
+                "You've been told {common_belief} — it's wrong",
+                "{number} things quiet people know that loud people don't",
+                "Stop chasing {thing}. Do this instead.",
+            ],
+            "banned_openers": ["Learn about", "In this video", "Did you know", "Today we", "Motivational quote", "Life is"],
+            "tag_seeds": [
+                "self improvement", "mindset shift", "life advice",
+                "personal growth", "wisdom quotes", "motivational speech",
+                "stoic philosophy", "life lessons", "success mindset",
+                "discipline habits", "self mastery",
+            ],
+            "hashtag_seeds": ["#mindset", "#selfimprovement", "#stoicism"],
+            "description_first_two_lines": "State the counterintuitive truth in one line, then a second line hinting at the deeper 'why' to force curiosity.",
+            "youtube_category_id": 27,
+            "engagement_cta": "Save this if you needed to hear it. Comment '1' to remember to act on it.",
+        },
     },
     "finance": {
         "display_name":   "Finance + business",
@@ -248,6 +288,26 @@ CHANNEL_PRESETS: dict[str, dict] = {
         "youtube_category": "25",   # News & Politics — closest to finance
         "hook_style":       "open with a startling number or a contrarian claim",
         "research_mode":    "fact_research",
+        "viral_seo": {
+            "hook_patterns": [
+                "How ${amount} became ${bigger_amount} in {timeframe}",
+                "The ${amount} mistake most {group} make",
+                "Warren Buffett's {number}-second rule for {topic}",
+                "Why {famous_company} really {action_verb} in {year}",
+                "{number} passive income ideas that actually work in 2026",
+            ],
+            "banned_openers": ["Learn about", "In this video", "Did you know", "Today we", "Money is", "Investing is"],
+            "tag_seeds": [
+                "personal finance", "side hustle 2026", "passive income",
+                "financial freedom", "money tips", "investing for beginners",
+                "wealth building", "stock market explained", "make money online",
+                "budgeting tips", "financial literacy",
+            ],
+            "hashtag_seeds": ["#personalfinance", "#passiveincome", "#moneytips"],
+            "description_first_two_lines": "Lead with a dollar figure + timeframe or a contrarian claim; second line names ONE specific mechanism you'll explain.",
+            "youtube_category_id": 25,
+            "engagement_cta": "Comment your #1 money goal for 2026 — I'll reply with one action step.",
+        },
     },
     "fitness": {
         "display_name":   "Fitness + discipline",
@@ -272,6 +332,26 @@ CHANNEL_PRESETS: dict[str, dict] = {
         "youtube_category": "17",   # Sports
         "hook_style":       "open with a direct command or a brutal truth",
         "research_mode":    "fact_research",
+        "viral_seo": {
+            "hook_patterns": [
+                "Stop doing {common_exercise}. Do this instead.",
+                "The {number}-minute workout that beats a {longer_duration} run",
+                "Why your {body_part} won't grow (it's not what you think)",
+                "{number} form mistakes killing your {lift_name}",
+                "This {trick} shreds {body_part} in {timeframe}",
+            ],
+            "banned_openers": ["Learn about", "In this video", "Did you know", "Today we", "Fitness is", "Working out"],
+            "tag_seeds": [
+                "home workout", "build muscle fast", "fat loss tips",
+                "workout form", "gym mistakes", "fitness motivation",
+                "calisthenics", "hypertrophy training", "shredded workout",
+                "athletic performance", "strength training",
+            ],
+            "hashtag_seeds": ["#fitness", "#gymtips", "#buildmuscle"],
+            "description_first_two_lines": "Punchy imperative + result in one line. Second line names the specific mistake or protocol you'll break down.",
+            "youtube_category_id": 17,
+            "engagement_cta": "Save + drop your current weight on {lift} — I'll tell you if you're stalling.",
+        },
     },
     "science": {
         "display_name":   "Science + tech explainers",
@@ -296,6 +376,26 @@ CHANNEL_PRESETS: dict[str, dict] = {
         "youtube_category": "28",   # Science & Technology
         "hook_style":       "open with a counterintuitive fact or 'what if' question",
         "research_mode":    "fact_research",
+        "viral_seo": {
+            "hook_patterns": [
+                "The strange thing your {body_part} does when you {action}",
+                "What happens if you {impossible_action}?",
+                "Why {common_phenomenon} isn't what you think",
+                "The {adjective} reason {famous_thing} exists",
+                "Scientists just found {discovery} — here's why it matters",
+            ],
+            "banned_openers": ["Learn about", "In this video", "Did you know", "Today we", "Science shows", "Studies have"],
+            "tag_seeds": [
+                "science facts", "human body", "biology explained",
+                "physics simplified", "space facts", "science shorts",
+                "how things work", "did you know science", "amazing facts",
+                "science mysteries", "cool science",
+            ],
+            "hashtag_seeds": ["#science", "#didyouknow", "#sciencefacts"],
+            "description_first_two_lines": "Lead with the counterintuitive fact stated as a plain sentence — no hedging. Second line names WHY it matters or what it changes.",
+            "youtube_category_id": 28,
+            "engagement_cta": "Comment the fact that surprised you most — I'll pin the best one.",
+        },
     },
     "history": {
         "display_name":   "History + mythology",
@@ -322,6 +422,26 @@ CHANNEL_PRESETS: dict[str, dict] = {
         "youtube_category": "27",   # Education
         "hook_style":       "open with a specific date or a long-buried mystery",
         "research_mode":    "fact_research",
+        "viral_seo": {
+            "hook_patterns": [
+                "In {year}, {historical_figure} did something we're still arguing about",
+                "The {number} things every history book gets wrong about {event}",
+                "Before {famous_event}, this happened",
+                "Why {ancient_civ} really collapsed",
+                "The lost city no one believed existed until {year}",
+            ],
+            "banned_openers": ["Learn about", "In this video", "Did you know", "Today we", "History is", "In ancient"],
+            "tag_seeds": [
+                "history documentary", "ancient civilization", "mythology explained",
+                "historical mystery", "history shorts", "lost civilizations",
+                "world war history", "ancient rome", "medieval history",
+                "historical facts", "history education",
+            ],
+            "hashtag_seeds": ["#history", "#historydocumentary", "#ancientmystery"],
+            "description_first_two_lines": "Open with the specific date + subject. Second line teases the reveal without giving it away.",
+            "youtube_category_id": 27,
+            "engagement_cta": "Which era should I cover next? Comment below.",
+        },
     },
     "comedy": {
         "display_name":   "Comedy + observational",
@@ -343,6 +463,26 @@ CHANNEL_PRESETS: dict[str, dict] = {
         "youtube_category": "23",   # Comedy
         "hook_style":       "open with a relatable mini-rant or specific observation",
         "research_mode":    "none",
+        "viral_seo": {
+            "hook_patterns": [
+                "Nobody talks about the {mundane_thing} at {place}",
+                "Why does {specific_scenario} always happen to {group}?",
+                "The {number} types of people you meet at {place}",
+                "I finally figured out {small_mystery}",
+                "Tell me why {relatable_situation}",
+            ],
+            "banned_openers": ["Learn about", "In this video", "Did you know", "Today we", "Have you ever noticed"],
+            "tag_seeds": [
+                "relatable comedy", "observational humor", "funny shorts",
+                "comedy skit", "comedy narration", "everyday humor",
+                "funny observations", "stand up comedy", "relatable content",
+                "comedy stories", "witty",
+            ],
+            "hashtag_seeds": ["#comedy", "#relatable", "#funny"],
+            "description_first_two_lines": "Start with the exact scenario as a punchy statement. Second line adds a specific detail that lands the joke's setup.",
+            "youtube_category_id": 23,
+            "engagement_cta": "Tell me I'm not the only one — comment your version.",
+        },
     },
     "food": {
         "display_name":   "Food + cooking",
@@ -366,6 +506,26 @@ CHANNEL_PRESETS: dict[str, dict] = {
         "youtube_category": "26",   # Howto & Style
         "hook_style":       "open with a craving-inducing description or a kitchen secret",
         "research_mode":    "none",
+        "viral_seo": {
+            "hook_patterns": [
+                "The {number}-ingredient {dish} that {chef_group} won't share",
+                "Stop {common_kitchen_mistake}. Do this instead.",
+                "Why your {dish} is {problem} — one fix",
+                "{cuisine} secret: what {chef} does before {step}",
+                "The {adjective} way to {cooking_technique}",
+            ],
+            "banned_openers": ["Learn about", "In this video", "Did you know", "Today we", "Cooking is", "In the kitchen"],
+            "tag_seeds": [
+                "quick recipes", "cooking hacks", "food shorts",
+                "easy dinner ideas", "kitchen tips", "chef secrets",
+                "food photography", "cooking tutorial", "recipe ideas",
+                "asian cuisine", "italian recipes",
+            ],
+            "hashtag_seeds": ["#recipe", "#foodie", "#cookinghacks"],
+            "description_first_two_lines": "Sensory line: taste / texture / smell in 5 words. Second line names the one technique that changes everything.",
+            "youtube_category_id": 26,
+            "engagement_cta": "Save this for tonight's dinner. Comment what protein you'll use.",
+        },
     },
     "travel": {
         "display_name":   "Travel + culture",
@@ -389,6 +549,26 @@ CHANNEL_PRESETS: dict[str, dict] = {
         "youtube_category": "19",   # Travel & Events
         "hook_style":       "open with a sensory transport — sights, smells, sounds of a place",
         "research_mode":    "none",
+        "viral_seo": {
+            "hook_patterns": [
+                "The {country} village tourists never find",
+                "Do NOT go to {place} without knowing this",
+                "{number} places in {country} even locals don't know",
+                "The cheapest way to see {famous_landmark}",
+                "What ${budget} gets you in {country}",
+            ],
+            "banned_openers": ["Learn about", "In this video", "Did you know", "Today we", "Traveling is", "When I went"],
+            "tag_seeds": [
+                "travel tips", "budget travel", "hidden gems",
+                "solo travel", "travel shorts", "world travel",
+                "backpacking", "adventure travel", "cultural travel",
+                "digital nomad", "off the beaten path",
+            ],
+            "hashtag_seeds": ["#travel", "#hiddengems", "#wanderlust"],
+            "description_first_two_lines": "Sensory transport in one line — sights/smells/sounds. Second line names the specific place + one action the viewer can take.",
+            "youtube_category_id": 19,
+            "engagement_cta": "Save this for your next trip. Where should I cover next?",
+        },
     },
     "gaming": {
         "display_name":   "Gaming + lore",
@@ -411,6 +591,26 @@ CHANNEL_PRESETS: dict[str, dict] = {
         "youtube_category": "20",   # Gaming
         "hook_style":       "open with a specific mechanic, lore reveal, or rage moment",
         "research_mode":    "none",
+        "viral_seo": {
+            "hook_patterns": [
+                "The devs hid THIS in {game} — and no one noticed",
+                "{character}'s real backstory is darker than you think",
+                "{number} things you missed in {game}",
+                "Why {game_mechanic} is secretly broken",
+                "This {item} in {game} changes everything",
+            ],
+            "banned_openers": ["Learn about", "In this video", "Did you know", "Today we", "Gaming is", "Have you ever played"],
+            "tag_seeds": [
+                "gaming shorts", "video game lore", "gaming secrets",
+                "game hidden details", "gaming theory", "video game hacks",
+                "esports moments", "game reviews", "gaming culture",
+                "let's play", "walkthrough",
+            ],
+            "hashtag_seeds": ["#gaming", "#videogames", "#gamerlife"],
+            "description_first_two_lines": "State the specific reveal + game in one line. Second line teases what changes if the viewer knew.",
+            "youtube_category_id": 20,
+            "engagement_cta": "Comment which game I should break down next.",
+        },
     },
 }
 
@@ -493,6 +693,21 @@ def synthesize_custom(name: str, description: str = "", llm_call=None) -> dict:
         "youtube_category": "22",   # People & Blogs (safe default)
         "hook_style": "open with the most surprising element of the topic",
         "research_mode": "fact_research",
+        "viral_seo": {
+            "hook_patterns": [
+                f"The one thing about {desc or key} nobody explains",
+                f"Why {desc or key} is more surprising than you think",
+                f"{{number}} things about {desc or key} that changed my mind",
+                f"Stop believing this about {desc or key}",
+                f"The truth about {desc or key}",
+            ],
+            "banned_openers": ["Learn about", "In this video", "Did you know", "Today we", "Let me tell"],
+            "tag_seeds": [key, desc or key, "shorts", "explained", "top facts", "curiosity", "mind blown"],
+            "hashtag_seeds": [f"#{key}", "#shorts", "#explained"],
+            "description_first_two_lines": "Open with the most surprising specific claim of the topic in one line. Second line names why the viewer's current mental model is wrong.",
+            "youtube_category_id": 22,
+            "engagement_cta": "Comment what you'd want covered next.",
+        },
         "_synthesized": True,
         "_source_description": desc,
     }
@@ -523,6 +738,14 @@ Return a JSON object with these exact keys:
 - youtube_category: a YouTube Data API category id as a string (use "22" if unsure)
 - hook_style: 1-line guidance for the first 3 seconds of the video
 - research_mode: one of "trend_aggregator" (use trending feeds), "fact_research" (web research), "none"
+- viral_seo: object with EXACTLY these keys:
+    - hook_patterns: array of 3-5 short title-template strings with {slot} placeholders proven to rank on YouTube Shorts for THIS niche (e.g. horror: "What was in {place} that night...", finance: "How ${amount} became ${bigger_amount} in {timeframe}")
+    - banned_openers: array of 5-7 generic phrases the title must NOT start with (always include "Learn about", "In this video", "Did you know", "Today we")
+    - tag_seeds: array of 8-12 evergreen YouTube search tags that fit the niche (mix niche-broad + long-tail)
+    - hashtag_seeds: array of exactly 3 branded hashtags for the description
+    - description_first_two_lines: 1-sentence style guidance for what the first 2 lines of the video description should do (they render BEFORE the "...more" cutoff)
+    - youtube_category_id: integer YouTube Data API category id
+    - engagement_cta: 1-line call-to-action that seeds comments / saves
 
 Reply with ONLY the JSON object, no surrounding markdown."""
 

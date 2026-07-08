@@ -5,7 +5,7 @@ import Link from "next/link";
 import clsx from "clsx";
 import {
   Layers, Plus, Trash2, Globe, Loader2, Save, X as XIcon,
-  PauseCircle, PlayCircle, Edit3, Wand2, Tv, Link2,
+  PauseCircle, PlayCircle, Edit3, Wand2, Tv, Link2, AlertTriangle,
 } from "lucide-react";
 import { PRESET_CHANNELS } from "@/lib/channels";
 import { useToast } from "@/components/Toast";
@@ -338,10 +338,16 @@ function ChannelCard({
   onConnectYouTube: () => void;
 }) {
   const nichePreset = PRESET_CHANNELS.find((p) => p.name === c.niche);
+  // Scheduled runs on an enabled channel with daily_count>0 need a
+  // bound YouTube account, otherwise autopublish falls through to the
+  // "legacy default" account (or fails). Surface this loudly at the
+  // top of the row so the operator can fix it in one click.
+  const unboundActive = c.enabled && (c.daily_count || 0) > 0 && !ytAccount && !c.youtube_account_id;
   return (
     <div className={clsx(
       "card flex items-center gap-3 flex-wrap",
       !c.enabled && "opacity-50",
+      unboundActive && "border-amber-500/60 bg-amber-500/5",
     )}>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 flex-wrap">
@@ -352,6 +358,15 @@ function ChannelCard({
           )}
           {c.web_research === true && (
             <span className="pill pill-info text-[10px]"><Globe className="h-3 w-3" /> research</span>
+          )}
+          {unboundActive && (
+            <button
+              onClick={onConnectYouTube}
+              className="pill text-[10px] bg-amber-500/20 text-amber-200 border border-amber-500/40 hover:bg-amber-500/30 flex items-center gap-1"
+              title="Scheduled videos won't publish to a specific channel until you bind a YouTube account. Click to connect."
+            >
+              <AlertTriangle className="h-3 w-3" /> No YouTube account bound — click to connect
+            </button>
           )}
         </div>
         <div className="text-xs text-neutral-400 mt-0.5">

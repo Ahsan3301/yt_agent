@@ -204,6 +204,12 @@ DEFAULT_SETTINGS = {
         "category_horror": "24",  # Entertainment
         "category_wisdom": "27",  # Education
     },
+    "seo": {
+        # When true, the post-script SEO writer feeds top-ranking peer
+        # titles (fetched via seo_borrower.find_viral) into its prompt
+        # as tone reference. Off if YouTube Data API quota is scarce.
+        "borrow_from_ranking": True,
+    },
     "keywords": {
         # Gothic-horror fallback pool — used only when the LLM's
         # story-specific keywords don't yield enough material. Each phrase is
