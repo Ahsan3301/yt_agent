@@ -93,9 +93,9 @@ jobs:
             echo "::error::KAGGLE_USERNAME and KAGGLE_KEY repo secrets are required (see kaggle/README.md)"
             exit 1
           fi
-          # --accelerator "nvidiaTeslaT4x2" is CRITICAL. Without it the CLI
+          # --accelerator "NvidiaTeslaT4" is CRITICAL. Without it the CLI
           # ignores the metadata.json accelerator field and Kaggle defaults
           # to P100. T4 x2 gives sm_7.5 (all modern torch kernels available)
           # + 2x16 GB VRAM.
-          kaggle kernels push -p kaggle/ --accelerator "nvidiaTeslaT4x2"
+          kaggle kernels push -p kaggle/ --accelerator "NvidiaTeslaT4"
           echo "::notice::Kaggle worker dispatched on T4 x2. Watch progress at https://www.kaggle.com/$KAGGLE_USERNAME/code"
