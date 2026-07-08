@@ -68,6 +68,84 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `backends sweep failed: ${e}` }, { status: 500 });
   }
 
+  // ── 1b. Rescue orphaned running/claimed jobs ─────────────
+  // When a Kaggle kernel dies mid-run (session cap, OOM, crash), the
+  // job it was working on stays status='running' forever. The worker
+  // is now gone from backends. Move any such job back to 'queued' so
+  // the next available worker picks it up. If the same job orphans
+  // twice → mark failed so we don't loop forever.
+  const orphanedJobs: { id: string; run_id: string | null; prev_status: string; action: "requeued" | "failed" }[] = [];
+  try {
+    const staleInstanceIds = new Set<string>(
+      staleBackends.map((b) => b.instance_id || "").filter(Boolean),
+    );
+    // Also include instance ids that DON'T appear in backends at all —
+    // the row might have been swept already in a previous tick, but a
+    // job doc could still reference it.
+    const liveInstanceIds = new Set<string>();
+    try {
+      const liveSnap = await adminDb().collection("backends").get();
+      liveSnap.forEach((doc) => {
+        const d = doc.data() as { instance_id?: string; last_seen_at?: unknown };
+        const lastMs = toEpochMs(d.last_seen_at) || 0;
+        if (lastMs / 1000 >= nowSec - staleSeconds && d.instance_id) {
+          liveInstanceIds.add(String(d.instance_id));
+        }
+      });
+    } catch { /* best-effort */ }
+
+    const jobsSnap = await adminDb().collection("jobs").get();
+    for (const doc of jobsSnap.docs) {
+      const j = doc.data() as {
+        status?: string; backend_instance_id?: string;
+        started_at?: unknown; run_id?: string; orphan_count?: number;
+      };
+      const st = String(j.status || "");
+      if (st !== "running" && st !== "claimed") continue;
+      const instId = String(j.backend_instance_id || "");
+      // Skip if the worker is still alive.
+      if (instId && liveInstanceIds.has(instId)) continue;
+      // Also skip when the job just started (< staleSeconds ago) —
+      // the worker may still be registering. Uses started_at OR the
+      // doc's updated field as a proxy.
+      const startedMs = toEpochMs(j.started_at) || 0;
+      if (startedMs && startedMs / 1000 > nowSec - staleSeconds) continue;
+
+      const prevOrphanCount = Number(j.orphan_count || 0);
+      const action: "requeued" | "failed" = prevOrphanCount >= 1 ? "failed" : "requeued";
+      const patch: Record<string, unknown> = action === "requeued"
+        ? {
+            status: "queued",
+            backend_instance_id: "",
+            backend_url: "",
+            started_at: null,
+            claimed_at: null,
+            percent: 0,
+            current_step: null,
+            current_step_label: null,
+            orphan_count: prevOrphanCount + 1,
+            error: `worker ${instId || "?"} disappeared mid-run; requeued for retry`,
+          }
+        : {
+            status: "failed",
+            finished_at: nowSec,
+            error: `worker ${instId || "?"} disappeared twice; giving up`,
+            current_step: "done",
+            current_step_label: "Failed",
+          };
+      if (!dryRun) {
+        try {
+          await adminDb().collection("jobs").doc(doc.id).update(patch);
+        } catch { /* best-effort */ }
+      }
+      orphanedJobs.push({
+        id: doc.id, run_id: j.run_id || null, prev_status: st, action,
+      });
+    }
+  } catch (e) {
+    return NextResponse.json({ error: `orphan-job sweep failed: ${e}` }, { status: 500 });
+  }
+
   // ── 2. Orphan videos ─────────────────────────────────────
   const orphans: { key: string; run_id: string; size: number; last_modified: number }[] = [];
   try {
@@ -117,6 +195,10 @@ export async function POST(req: NextRequest) {
     stale_backends: {
       deleted: dryRun ? 0 : staleBackends.length,
       rows:    staleBackends,
+    },
+    orphan_jobs: {
+      handled: dryRun ? 0 : orphanedJobs.length,
+      rows:    orphanedJobs,
     },
     orphan_videos: {
       deleted:      dryRun ? 0 : orphans.length,

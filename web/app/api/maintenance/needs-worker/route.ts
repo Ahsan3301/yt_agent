@@ -104,11 +104,36 @@ export async function GET(req: NextRequest) {
     reason = `${queued} queued job(s) and no GPU worker alive`;
   }
 
+  // Optional wake trigger — when ?wake=1 is passed AND we need a worker,
+  // fire wake-kaggle inline instead of relying on the separate GH cron
+  // (which runs every 5 min max). Keeps the queue-to-worker latency
+  // under a minute for the Coolify hourly path. Best-effort; failure
+  // is logged but doesn't fail the probe response.
+  let woke = false;
+  if (needs_worker && new URL(req.url).searchParams.get("wake") === "1") {
+    try {
+      const base = (process.env.COOLIFY_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || "").replace(/\/$/, "");
+      const wakeUrl = base
+        ? `${base}/api/backends/wake-kaggle`
+        : new URL("/api/backends/wake-kaggle", req.url).toString();
+      // Fire-and-forget with the maintenance api key so the wake
+      // endpoint's own auth accepts the call.
+      fetch(wakeUrl, {
+        method: "POST",
+        headers: {
+          "X-API-Key": process.env.RENDER_TRIGGER_KEY || "",
+        },
+      }).catch(() => {});
+      woke = true;
+    } catch { /* best-effort */ }
+  }
+
   return NextResponse.json({
     needs_worker,
     queued,
     gpu_alive,
     any_alive,
     reason,
+    woke,
   });
 }

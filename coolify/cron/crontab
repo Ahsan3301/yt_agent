@@ -18,10 +18,11 @@
 # 05:00 UTC daily — clean up old runs/logs/errors per retention rules.
 0 5 * * *  curl -fsS -X POST -H "X-API-Key: $RENDER_TRIGGER_KEY" "$DASHBOARD_INTERNAL_URL/api/maintenance/cleanup" >> /proc/1/fd/1 2>&1
 
-# Every 5 min — wake a Kaggle worker if the queue has work + no GPU.
-# This route is GET (not POST) — it's a read-only probe that returns
-# {needs_worker: bool} and (optionally) fires a Kaggle dispatch.
-*/5 * * * *  curl -fsS -H "X-API-Key: $RENDER_TRIGGER_KEY" "$DASHBOARD_INTERNAL_URL/api/maintenance/needs-worker" >> /proc/1/fd/1 2>&1
+# Every 3 min — probe queue depth AND wake Kaggle inline if needed.
+# The ?wake=1 param makes the route POST to /api/backends/wake-kaggle
+# whenever it decides needs_worker=true, so we don't wait up to 5 min
+# for the GitHub Actions dispatch cron to catch up when a worker dies.
+*/3 * * * *  curl -fsS -H "X-API-Key: $RENDER_TRIGGER_KEY" "$DASHBOARD_INTERNAL_URL/api/maintenance/needs-worker?wake=1" >> /proc/1/fd/1 2>&1
 
 # Every 15 min — sweep stale backends rows (kaggle kernels that died
 # mid-heartbeat, container restarts pre-stable-INSTANCE_ID) and orphan
