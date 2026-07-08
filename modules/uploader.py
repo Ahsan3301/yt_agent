@@ -29,6 +29,33 @@ from modules import config
 from modules.config import load_settings
 from modules.thumbnail import generate_thumbnail
 
+
+def _repair_mojibake(s: str) -> str:
+    """Best-effort UTF-8-decoded-as-Latin-1 repair.
+
+    Detects the classic pattern where a UTF-8-encoded string was
+    accidentally decoded as Latin-1 (e.g. '•' rendered as 'â\x80¢' or
+    the display artefact 'â ¢'). Round-trips: encode as Latin-1 → decode
+    as UTF-8. If that raises, return the original string unchanged.
+
+    Called on title / description / tags right before we hand them to
+    the YouTube API. Belt-and-braces alongside the NIM stream charset
+    fix — this catches corruption from ANY source (legacy runs, cached
+    checkpoints, other providers) not just NIM.
+    """
+    if not isinstance(s, str) or not s:
+        return s
+    # Cheap check: mojibake tokens for common punctuation. If none of
+    # them appear, skip the (expensive-ish) round-trip.
+    _MARKERS = ("â\x80", "Ã©", "Ã¨", "Ã¡", "Â ", "Â·", "â€", "â¢", "â\x80\x99")
+    if not any(m in s for m in _MARKERS):
+        return s
+    try:
+        repaired = s.encode("latin-1", errors="strict").decode("utf-8", errors="strict")
+        return repaired
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return s
+
 load_dotenv()
 log = logging.getLogger(__name__)
 
@@ -275,9 +302,9 @@ def upload_video(video_path, script_data, channel_type="horror", youtube_account
     made_for_kids = bool(up.get("made_for_kids", False))
     category_id = up.get(f"category_{channel_type}") or CATEGORY_IDS.get(channel_type, "24")
 
-    title = (script_data.get("youtube_title") or "Untitled")[:100]
-    description = (script_data.get("description") or "")[:5000]
-    tags = (script_data.get("tags") or [])[:500]
+    title = _repair_mojibake((script_data.get("youtube_title") or "Untitled"))[:100]
+    description = _repair_mojibake((script_data.get("description") or ""))[:5000]
+    tags = [_repair_mojibake(t) for t in (script_data.get("tags") or [])[:500]]
 
     body = {
         "snippet": {

@@ -151,6 +151,10 @@ def _post_chat(payload, timeout=60, attempts=3):
         _wait_for_slot()
         r = requests.post(f"{NIM_BASE}/chat/completions", headers=headers, json=payload, timeout=timeout)
         r.raise_for_status()
+        # Same charset fix as the streaming path — requests defaults to
+        # Latin-1 for JSON without a charset, which turns • / — / curly
+        # quotes into mojibake before r.json() sees them. Force UTF-8.
+        r.encoding = "utf-8"
         return r.json()
 
     return _retry(_once, attempts=attempts, desc="chat")
@@ -193,6 +197,15 @@ def _stream_once(payload, headers, read_timeout, total_timeout):
         stream=True,
     ) as r:
         r.raise_for_status()
+        # Force UTF-8 on the SSE stream. NIM's response has
+        # Content-Type: text/event-stream WITHOUT a charset, and
+        # requests then defaults to Latin-1 (HTTP RFC), which
+        # mangles every non-ASCII byte — bullets (•), em-dashes (—),
+        # curly quotes, hashtags in non-ASCII niches, etc. Setting
+        # r.encoding='utf-8' BEFORE iter_lines makes decode_unicode=True
+        # use UTF-8. Symptom before this fix: descriptions on YouTube
+        # displayed 'â ¢' where a bullet should be.
+        r.encoding = "utf-8"
         for raw_line in r.iter_lines(decode_unicode=True):
             if time.time() - started > total_timeout:
                 raise TimeoutError(f"stream exceeded total_timeout={total_timeout}s")
