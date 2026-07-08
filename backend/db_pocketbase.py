@@ -249,6 +249,32 @@ class DocumentReference:
                                     f"PB unique-conflict recovery PATCH failed: "
                                     f"HTTP {r3.status_code}: {r3.text[:200]}"
                                 )
+                        else:
+                            # PB reported the field as not-unique but a
+                            # freshly-run query for that value returns
+                            # zero rows. Seen when a prior write left a
+                            # phantom (index entry without visible row).
+                            # Belt-and-braces: DELETE at our target
+                            # doc-id (idempotent) AND at any hits from
+                            # a broader contains-filter, then retry POST
+                            # one more time. If that still fails, raise
+                            # with full diagnostic context.
+                            self._client._http(
+                                "DELETE",
+                                f"/api/collections/{self._collection}/records/{self._pb_id}",
+                            )
+                            r4 = self._client._http(
+                                "POST",
+                                f"/api/collections/{self._collection}/records",
+                                json=body,
+                            )
+                            if r4.ok:
+                                return
+                            raise RuntimeError(
+                                f"PB {fld}='{val}' phantom-not-unique + retry-POST failed: "
+                                f"orig HTTP {r2.status_code}: {r2.text[:200]} | "
+                                f"retry HTTP {r4.status_code}: {r4.text[:200]}"
+                            )
             raise RuntimeError(f"PB create {self.path}: HTTP {r2.status_code}: {r2.text[:200]}")
         if not r.ok:
             raise RuntimeError(f"PB set {self.path}: HTTP {r.status_code}: {r.text[:200]}")

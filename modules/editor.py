@@ -89,15 +89,37 @@ except Exception as e:
     log.info(f"editor_gpu: unavailable ({e.__class__.__name__}); using ffmpeg path")
 
 
+_GPU_DISABLED_FOR_SESSION = False
+
+
+def _mark_gpu_broken(reason: str) -> None:
+    """One-strike-out latch: after the first CUDA/NVENC failure we skip
+    editor_gpu for the rest of the process lifetime. Prevents Kaggle
+    from spending seconds per shot logging "no kernel image is available
+    for execution on the device" for every segment. The ffmpeg path is
+    the same quality; only difference is speed."""
+    global _GPU_DISABLED_FOR_SESSION
+    if not _GPU_DISABLED_FOR_SESSION:
+        _GPU_DISABLED_FOR_SESSION = True
+        log.warning(
+            f"editor_gpu: disabling GPU renderer for the rest of this process "
+            f"after first failure ({reason}). All remaining segments render "
+            f"via ffmpeg — same output, slower per-segment."
+        )
+
+
 def _use_gpu_renderer() -> bool:
     """True iff per-segment GPU path should be tried for this call.
 
-    Three gates:
+    Four gates:
       1. The editor_gpu module imported (torch + decord + av present).
       2. CUDA is reachable AT CALL TIME (not just at import).
       3. The user hasn't forced "cpu" via settings.video.render_pipeline.
+      4. GPU hasn't errored earlier in this process (one-strike-out).
     """
     if not _HAS_GPU_RENDERER:
+        return False
+    if _GPU_DISABLED_FOR_SESSION:
         return False
     try:
         if not editor_gpu.is_available():
@@ -684,6 +706,7 @@ def _render_video_segment(src, start, dur, out_path):
                 f"{os.path.basename(src['path'])} ({e.__class__.__name__}: {e}); "
                 f"falling back to ffmpeg for this segment"
             )
+            _mark_gpu_broken(f"{e.__class__.__name__}: {str(e)[:80]}")
     return _render_video_segment_ffmpeg(src, start, dur, out_path)
 
 
@@ -827,6 +850,7 @@ def _render_image_segment(src, dur, out_path, channel="horror"):
                 f"{os.path.basename(src['path'])} ({e.__class__.__name__}: {e}); "
                 f"falling back to ffmpeg for this segment"
             )
+            _mark_gpu_broken(f"{e.__class__.__name__}: {str(e)[:80]}")
 
     return _render_image_segment_ffmpeg(src, dur, out_path, channel=channel,
                                         motion=motion, intensity=intensity)

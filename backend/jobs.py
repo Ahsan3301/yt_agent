@@ -439,6 +439,12 @@ def _run_one(job: dict[str, Any]):
             # complete-with-warning — the local file exists, the run
             # summary is persisted, and the Library shows an entry.
             job["status"] = "complete"
+            # Clear the in-progress step so the /queue UI stops rendering
+            # "Uploading" forever. The pipeline sets current_step to the
+            # last stage it ran; on success we want it to read as done.
+            job["current_step"] = "done"
+            job["current_step_label"] = "Complete"
+            job["percent"] = 100
             if public:
                 job["video_url"] = public
             else:

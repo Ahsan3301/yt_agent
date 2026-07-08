@@ -213,7 +213,10 @@ export default function ChannelsPage() {
         toast.error(`Run Now failed: ${j.error || r.status}`);
         return;
       }
-      const parts: string[] = [`Queued for "${c.name}" (${c.niche}) → job ${j.job_id.slice(0, 12)}…`];
+      const n = j.count || (j.job_ids?.length ?? 1);
+      const parts: string[] = [
+        `Queued ${n} ${n === 1 ? "job" : "jobs"} for "${c.name}" (${c.niche}).`,
+      ];
       if (j.woke_kaggle) parts.push("Waking Kaggle worker…");
       toast.success(parts.join(" "));
     } catch (e) {
