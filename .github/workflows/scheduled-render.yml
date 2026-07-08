@@ -2,8 +2,11 @@ name: Scheduled render
 
 on:
   schedule:
-    # 09:00 UTC daily. Adjust the cron string for your channel timezone.
-    - cron: "0 9 * * *"
+    # Fires every hour. The scheduled-render route reads each channel's
+    # run_at_hour and only queues jobs for channels whose hour matches
+    # the current UTC hour. Channels with run_at_hour==null preserve
+    # the legacy 09:00-UTC behaviour.
+    - cron: "0 * * * *"
   workflow_dispatch: {}  # allow manual "Run workflow" button
 
 jobs:
@@ -24,12 +27,15 @@ jobs:
             echo "::error::RENDER_TRIGGER_KEY secret not set"
             exit 1
           fi
-          echo "Triggering ${VERCEL_BASE}/api/maintenance/scheduled-render"
+          # Pass the current UTC hour so the route can filter channels
+          # to those whose run_at_hour matches this tick.
+          CURRENT_HOUR=$(date -u +%-H)
+          echo "Triggering ${VERCEL_BASE}/api/maintenance/scheduled-render?hour=${CURRENT_HOUR}"
           response=$(curl -sS -X POST \
             -H "Content-Type: application/json" \
             -H "X-API-Key: ${API_KEY}" \
             -w "\n%{http_code}" \
-            "${VERCEL_BASE}/api/maintenance/scheduled-render")
+            "${VERCEL_BASE}/api/maintenance/scheduled-render?hour=${CURRENT_HOUR}")
           body=$(echo "$response" | sed '$d')
           code=$(echo "$response" | tail -n1)
           echo "HTTP $code"

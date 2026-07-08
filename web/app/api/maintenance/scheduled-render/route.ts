@@ -64,6 +64,20 @@ export async function POST(req: NextRequest) {
     const publish = data.publish_default !== false;
     const dry_run = !publish;
 
+    // Hour filter — the cron now runs hourly and passes the current UTC
+    // hour via ?hour=<0-23>. Channels with a set run_at_hour only fire
+    // when their hour matches; channels with run_at_hour==null preserve
+    // the old behaviour (fire only at the "default hour", currently 9
+    // UTC to match the legacy daily-at-09:00 schedule). "force=1"
+    // bypasses the filter (used by the Run Now button per-channel path).
+    const url = new URL(req.url);
+    const hourParam = url.searchParams.get("hour");
+    const forceAll  = url.searchParams.get("force") === "1";
+    const nowHour = (hourParam !== null && hourParam !== "")
+      ? Math.max(0, Math.min(23, Number(hourParam) || 0))
+      : new Date().getUTCHours();
+    const DEFAULT_HOUR = 9;
+
     // PRIMARY source of targets: the channels collection (per-channel
     // niche + daily_count + enabled). Each enabled channel with
     // daily_count > 0 contributes count jobs for its niche today.
@@ -101,6 +115,14 @@ export async function POST(req: NextRequest) {
         if (niche && yt && !bindingByNiche[niche]) bindingByNiche[niche] = yt;
         const count = Math.max(0, Math.min(10, Number(c.daily_count) || 0));
         if (!niche || count === 0) return;
+        // Hour filter: skip channels whose configured hour doesn't
+        // match the current UTC hour. null → fires at DEFAULT_HOUR.
+        // "force=1" bypasses (used by the per-channel Run Now button).
+        const channelHour = (typeof c.run_at_hour === "number" &&
+                             c.run_at_hour >= 0 && c.run_at_hour <= 23)
+          ? Math.floor(c.run_at_hour as number)
+          : DEFAULT_HOUR;
+        if (!forceAll && channelHour !== nowHour) return;
         for (let i = 0; i < count; i++) {
           channelMeta.push({
             niche,
@@ -122,8 +144,9 @@ export async function POST(req: NextRequest) {
     } catch (e) {
       logRoute(reqId, "channels collection read failed (legacy path)", { err: String(e) });
     }
-    // Legacy fallback when no channels are configured yet.
-    if (channelMeta.length === 0) {
+    // Legacy fallback when no channels are configured yet. Only fires
+    // on the DEFAULT_HOUR tick so hourly cron doesn't queue 24×/day.
+    if (channelMeta.length === 0 && (forceAll || nowHour === DEFAULT_HOUR)) {
       const legacy = (data.daily_targets || {}) as Record<string, number>;
       for (const [niche, count] of Object.entries(legacy)) {
         const n = Math.max(0, Math.min(10, Number(count) || 0));
@@ -147,6 +170,42 @@ export async function POST(req: NextRequest) {
 
     const workers = await pickWorkers();
     const targetWorker = workers[0];
+
+    // Auto-wake Kaggle if we have work to queue but NO gpu-tier worker
+    // is currently alive. Prevents scheduled jobs from sitting in the
+    // queue overnight when the last worker's watchdog expired. Only
+    // fires when channelMeta has slots — so an empty schedule tick
+    // (e.g. no channel matches this hour) never spins up a worker.
+    if (channelMeta.length > 0) {
+      try {
+        const backendsSnap = await adminDb().collection("backends").get();
+        const nowEpoch = Date.now() / 1000;
+        let liveGpu = 0;
+        backendsSnap.forEach((doc) => {
+          const b = doc.data() as Record<string, unknown>;
+          if (String(b.tier || "") !== "gpu") return;
+          const lastSeen = Number(b.last_seen_at || 0);
+          // 90s heartbeat window matches the /queue liveness threshold.
+          if (nowEpoch - lastSeen < 90) liveGpu += 1;
+        });
+        if (liveGpu === 0) {
+          const base = (process.env.COOLIFY_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || "").replace(/\/$/, "");
+          const wakeUrl = base
+            ? `${base}/api/backends/wake-kaggle`
+            : new URL("/api/backends/wake-kaggle", req.url).toString();
+          logRoute(reqId, "no gpu worker alive; waking kaggle", { wakeUrl });
+          // Fire-and-forget — wake takes ~30-90s and shouldn't block the
+          // schedule dispatch. Workers claim the queued jobs when they
+          // come up.
+          fetch(wakeUrl, {
+            method: "POST",
+            headers: { "X-Request-Id": reqId },
+          }).catch(() => {});
+        }
+      } catch (e) {
+        logRoute(reqId, "auto-wake-kaggle probe failed", { err: String(e) });
+      }
+    }
 
     const queued: { job_id: string; channel: string; backend_url: string | null }[] = [];
     const skipped: { channel: string; reason: string }[] = [];

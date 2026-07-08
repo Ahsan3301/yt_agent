@@ -8,8 +8,12 @@
 # RENDER_TRIGGER_KEY is the shared secret the maintenance routes check
 # (existing convention from the GitHub Actions workflows).
 
-# 09:00 UTC daily — queue the day's jobs from the channels collection.
-0 9 * * *  curl -fsS -X POST -H "X-API-Key: $RENDER_TRIGGER_KEY" "$DASHBOARD_INTERNAL_URL/api/maintenance/scheduled-render" >> /proc/1/fd/1 2>&1
+# Every UTC hour — queue jobs for channels whose run_at_hour matches
+# the current hour. Channels with run_at_hour==null preserve the legacy
+# behaviour and only fire at 09:00 UTC (default hour inside the route).
+# %H = current UTC hour (busybox date). `\%` escapes the % that cron
+# otherwise treats as a newline in the command line.
+0 * * * *  curl -fsS -X POST -H "X-API-Key: $RENDER_TRIGGER_KEY" "$DASHBOARD_INTERNAL_URL/api/maintenance/scheduled-render?hour=$(date -u +\%-H)" >> /proc/1/fd/1 2>&1
 
 # 05:00 UTC daily — clean up old runs/logs/errors per retention rules.
 0 5 * * *  curl -fsS -X POST -H "X-API-Key: $RENDER_TRIGGER_KEY" "$DASHBOARD_INTERNAL_URL/api/maintenance/cleanup" >> /proc/1/fd/1 2>&1

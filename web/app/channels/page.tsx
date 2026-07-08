@@ -36,6 +36,7 @@ type Channel = {
   language?: string;
   voice?: string | null;
   youtube_account_id?: string | null;
+  run_at_hour?: number | null;
 };
 
 type YouTubeAccount = {
@@ -191,6 +192,35 @@ export default function ChannelsPage() {
     await save({ ...c, enabled: !c.enabled });
   };
 
+  const runNow = async (c: Channel) => {
+    if (!c.youtube_account_id) {
+      const proceed = confirm(
+        `"${c.name}" has no YouTube account bound.\n\n` +
+        `Continue anyway? The video will still be produced and stored, ` +
+        `but auto-publish will either fall back to the legacy default account ` +
+        `or leave the video unpublished. Bind an account to make Run Now safe.`
+      );
+      if (!proceed) return;
+    }
+    try {
+      const r = await fetch(`/api/channels/${encodeURIComponent(c.id)}/render-now`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dry_run: false }),
+      });
+      const j = await r.json();
+      if (!r.ok) {
+        toast.error(`Run Now failed: ${j.error || r.status}`);
+        return;
+      }
+      const parts: string[] = [`Queued for "${c.name}" (${c.niche}) → job ${j.job_id.slice(0, 12)}…`];
+      if (j.woke_kaggle) parts.push("Waking Kaggle worker…");
+      toast.success(parts.join(" "));
+    } catch (e) {
+      toast.error(`Run Now failed: ${e}`);
+    }
+  };
+
   // Aggregate quota math
   const totalDaily = channels
     .filter((c) => c.enabled)
@@ -305,6 +335,7 @@ export default function ChannelsPage() {
               onDelete={() => remove(c.id)}
               onTogglePause={() => togglePause(c)}
               onConnectYouTube={() => connectYouTube(c.id)}
+              onRunNow={() => runNow(c)}
             />
           ))}
         </div>
@@ -328,7 +359,7 @@ export default function ChannelsPage() {
 }
 
 function ChannelCard({
-  channel: c, ytAccount, onEdit, onDelete, onTogglePause, onConnectYouTube,
+  channel: c, ytAccount, onEdit, onDelete, onTogglePause, onConnectYouTube, onRunNow,
 }: {
   channel: Channel;
   ytAccount: YouTubeAccount | null;
@@ -336,6 +367,7 @@ function ChannelCard({
   onDelete: () => void;
   onTogglePause: () => void;
   onConnectYouTube: () => void;
+  onRunNow: () => void;
 }) {
   const nichePreset = PRESET_CHANNELS.find((p) => p.name === c.niche);
   // Scheduled runs on an enabled channel with daily_count>0 need a
@@ -406,6 +438,13 @@ function ChannelCard({
         </div>
       </div>
       <div className="flex items-center gap-1.5">
+        <button
+          onClick={onRunNow}
+          className="btn btn-primary h-7 text-xs"
+          title="Queue one render for this channel right now (ignores the schedule hour). Auto-wakes Kaggle if no worker is alive."
+        >
+          <PlayCircle className="h-3 w-3" /> Run now
+        </button>
         <button onClick={onTogglePause} className="btn btn-ghost h-7 text-xs" title={c.enabled ? "Pause" : "Resume"}>
           {c.enabled ? <PauseCircle className="h-3 w-3" /> : <PlayCircle className="h-3 w-3" />}
         </button>
@@ -448,6 +487,11 @@ function ChannelForm({
   const [language, setLanguage] = useState(initial?.language || "en");
   const [voice, setVoice] = useState(initial?.voice || "");
   const [youtubeAccountId, setTvAccountId] = useState(initial?.youtube_account_id || "");
+  // null → the cron fires at the legacy default (09:00 UTC). Otherwise
+  // the hourly cron fires only when its UTC hour matches this value.
+  const [runAtHour, setRunAtHour] = useState<number | null>(
+    typeof initial?.run_at_hour === "number" ? initial.run_at_hour : null,
+  );
 
   const submit = () => {
     if (!name.trim()) return;
@@ -467,6 +511,7 @@ function ChannelForm({
       language,
       voice: voice || null,
       youtube_account_id: youtubeAccountId || null,
+      run_at_hour: runAtHour,
     });
   };
 
@@ -530,19 +575,42 @@ function ChannelForm({
         </div>
       </div>
 
-      <div>
-        <label className="label">
-          Videos per day: <span className="text-accent font-mono">{dailyCount}</span>
-          {dailyCount === 0 && <span className="text-amber-300 ml-2">(paused — never publishes)</span>}
-        </label>
-        <input
-          type="range" min={0} max={10} step={1}
-          value={dailyCount}
-          onChange={(e) => setDailyCount(parseInt(e.target.value, 10))}
-          className="w-full accent-accent"
-        />
-        <div className="flex justify-between text-[10px] text-neutral-500 mt-0.5">
-          <span>0 (off)</span><span>5</span><span>10</span>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div>
+          <label className="label">
+            Videos per day: <span className="text-accent font-mono">{dailyCount}</span>
+            {dailyCount === 0 && <span className="text-amber-300 ml-2">(paused — never publishes)</span>}
+          </label>
+          <input
+            type="range" min={0} max={10} step={1}
+            value={dailyCount}
+            onChange={(e) => setDailyCount(parseInt(e.target.value, 10))}
+            className="w-full accent-accent"
+          />
+          <div className="flex justify-between text-[10px] text-neutral-500 mt-0.5">
+            <span>0 (off)</span><span>5</span><span>10</span>
+          </div>
+        </div>
+        <div>
+          <label className="label">Publish time (UTC hour)</label>
+          <select
+            className="select"
+            value={runAtHour == null ? "" : String(runAtHour)}
+            onChange={(e) => {
+              const v = e.target.value;
+              setRunAtHour(v === "" ? null : Math.max(0, Math.min(23, parseInt(v, 10))));
+            }}
+          >
+            <option value="">Default (09:00 UTC)</option>
+            {Array.from({ length: 24 }, (_, h) => (
+              <option key={h} value={h}>{String(h).padStart(2, "0")}:00 UTC</option>
+            ))}
+          </select>
+          <div className="text-[10px] text-neutral-500 mt-0.5">
+            The daily cron fires each hour; only channels whose hour matches queue jobs. Your local time now:{" "}
+            <span className="text-neutral-300">{new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+            {" · "}UTC now: <span className="text-neutral-300">{String(new Date().getUTCHours()).padStart(2, "0")}:00</span>
+          </div>
         </div>
       </div>
 

@@ -29,6 +29,7 @@ type ChannelDoc = {
   name: string;
   niche: string;
   daily_count: number;
+  run_at_hour?: number | null;
   enabled: boolean;
   description?: string;
   web_research?: boolean | null;
@@ -105,6 +106,14 @@ export async function POST(req: NextRequest) {
       youtube_account_id: (typeof body.youtube_account_id === "string" && body.youtube_account_id.trim())
         ? body.youtube_account_id.trim().slice(0, 80)
         : null,
+      // Optional UTC hour (0-23) at which the daily schedule fires for
+      // this channel. null → the legacy default (09:00 UTC). Combined
+      // with an hourly cron the operator gets per-channel timing.
+      run_at_hour:
+        (typeof body.run_at_hour === "number" && Number.isFinite(body.run_at_hour) &&
+         body.run_at_hour >= 0 && body.run_at_hour <= 23)
+          ? Math.floor(body.run_at_hour)
+          : null,
       updated_at: FieldValue.serverTimestamp(),
       ...(existing.exists ? {} : { created_at: FieldValue.serverTimestamp() }),
     };
