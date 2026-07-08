@@ -679,6 +679,24 @@ def _local_sdxl_load_locked():
             "(This is normal for the Oracle side-worker + HF CPU Space.)"
         )
         return None
+    # Preflight: modern PyTorch wheels dropped sm_5x + sm_6x kernels,
+    # so a P100 (sm_6.0) or older Pascal will `.to("cuda")` and throw
+    # cudaErrorNoKernelImageForDevice on the first tensor op. Skip
+    # early so we don't waste time downloading a 7 GB SDXL model just
+    # to fail on `.to("cuda")` at the end.
+    try:
+        _cap = torch.cuda.get_device_capability(0)
+        if _cap[0] < 7:
+            _LOCAL_SDXL_BROKEN = True
+            _LOCAL_SDXL_BROKEN_REASON = (
+                f"GPU compute capability sm_{_cap[0]}.{_cap[1]} < sm_7.0 — "
+                f"modern PyTorch wheels don't ship kernels for this GPU. "
+                f"Use pollinations/horde/huggingface providers instead."
+            )
+            log.info(f"local_sdxl skipped: {_LOCAL_SDXL_BROKEN_REASON}")
+            return None
+    except Exception:
+        pass   # fall through if the probe itself fails
     try:
         from diffusers import AutoPipelineForText2Image
     except ImportError as e:

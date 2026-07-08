@@ -214,6 +214,24 @@ def kokoro_broken_reason() -> str | None:
     return _KOKORO_BROKEN_REASON
 
 
+def _gpu_supported_by_modern_torch() -> bool:
+    """Return False if the CUDA device has compute-capability < 7.0
+    (Pascal / Kepler / Maxwell). Modern PyTorch wheels dropped sm_5x
+    and sm_6x kernels, so a `.to("cuda")` on such devices raises
+    'no kernel image is available for execution on the device' at the
+    first tensor op. Kaggle's free P100 is sm_6.0 and hits this every
+    single job. Detect + skip early instead of showing a five-frame
+    traceback on every render."""
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            return False
+        cap = torch.cuda.get_device_capability(0)
+        return cap[0] >= 7
+    except Exception:
+        return False
+
+
 def generate_with_kokoro(text, channel_type, output_path, language=None):
     """
     Generate voiceover using Kokoro-82M (local, higher quality).
@@ -230,6 +248,25 @@ def generate_with_kokoro(text, channel_type, output_path, language=None):
     if lang != "en":
         log.info(f"Kokoro skipped for language={lang} (English-only model); using edge-tts.")
         return None
+    # Preflight: if there's a CUDA device but its compute capability is
+    # below 7.0 (Kaggle P100 = sm_6.0), Kokoro will .to('cuda') and
+    # blow up with cudaErrorNoKernelImageForDevice. Skip immediately —
+    # edge-tts still ships this run.
+    try:
+        import torch as _torch
+        if _torch.cuda.is_available():
+            _cap = _torch.cuda.get_device_capability(0)
+            if _cap[0] < 7:
+                _KOKORO_BROKEN = True
+                _KOKORO_BROKEN_REASON = (
+                    f"GPU compute capability sm_{_cap[0]}.{_cap[1]} is below "
+                    f"sm_7.0 — modern PyTorch wheels don't ship kernels for it "
+                    f"(this Kaggle GPU can't run Kokoro; edge-tts used instead)"
+                )
+                log.info(f"Kokoro skipped: {_KOKORO_BROKEN_REASON}")
+                return None
+    except Exception:
+        pass   # if we can't even probe torch, fall through to the normal try/except
     try:
         import time
         from kokoro import KPipeline
@@ -283,17 +320,18 @@ def generate_with_kokoro(text, channel_type, output_path, language=None):
             f"pip install kokoro soundfile"
         )
     except Exception as e:
-        # DLL load failures, missing model files, GPU OOM, etc. — all
-        # unrecoverable for this process. Mark broken so we don't try
-        # again. UNLIKE the old code, we log the FULL traceback the
-        # first time so we can actually diagnose what broke.
+        # DLL load failures, missing model files, GPU OOM, sm_60 kernels
+        # missing, etc. — all unrecoverable for this process. Mark broken
+        # so we don't try again. First failure logs a one-line reason;
+        # full traceback goes to DEBUG so it's still available via a
+        # log-level bump but doesn't scare users in the normal stream.
         _KOKORO_BROKEN = True
-        _KOKORO_BROKEN_REASON = f"{type(e).__name__}: {e}"
+        _KOKORO_BROKEN_REASON = f"{type(e).__name__}: {str(e)[:200]}"
         log.warning(
-            "Kokoro disabled for this process — full traceback follows so "
-            "we can diagnose the failure:\n%s",
-            traceback.format_exc(),
+            f"Kokoro disabled for this process ({_KOKORO_BROKEN_REASON}); "
+            f"edge-tts will handle the rest of this run."
         )
+        log.debug("Kokoro failure traceback:\n%s", traceback.format_exc())
     return None
 
 
