@@ -469,25 +469,30 @@ function Toggle({ checked, onChange, label, hint }:
 // plain-English "avoid: …" clause.
 const IMAGE_GEN_PROVIDERS: { key: string; label: string; hint: string }[] = [
   {
-    key: "huggingface",
-    label: "HuggingFace SDXL",
-    hint: "Best quality when HF_TOKEN is set. Native negative-prompt support.",
-  },
-  {
     key: "local_sdxl",
     label: "Local SDXL (worker GPU)",
-    hint: "Fast (~5-8 s/img), free, no rate limits. Runs on Colab/Kaggle T4. CPU workers skip.",
+    hint: "Highest quality once loaded. Needs GPU sm_7.0+ (T4/A100 OK, P100 fails). First-boot download ~10-15 min; cached for the rest of the Kaggle session.",
   },
   {
     key: "pollinations",
     label: "Pollinations Flux",
-    hint: "Free, no key. Lowest quality — good last-resort fallback.",
+    hint: "Cloud API, free, no key. Fast (~10-30s/img). Occasionally rate-limits under load.",
+  },
+  {
+    key: "horde",
+    label: "Stable Horde SDXL",
+    hint: "Community-run SDXL via volunteers. Free, no key. Queue-dependent — 30-90s per shot depending on horde load.",
+  },
+  {
+    key: "huggingface",
+    label: "HuggingFace SDXL",
+    hint: "Cloud SDXL via HuggingFace Inference API. Needs HF_TOKEN. Native negative-prompt support.",
   },
 ];
 
 const IMAGE_GEN_DEFAULT: NonNullable<Settings["image_gen"]> = {
-  priority: ["huggingface", "local_sdxl", "pollinations"],
-  enabled: { huggingface: true, local_sdxl: true, pollinations: true } as Record<string, boolean>,
+  priority: ["local_sdxl", "pollinations", "horde", "huggingface"],
+  enabled: { local_sdxl: true, pollinations: true, horde: true, huggingface: true } as Record<string, boolean>,
   local_sdxl_model: "stabilityai/sdxl-turbo",
   shot_parallelism: 3,
   negative_prompt:
@@ -501,9 +506,12 @@ function ImageGenCard({
   setImageGen: (v: Settings["image_gen"]) => void;
 }) {
   const cfg = imageGen || IMAGE_GEN_DEFAULT;
-  const priority = cfg.priority && cfg.priority.length === 3
-    ? cfg.priority
-    : IMAGE_GEN_DEFAULT.priority;
+  // Merge stored priority with the full provider set — appends any
+  // provider that's missing from the stored list at the end (e.g. we
+  // added `horde` after the first save so old configs are missing it).
+  const allKeys = IMAGE_GEN_PROVIDERS.map((p) => p.key);
+  const stored = Array.isArray(cfg.priority) ? cfg.priority.filter((k) => allKeys.includes(k)) : [];
+  const priority = [...stored, ...allKeys.filter((k) => !stored.includes(k))];
 
   // When the user picks a provider at slot N, swap it with whichever
   // slot currently holds that provider. Guarantees the priority list
@@ -524,8 +532,13 @@ function ImageGenCard({
       <div>
         <div className="font-medium">AI image generation — provider priority</div>
         <div className="text-xs text-neutral-500 mt-0.5">
-          Backend walks left-to-right; a disabled or key-less provider is skipped.
-          Each provider gets its own <code>AI attempts per shot</code> budget.
+          Backend walks top-down; a disabled or key-less provider is skipped.
+          Change the slot dropdown to reorder — the picked provider swaps with
+          whichever slot currently holds it. Toggle off = never try that provider.
+        </div>
+        <div className="text-[11px] text-amber-300 mt-1">
+          Changes apply on the next fresh worker boot. A worker rendering right now
+          keeps using whatever priority was in effect when its job started.
         </div>
       </div>
 

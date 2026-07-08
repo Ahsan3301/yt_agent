@@ -738,12 +738,19 @@ def _local_sdxl_load_locked():
         # actually publish an fp16-suffixed weights file. sdxl-turbo does;
         # some community forks do not. Fall back to variant=None on a
         # load failure so a swapped-in model still boots.
+        # low_cpu_mem_usage=False loads the whole state_dict in one shot
+        # instead of materializing each of ~517 layer params one at a time
+        # (diffusers default). Skips a ~8 min per-layer loop on SDXL first
+        # load — the biggest single win when local_sdxl is primary. Costs
+        # ~3× peak CPU RAM during load; Kaggle T4×2 has 31 GB free so
+        # we're well under.
         try:
             pipe = AutoPipelineForText2Image.from_pretrained(
                 model_id,
                 torch_dtype=dtype,
                 variant="fp16" if not use_bf16 else None,
                 use_safetensors=True,
+                low_cpu_mem_usage=False,
             )
         except Exception as e_variant:
             log.warning(
@@ -752,6 +759,7 @@ def _local_sdxl_load_locked():
             )
             pipe = AutoPipelineForText2Image.from_pretrained(
                 model_id, torch_dtype=dtype, use_safetensors=True,
+                low_cpu_mem_usage=False,
             )
         pipe = pipe.to("cuda")
         # Memory-thrift knobs — matters on T4-16GB.
