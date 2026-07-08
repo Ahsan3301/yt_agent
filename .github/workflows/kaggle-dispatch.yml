@@ -74,7 +74,13 @@ jobs:
 
       - name: Install Kaggle CLI
         if: github.event_name == 'workflow_dispatch' || steps.probe.outputs.needs_worker == 'true'
-        run: pip install --quiet 'kaggle==1.6.17'
+        # Pinned to 2.2.3+ — earlier versions don't expose the
+        # --accelerator flag, which means every workflow-triggered
+        # wake silently reset the notebook's accelerator to P100 (Kaggle
+        # default). P100 is sm_6.0 which modern PyTorch dropped kernels
+        # for → Kokoro, editor_gpu, and local_sdxl all fail with
+        # cudaErrorNoKernelImageForDevice. Not fun.
+        run: pip install --quiet 'kaggle>=2.2.3'
 
       - name: Push Kaggle worker kernel
         if: github.event_name == 'workflow_dispatch' || steps.probe.outputs.needs_worker == 'true'
@@ -87,8 +93,9 @@ jobs:
             echo "::error::KAGGLE_USERNAME and KAGGLE_KEY repo secrets are required (see kaggle/README.md)"
             exit 1
           fi
-          # The kernel-metadata.json lives next to the notebook. `kaggle
-          # kernels push` reads both. The kernel is marked accelerator=gpu;
-          # Kaggle places it on a T4 or P100 depending on queue.
-          kaggle kernels push -p kaggle/
-          echo "::notice::Kaggle worker dispatched. Watch progress at https://www.kaggle.com/$KAGGLE_USERNAME/code"
+          # --accelerator "nvidiaTeslaT4x2" is CRITICAL. Without it the CLI
+          # ignores the metadata.json accelerator field and Kaggle defaults
+          # to P100. T4 x2 gives sm_7.5 (all modern torch kernels available)
+          # + 2x16 GB VRAM.
+          kaggle kernels push -p kaggle/ --accelerator "nvidiaTeslaT4x2"
+          echo "::notice::Kaggle worker dispatched on T4 x2. Watch progress at https://www.kaggle.com/$KAGGLE_USERNAME/code"
