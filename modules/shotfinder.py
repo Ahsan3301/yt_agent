@@ -799,13 +799,32 @@ def _local_sdxl_load_locked(device_id: int):
         # generate below — see comment there for the "Half vs Float"
         # bug this prevents.
         torch.cuda.set_device(device_id)
+        # low_cpu_mem_usage=False is ~7× faster to load but needs ~3×
+        # peak CPU RAM (whole state_dict materialised in one shot). On
+        # Kaggle T4×2 with 31 GB RAM that's fine; on Colab T4×1 with
+        # only 12.7 GB RAM the kernel OOM-killed uvicorn during load
+        # (returncode=-9). Auto-detect: use the fast path only when
+        # total RAM ≥ 24 GB; drop to the diffusers default (True,
+        # per-layer materialise) on low-RAM hosts. ~2 min slower first
+        # load on Colab vs OOM crash.
+        try:
+            import psutil
+            _total_gb = psutil.virtual_memory().total / (1024**3)
+        except Exception:
+            _total_gb = 32.0  # assume roomy on probe failure
+        _low_cpu = _total_gb < 24.0
+        if _low_cpu:
+            log.info(
+                f"local_sdxl: {_total_gb:.1f} GB RAM detected — using "
+                f"low_cpu_mem_usage=True (slower load, avoids OOM on Colab)"
+            )
         try:
             pipe = AutoPipelineForText2Image.from_pretrained(
                 model_id,
                 torch_dtype=dtype,
                 variant="fp16" if not use_bf16 else None,
                 use_safetensors=True,
-                low_cpu_mem_usage=False,
+                low_cpu_mem_usage=_low_cpu,
             )
         except Exception as e_variant:
             log.warning(
@@ -814,7 +833,7 @@ def _local_sdxl_load_locked(device_id: int):
             )
             pipe = AutoPipelineForText2Image.from_pretrained(
                 model_id, torch_dtype=dtype, use_safetensors=True,
-                low_cpu_mem_usage=False,
+                low_cpu_mem_usage=_low_cpu,
             )
         pipe = pipe.to(f"cuda:{device_id}")
         # Memory-thrift knobs — matters on T4-16GB.
