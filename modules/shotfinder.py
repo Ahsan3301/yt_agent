@@ -730,9 +730,16 @@ def _local_sdxl_load_locked():
     os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "360")
     try:
         # bfloat16 gives quality parity with fp16 on Ampere+/Hopper and
-        # avoids some VAE overflow artifacts. Fall back to fp16 on Turing
-        # (T4) which reports False for is_bf16_supported.
-        use_bf16 = torch.cuda.is_bf16_supported()
+        # avoids some VAE overflow artifacts. On Turing (T4, sm_7.5) and
+        # older, bf16 is only available via slow software emulation. But
+        # newer PyTorch's is_bf16_supported() counts emulation as
+        # supported → returns True on T4 → pipeline runs on emulated bf16
+        # which is slow AND less numerically stable than native fp16
+        # (contributed to the SDXL scheduler off-by-one indexing bug we
+        # were hitting on T4). Gate on compute capability instead:
+        # sm_8.0 = Ampere, first arch with hardware bf16.
+        cap = torch.cuda.get_device_capability(0)
+        use_bf16 = cap[0] >= 8
         dtype = torch.bfloat16 if use_bf16 else torch.float16
         # The `variant="fp16"` load path only exists for models that
         # actually publish an fp16-suffixed weights file. sdxl-turbo does;
@@ -812,7 +819,17 @@ def _local_sdxl_generate(prompt, output_dir, trial, negative_prompt=""):
             "generator": gen,
         }
         if is_turbo:
-            kwargs.update({"num_inference_steps": 4, "guidance_scale": 0.0})
+            # 5 (not 4) — SDXL-turbo's default EulerDiscreteScheduler
+            # creates a sigmas array of length num_inference_steps+1. At
+            # steps=4 the array is length 5; one code path inside
+            # diffusers' turbo prompt-encoder branch tries to access
+            # sigmas[num_inference_steps]=sigmas[5] and blows up with
+            # "index 5 is out of bounds for dimension 0 with size 5" on
+            # ~half the generation attempts. Bumping to 5 makes the
+            # array length 6 → index 5 is valid → the bug can't fire.
+            # +25% inference time (~0.5-1 sec / image on T4) is trivial
+            # vs losing an entire retry to the crash.
+            kwargs.update({"num_inference_steps": 5, "guidance_scale": 0.0})
         else:
             kwargs.update({"num_inference_steps": 25, "guidance_scale": 6.5})
         image = pipe(**kwargs).images[0]

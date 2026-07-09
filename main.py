@@ -388,7 +388,7 @@ def run_pipeline(
                                  f"query='{_q[:80]}...'")
                         bundle = _ra.research_topic(
                             topic=_q,
-                            max_steps=6,
+                            max_steps=10,   # bumped from 6 — the model spends 3-4 steps exploring before starting to converge; 6 was too tight under NIM 429 throttling and caused "exhausted step budget" with no final JSON. overall_timeout_sec=180 still bounds runaway agents.
                             channel_cfg=channel_cfg,
                             overall_timeout_sec=180,
                         )
@@ -455,7 +455,7 @@ def run_pipeline(
                                  f"| query='{_research_query[:80]}...'")
                         research_bundle = _ra.research_topic(
                             topic=_research_query,
-                            max_steps=6,
+                            max_steps=10,   # bumped from 6 — the model spends 3-4 steps exploring before starting to converge; 6 was too tight under NIM 429 throttling and caused "exhausted step budget" with no final JSON. overall_timeout_sec=180 still bounds runaway agents.
                             channel_cfg=channel_cfg,
                             overall_timeout_sec=180,
                         )
