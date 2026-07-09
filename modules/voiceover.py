@@ -348,12 +348,22 @@ def generate_with_kokoro(text, channel_type, output_path, language=None):
                     _obj = getattr(pipeline, _attr, None)
                     if _obj is not None and hasattr(_obj, "to"):
                         try:
-                            _obj.to(_dev_str)
+                            # .float() after .to() forces the model to
+                            # fp32. Kokoro creates its input tensors in
+                            # torch's default dtype (fp32), so a Half
+                            # model mismatches on the first op with
+                            # "Input and parameter tensors are not the
+                            # same dtype, found input tensor with Float
+                            # and parameter tensor with Half".
+                            # Confirmed live on 2026-07-09. The 82M param
+                            # model in fp32 is ~330 MB → fp32 makes it
+                            # ~660 MB. Trivial on a 16 GB T4.
+                            _obj.to(_dev_str).float()
                             _moved_any = True
                         except Exception:
                             pass
                 if _moved_any:
-                    log.info(f"kokoro pinned to {_dev_str}")
+                    log.info(f"kokoro pinned to {_dev_str} (fp32)")
         except Exception as _kex:
             log.debug(f"kokoro device pin skipped: {_kex}")
         audio_chunks = []
