@@ -82,7 +82,10 @@ def write_seo_metadata(
             log.warning(f"seo_writer attempt {attempt}: invalid JSON: {e}")
             problems = [f"Your previous reply was not valid JSON ({e}). Reply again with ONLY the JSON object."]
             continue
-        problems = _validate(parsed, viral)
+        problems = _validate(
+            parsed, viral,
+            expected_language=(channel_cfg.get("language") or "en"),
+        )
         if not problems:
             parsed = _normalise(parsed, viral, script)
             parsed["_source"] = "nim"
@@ -129,10 +132,36 @@ def _call_llm(narration, script, channel_cfg, viral, research_data, borrowed_tit
         return None
 
 
+_LANG_NAMES = {
+    "en":"English","de":"German","fr":"French","es":"Spanish",
+    "it":"Italian","pt":"Portuguese","ru":"Russian","tr":"Turkish",
+    "nl":"Dutch","pl":"Polish","ar":"Arabic","ur":"Urdu","hi":"Hindi",
+    "bn":"Bengali","ja":"Japanese","ko":"Korean","zh":"Chinese",
+    "vi":"Vietnamese","th":"Thai","id":"Indonesian",
+}
+
+
 def _build_prompt(narration, script, channel_cfg, viral, research_data, borrowed_titles, problems):
     niche = channel_cfg.get("display_name") or channel_cfg.get("name") or "content"
     tone = channel_cfg.get("tone") or "engaging"
     language = channel_cfg.get("language") or "en"
+    language_full = _LANG_NAMES.get(language, language)
+    # If non-English, prepend a loud language directive. Minimax + Llama
+    # otherwise default to the majority-language of the prompt (English)
+    # and silently return an English title on a German script. Confirmed
+    # live on 2026-07-09 with a de finance render.
+    if language != "en":
+        lang_block = (
+            f"CRITICAL LANGUAGE REQUIREMENT\n"
+            f"Write youtube_title, description, and pinned_comment "
+            f"in {language_full} ({language}). The narration below is "
+            f"in {language_full}. Do NOT translate to English. Do NOT "
+            f"reply in English. A {language_full} video with an English "
+            f"title is a bug that gets us reported for spam.\n"
+            f"`tags` and `hashtags` MAY stay in English for YouTube SEO reach.\n\n"
+        )
+    else:
+        lang_block = ""
 
     hook_patterns = viral.get("hook_patterns") or []
     banned_openers = viral.get("banned_openers") or list(_DEFAULT_BANNED_OPENERS)
@@ -158,9 +187,9 @@ def _build_prompt(narration, script, channel_cfg, viral, research_data, borrowed
     if problems:
         problem_block = "\nFIX these problems from your previous attempt:\n" + "\n".join(f"- {p}" for p in problems)
 
-    return f"""Niche: {niche}
+    return f"""{lang_block}Niche: {niche}
 Tone: {tone}
-Language: {language}
+Language: {language_full} ({language}) — youtube_title/description/pinned_comment MUST be in this language
 YouTube category id (must be returned as an integer): {cat_id}
 
 VIRAL HOOK PATTERNS for this niche (title MUST open with one of these, filling in the slots with SPECIFIC nouns from the narration below — NOT the literal placeholder text):
@@ -214,7 +243,31 @@ def _strip_fences(text: str) -> str:
     return m.group(1).strip() if m else t
 
 
-def _validate(data: dict, viral: dict) -> list[str]:
+# Short English stopwords used to heuristically detect an English reply
+# on a non-English render. Kept short so we don't false-positive on a
+# German title that happens to contain "the" (uncommon) — we require
+# THREE hits within the title+description head window to flag.
+_EN_STOPWORDS = {
+    "the","is","and","of","to","for","you","we","it","on","in","at",
+    "how","why","what","when","this","that","with","from","by","was",
+    "were","are","be","been","your","our","their","its","which","who",
+    "will","can","could","should","would","if","but","or","not","no",
+    "yes","did","does","do","have","has","had","made","make","just",
+    "than","then","so","because","only","also","more","most","some",
+    "any","all","one","two","three","four","five","after","before",
+}
+
+
+def _looks_english(text: str) -> bool:
+    """Heuristic: >=3 English stopwords in the first ~30 words?"""
+    if not text:
+        return False
+    words = [w.strip(".,;:!?()[]\"'").lower() for w in text.split()[:30]]
+    hits = sum(1 for w in words if w in _EN_STOPWORDS)
+    return hits >= 3
+
+
+def _validate(data: dict, viral: dict, expected_language: str = "en") -> list[str]:
     problems = []
     if not isinstance(data, dict):
         return ["response is not a JSON object"]
@@ -235,6 +288,22 @@ def _validate(data: dict, viral: dict) -> list[str]:
     desc = data.get("description")
     if not isinstance(desc, str) or len(desc.strip()) < 60:
         problems.append("description missing or too short (need >=60 chars)")
+
+    # Language leak check: if we asked for non-English metadata and the
+    # title OR the first ~30 words of description look English, force a
+    # retry with an explicit problem string. Confirmed live: minimax-m3
+    # ignored a single-line "Language: de" directive and returned an
+    # English title on a German finance render.
+    if expected_language and expected_language != "en":
+        lang_full = _LANG_NAMES.get(expected_language, expected_language)
+        combined = f"{title or ''} {(desc or '')[:200]}"
+        if _looks_english(combined):
+            problems.append(
+                f"youtube_title/description came back in ENGLISH; must be in "
+                f"{lang_full} ({expected_language}). Rewrite title, description, "
+                f"and pinned_comment entirely in {lang_full}. Keep tags/hashtags "
+                f"as they are."
+            )
 
     tags = data.get("tags")
     if not isinstance(tags, list):

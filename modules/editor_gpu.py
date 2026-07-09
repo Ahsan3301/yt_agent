@@ -238,6 +238,9 @@ def render_video_segment_gpu(
     dev = _device(device_id)
     if dev.type != "cuda":
         raise RuntimeError("CUDA not available")
+    # Pin this thread's default CUDA device so decord + torch default
+    # allocations don't drift back to cuda:0.
+    torch.cuda.set_device(device_id)
 
     # Decord can decode to GPU via VideoReader(ctx=decord.gpu(N)). On
     # current decord (0.6.0) the GPU ctx requires the build to have been
@@ -329,6 +332,9 @@ def render_image_segment_gpu(
     dev = _device(device_id)
     if dev.type != "cuda":
         raise RuntimeError("CUDA not available")
+    # Pin this thread's default CUDA device so default allocations
+    # inside grid_sample / Ken Burns math land on this GPU, not cuda:0.
+    torch.cuda.set_device(device_id)
 
     # Load + pre-scale 2× (same headroom as ffmpeg path's pre filter).
     img = Image.open(src_path).convert("RGB")

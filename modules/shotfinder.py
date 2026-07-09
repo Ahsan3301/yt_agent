@@ -793,6 +793,12 @@ def _local_sdxl_load_locked(device_id: int):
         # load — the biggest single win when local_sdxl is primary. Costs
         # ~3× peak CPU RAM during load; Kaggle T4×2 has 31 GB free so
         # we're well under.
+        # Pin the LOAD thread's default CUDA device to device_id so any
+        # default-device allocations diffusers makes during .to() land
+        # on THIS card, not cuda:0. Matches the pattern in _local_sdxl_
+        # generate below — see comment there for the "Half vs Float"
+        # bug this prevents.
+        torch.cuda.set_device(device_id)
         try:
             pipe = AutoPipelineForText2Image.from_pretrained(
                 model_id,
@@ -851,6 +857,16 @@ def _local_sdxl_generate(prompt, output_dir, trial, negative_prompt=""):
         return None, seed
     try:
         import torch
+        # Pin THIS thread's default CUDA device to device_id for the
+        # duration of the generate call. Diffusers' internal allocations
+        # (torch.zeros/ones/tensor without device=) go to the CURRENT
+        # default device — otherwise they land on cuda:0 and collide
+        # with the fp16 pipe on cuda:1, throwing "expected scalar type
+        # Half but found Float" on every attempt. Confirmed live: with-
+        # out this, cuda:0 worked but cuda:1 failed every retry. Each
+        # ThreadPoolExecutor worker has its own current_device, so
+        # per-thread set_device is safe.
+        torch.cuda.set_device(device_id)
         gen = torch.Generator(device=f"cuda:{device_id}").manual_seed(seed)
         # SDXL-Turbo is calibrated for very few steps + guidance 0. If the
         # user swapped to a full SDXL model, guidance 5-7 + 25 steps is a

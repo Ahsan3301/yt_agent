@@ -428,7 +428,15 @@ def generate_voiceover(narration_text, channel_type, output_dir, language=None, 
         result = generate_with_kokoro(narration_text, channel_type, output_path, language=language)
         if result:
             return result
-        log.warning("Kokoro failed, falling back to edge-tts")
+        # Kokoro is English-only — for non-English renders it returns
+        # None by design, not as a failure. Log it as an INFO switch
+        # rather than a scary "Kokoro failed" WARN so the log doesn't
+        # imply a bug on every de/fr/es/etc. render.
+        _lang = (language or "en").lower()[:2]
+        if _lang != "en":
+            log.info(f"Kokoro is English-only; using edge-tts for language={_lang}")
+        else:
+            log.warning("Kokoro failed, falling back to edge-tts")
 
     # Default / fallback: edge-tts
     result = generate_with_edge_tts(
