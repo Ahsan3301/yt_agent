@@ -93,6 +93,31 @@ jobs:
             echo "::error::KAGGLE_USERNAME and KAGGLE_KEY repo secrets are required (see kaggle/README.md)"
             exit 1
           fi
+          # DEATH-SPIRAL GUARD. Kaggle notebook boot takes 5-8 min.
+          # A `kaggle kernels push` CANCELS the currently-running run.
+          # This cron fires every 5 min. Without this check: boot starts
+          # at T+0, cron fires at T+5 (dashboard still shows no worker
+          # because heartbeat hasn't fired yet → needs_worker=true → push
+          # → cancel current → new boot starts → repeat forever). The
+          # user reports "wake never works" while GH Actions shows
+          # successful dispatches every 5 min.
+          #
+          # Check current kernel status. If it's RUNNING or QUEUED, a
+          # boot is already in flight — skip this push. Manual
+          # workflow_dispatch (from the dashboard's Wake button) still
+          # respects this to avoid double-pushes; user can click Stop
+          # in Kaggle UI + re-wake to force a fresh cycle.
+          STATUS=$(kaggle kernels status "$KAGGLE_USERNAME/yt-agent-worker" 2>/dev/null | grep -oE 'KernelWorkerStatus\.[A-Z_]+' | cut -d. -f2 || echo "UNKNOWN")
+          echo "current kernel status: $STATUS"
+          case "$STATUS" in
+            RUNNING|QUEUED|CANCEL_REQUESTED)
+              echo "::notice::Kernel is $STATUS — boot in progress. Skipping push to avoid cancelling in-flight boot. Cron will re-check in 5 min; manual dispatch may need to wait for the current boot to finish or fail."
+              exit 0
+              ;;
+            *)
+              echo "kernel status $STATUS — safe to push a fresh version."
+              ;;
+          esac
           # --accelerator "NvidiaTeslaT4" is CRITICAL. Without it the CLI
           # ignores the metadata.json accelerator field and Kaggle defaults
           # to P100. T4 x2 gives sm_7.5 (all modern torch kernels available)
