@@ -25,6 +25,14 @@ google-api-python-client>=2.100
 google-auth-httplib2>=0.1.1
 google-auth-oauthlib>=1.1
 
+# pyOpenSSL >= 25 uses the new cryptography API; pinning it here
+# prevents an "AttributeError: module 'lib' has no attribute 'GEN_EMAIL'"
+# crash that fires when google-auth transitively pulls an older
+# pyOpenSSL against a newer cryptography (which removed GEN_EMAIL from
+# the C bindings). Confirmed live on 2026-07-09.
+pyOpenSSL>=25.0.0
+cryptography>=45.0.0
+
 # Scheduling (used by main.py --schedule mode)
 schedule>=1.2
 
