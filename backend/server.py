@@ -101,50 +101,54 @@ def _on_startup():
         logbuf.attach()
     except Exception as e:
         log.warning(f"logbuf.attach failed: {e}")
-    # Pull the shared API keys from Hostinger BEFORE anything else so
-    # downstream modules see the right env vars when they're imported
-    # lazily on first request.
-    try:
-        keys_sync.pull_into_env()
-        # storage.py captured R2_* / SFTP_* env vars at import time. The
-        # pull above may have just populated them from Firestore — refresh
-        # the storage module's globals so r2_configured() returns True.
-        # This matters most on Kaggle where R2 lives in Firestore.
-        try:
-            storage.reload_env()
-        except Exception as e:
-            log.warning(f"storage.reload_env failed: {e}")
-    except Exception as e:
-        log.warning(f"keys_sync.pull_into_env failed: {e}")
-    # Hydrate settings.json from R2/SFTP so a fresh container boots
-    # with the user's last saved channel/voice/video tuning instead of
-    # the defaults. Best-effort; falls back to defaults if remote empty.
-    try:
-        from backend import settings_sync
-        hydrated = settings_sync.pull_into_local()
-        if hydrated:
-            # Refresh the cached module-level constants in modules.config
-            # so anything reading CHANNEL_TYPE / TTS_ENGINE / etc. sees
-            # the user's saved values instead of the on-disk defaults
-            # that were read at import time.
-            from modules import config as _config_mod
-            try:
-                _config_mod.reload()
-            except Exception as e:
-                log.warning(f"config.reload failed: {e}")
-    except Exception as e:
-        log.warning(f"settings_sync.pull_into_local failed: {e}")
-    # Heartbeat: publish this backend's URL to the Hostinger registry.
+
+    # BOOT-LATENCY WIN: heartbeat FIRST, keys+settings hydrate in the
+    # background. Previous order ran two blocking HTTPS round-trips
+    # (keys_sync + settings_sync) BEFORE registry.start, delaying the
+    # first heartbeat by 5-10s and — worse — the dashboard's Monitor
+    # page couldn't see the worker until BOTH finished. Now the
+    # backends row appears within milliseconds of uvicorn opening the
+    # port; the two syncs run in the background and are almost always
+    # done well before the first job claim (~2-5s each). No render
+    # path reads keys/settings before the first job, so the race is safe.
     try:
         registry.start()
     except Exception as e:
         log.warning(f"registry.start failed: {e}")
-    # Idle watchdog: auto-terminate the session after N minutes of quiet
-    # so we don't burn the Colab free-tier compute budget overnight.
     try:
         idle_watchdog.start()
     except Exception as e:
         log.warning(f"idle_watchdog.start failed: {e}")
+
+    def _bg_hydrate():
+        # Pull the shared API keys from Hostinger. Populates env for
+        # downstream modules imported lazily on first request. Blocking
+        # HTTPS round-trip; runs off the request path.
+        try:
+            keys_sync.pull_into_env()
+            try:
+                storage.reload_env()
+            except Exception as e:
+                log.warning(f"storage.reload_env failed: {e}")
+        except Exception as e:
+            log.warning(f"keys_sync.pull_into_env failed: {e}")
+        # Hydrate settings.json from R2/SFTP so a fresh container boots
+        # with the user's last saved channel/voice/video tuning instead
+        # of the defaults.
+        try:
+            from backend import settings_sync
+            hydrated = settings_sync.pull_into_local()
+            if hydrated:
+                from modules import config as _config_mod
+                try:
+                    _config_mod.reload()
+                except Exception as e:
+                    log.warning(f"config.reload failed: {e}")
+        except Exception as e:
+            log.warning(f"settings_sync.pull_into_local failed: {e}")
+
+    import threading as _bg_th
+    _bg_th.Thread(target=_bg_hydrate, name="bg-hydrate", daemon=True).start()
 
 
 @app.on_event("shutdown")
