@@ -540,6 +540,33 @@ def run_pipeline(
         audio_dir = os.path.join(work_dir, "audio")
         # Resolve effective language for voiceover (matches scriptwriter).
         eff_language = ((language or channel_cfg.get("language") or "en") or "en").lower()[:2]
+        # On T4x2, kick SDXL pre-warm on both GPUs in a background thread
+        # NOW so it races the ~30-60 sec Kokoro TTS call instead of the
+        # shot pool paying that cost serially at [4/6]. Joined right
+        # before fetch_shots so we don't start dispatching shots on a
+        # not-yet-warmed pipeline. Single-GPU path stays serial — no-op.
+        _sdxl_warm_thread = None
+        try:
+            from modules import gpu_topology as _gt_warm
+            if _gt_warm.supports_multi_gpu:
+                import threading as _th_warm
+                from modules.shotfinder import _local_sdxl_load as _sdxl_warm_load
+                _warm_devs = list(_gt_warm.sdxl_ready_devices)
+                def _warm_all():
+                    from concurrent.futures import ThreadPoolExecutor as _TPE
+                    try:
+                        with _TPE(max_workers=len(_warm_devs),
+                                  thread_name_prefix="sdxl-warm-bg") as _wex:
+                            list(_wex.map(_sdxl_warm_load, _warm_devs))
+                    except Exception as _we:
+                        log.debug(f"bg SDXL warm crashed: {_we}")
+                log.info(f"[3/6] bg SDXL warm on cuda:{_warm_devs} overlapping TTS")
+                _sdxl_warm_thread = _th_warm.Thread(
+                    target=_warm_all, name="sdxl-warm-overlap", daemon=True,
+                )
+                _sdxl_warm_thread.start()
+        except Exception as _wex:
+            log.debug(f"bg SDXL warm skipped: {_wex}")
         audio_path = _step(summary, "voiceover", lambda: generate_voiceover(
             script["narration"], channel_type, audio_dir, language=eff_language,
         ), run_id=run_id)
@@ -672,6 +699,13 @@ def run_pipeline(
                     except Exception as e:
                         log.warning(f"  manual image {idx+1} failed to download ({src_url}): {e}")
 
+            # Join the bg SDXL warm before dispatching shots. If it's
+            # already done this returns immediately; if it's still
+            # loading GPU 1's pipe we wait so the round-robin dispatch
+            # doesn't hit an un-warmed cuda:1 on shot 2.
+            if _sdxl_warm_thread is not None and _sdxl_warm_thread.is_alive():
+                log.info("waiting for bg SDXL warm to finish before shot dispatch...")
+                _sdxl_warm_thread.join(timeout=300)
             sources = _step(summary, "footage", lambda: fetch_shots(
                 shots, clips_dir, channel=channel_type,
                 preset_sources=preset_sources,

@@ -226,7 +226,15 @@ def _gpu_supported_by_modern_torch() -> bool:
         import torch
         if not torch.cuda.is_available():
             return False
-        cap = torch.cuda.get_device_capability(0)
+        # Kokoro pins to gpu_topology.kokoro_device (cuda:1 on T4x2,
+        # cuda:0 otherwise). Probe that specific device so a
+        # single-sm_6 sibling doesn't disable Kokoro on the sm_7+ card.
+        try:
+            from modules import gpu_topology as _gt
+            dev = _gt.kokoro_device if _gt.kokoro_device is not None else 0
+        except Exception:
+            dev = 0
+        cap = torch.cuda.get_device_capability(dev)
         return cap[0] >= 7
     except Exception:
         return False
@@ -255,13 +263,18 @@ def generate_with_kokoro(text, channel_type, output_path, language=None):
     try:
         import torch as _torch
         if _torch.cuda.is_available():
-            _cap = _torch.cuda.get_device_capability(0)
+            try:
+                from modules import gpu_topology as _gt
+                _kdev = _gt.kokoro_device if _gt.kokoro_device is not None else 0
+            except Exception:
+                _kdev = 0
+            _cap = _torch.cuda.get_device_capability(_kdev)
             if _cap[0] < 7:
                 _KOKORO_BROKEN = True
                 _KOKORO_BROKEN_REASON = (
-                    f"GPU compute capability sm_{_cap[0]}.{_cap[1]} is below "
-                    f"sm_7.0 — modern PyTorch wheels don't ship kernels for it "
-                    f"(this Kaggle GPU can't run Kokoro; edge-tts used instead)"
+                    f"cuda:{_kdev} compute capability sm_{_cap[0]}.{_cap[1]} is "
+                    f"below sm_7.0 — modern PyTorch wheels don't ship kernels "
+                    f"for it (edge-tts used instead)"
                 )
                 log.info(f"Kokoro skipped: {_KOKORO_BROKEN_REASON}")
                 return None
@@ -284,6 +297,31 @@ def generate_with_kokoro(text, channel_type, output_path, language=None):
         )
 
         pipeline = KPipeline(lang_code="a")  # 'a' = American English
+        # On T4x2, pin Kokoro to cuda:1 so it doesn't compete with SDXL
+        # warm on cuda:0 during step [3/6]. On T4x1 this is a no-op —
+        # kokoro_device resolves to cuda:0 (where it would have landed
+        # anyway). Kokoro doesn't expose a public device API, so walk
+        # the common internal attribute names; any missing attr is a
+        # safe no-op on a newer/older Kokoro release.
+        try:
+            from modules import gpu_topology as _gt
+            _kd = _gt.kokoro_device
+            if _kd is not None and _kd != 0:
+                _dev_str = f"cuda:{_kd}"
+                _moved_any = False
+                for _attr in ("model", "tts_model", "kmodel",
+                              "voice_encoder", "encoder"):
+                    _obj = getattr(pipeline, _attr, None)
+                    if _obj is not None and hasattr(_obj, "to"):
+                        try:
+                            _obj.to(_dev_str)
+                            _moved_any = True
+                        except Exception:
+                            pass
+                if _moved_any:
+                    log.info(f"kokoro pinned to {_dev_str}")
+        except Exception as _kex:
+            log.debug(f"kokoro device pin skipped: {_kex}")
         audio_chunks = []
         start = time.time()
         for i, (_, _, audio) in enumerate(pipeline(text, voice=voice_id, speed=speed), 1):

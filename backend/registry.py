@@ -40,16 +40,16 @@ log = logging.getLogger(__name__)
 HEARTBEAT_INTERVAL = int(os.getenv("REGISTRY_HEARTBEAT_SECONDS", "60") or 60)
 
 
-def _detect_gpu_name() -> str:
-    """Read the actual GPU model from nvidia-smi.
+def _detect_gpu_names() -> list[str]:
+    """Read every GPU model from nvidia-smi.
 
-    Kaggle hands out T4 or P100 randomly per session; Colab varies between
-    T4 and (rarely) A100. Hardcoding 'kaggle-t4-gpu' in env vars is wrong
-    half the time. This runs once at import so the registry doc reports
-    the real hardware.
+    Kaggle hands out T4 or P100 randomly per session (T4x2 gives two
+    lines); Colab varies between T4 and (rarely) A100. Hardcoding
+    'kaggle-t4-gpu' in env vars is wrong half the time. This runs once
+    at import so the registry doc reports the real hardware.
 
-    Returns the trimmed model string (e.g. 'Tesla P100-PCIE-16GB') or ""
-    if nvidia-smi isn't on PATH / no GPU is attached.
+    Returns the trimmed model strings (e.g. ['Tesla T4', 'Tesla T4'])
+    or [] if nvidia-smi isn't on PATH / no GPU is attached.
     """
     import subprocess
     try:
@@ -58,19 +58,39 @@ def _detect_gpu_name() -> str:
             capture_output=True, text=True, timeout=4,
         )
         if r.returncode != 0:
-            return ""
-        # Take the first GPU (Kaggle T4 x2 returns two lines).
-        first = (r.stdout or "").splitlines()[0].strip()
-        return first
+            return []
+        return [ln.strip() for ln in (r.stdout or "").splitlines() if ln.strip()]
     except Exception:
-        return ""
+        return []
+
+
+def _detect_gpu_compute_caps() -> list[str]:
+    """Return each device's sm level (e.g. ['7.5','7.5']). Best-effort;
+    empty on CPU workers or when torch isn't importable at boot."""
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            return []
+        out = []
+        for i in range(torch.cuda.device_count()):
+            try:
+                c = torch.cuda.get_device_capability(i)
+                out.append(f"{c[0]}.{c[1]}")
+            except Exception:
+                out.append("")
+        return out
+    except Exception:
+        return []
 
 
 # Per-instance metadata.
 INSTANCE_ID = os.getenv("INSTANCE_ID") or f"{socket.gethostname()}-{uuid.uuid4().hex[:6]}"
 PUBLIC_URL = os.getenv("PUBLIC_BACKEND_URL", "")    # set by the Colab notebook after cloudflared
 INSTANCE_TIER = (os.getenv("INSTANCE_TIER", "gpu") or "gpu").lower()
-GPU_NAME = _detect_gpu_name()
+GPU_NAMES = _detect_gpu_names()
+GPU_NAME = GPU_NAMES[0] if GPU_NAMES else ""
+GPU_COUNT = len(GPU_NAMES)
+GPU_COMPUTE_CAPS = _detect_gpu_compute_caps()
 
 # Auto-build a useful label if the env var didn't set one explicitly.
 # Examples: "kaggle · Tesla P100-PCIE-16GB", "colab · Tesla T4".
@@ -169,18 +189,31 @@ def _sample_stats() -> dict:
             stderr=subprocess.DEVNULL, timeout=3,
         ).decode().strip().splitlines()
         if smi:
-            parts = [p.strip() for p in smi[0].split(",")]
-            if len(parts) == 5:
+            # Populate top-level `gpu` from device 0 for backward compat
+            # with the existing Monitor HUD, AND a `gpus` list so the
+            # dashboard can render per-device stats on T4x2 without
+            # a data-shape migration.
+            per_device = []
+            for line in smi:
+                parts = [p.strip() for p in line.split(",")]
+                if len(parts) != 5:
+                    continue
                 name, util, mem_used, mem_total, temp = parts
-                out["gpu"] = {
+                mem_total_n = _try_num(mem_total)
+                mem_used_n = _try_num(mem_used)
+                per_device.append({
                     "name":         name,
                     "util_percent": _try_num(util),
-                    "mem_used_mb":  _try_num(mem_used),
-                    "mem_total_mb": _try_num(mem_total),
-                    "mem_percent":  round(_try_num(mem_used) / _try_num(mem_total) * 100, 1)
-                                    if _try_num(mem_total) else None,
+                    "mem_used_mb":  mem_used_n,
+                    "mem_total_mb": mem_total_n,
+                    "mem_percent":  round(mem_used_n / mem_total_n * 100, 1)
+                                    if (mem_total_n and mem_used_n is not None) else None,
                     "temp_c":       _try_num(temp),
-                }
+                })
+            if per_device:
+                out["gpu"] = per_device[0]        # existing HUD field
+                out["gpus"] = per_device          # new: full per-device list
+                out["gpu_count"] = len(per_device)
     except Exception:
         pass
     return out
@@ -242,6 +275,12 @@ def _self_payload(queue_depth: int) -> dict:
         # Real GPU model from nvidia-smi (e.g. "Tesla P100-PCIE-16GB").
         # Empty string on CPU-only workers — frontend can show "—".
         "gpu_name":     GPU_NAME or None,
+        # Multi-GPU: full list + count + per-device compute cap. T4x2 →
+        # ["Tesla T4","Tesla T4"], count=2, caps=["7.5","7.5"]. Legacy
+        # dashboard code that only reads `gpu_name` keeps working.
+        "gpu_names":    GPU_NAMES or None,
+        "gpu_count":    GPU_COUNT or None,
+        "gpu_compute_caps": GPU_COMPUTE_CAPS or None,
         "version":      "2.0",
         "started_at":   _startup_epoch,
         "last_seen_at": db.server_timestamp(),

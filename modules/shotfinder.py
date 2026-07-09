@@ -619,45 +619,82 @@ def _huggingface_generate(prompt, output_dir, trial, negative_prompt=""):
 # No rate limits, no API keys, and native negative_prompt support.
 # On a CPU-only worker this provider silently no-ops.
 
-_LOCAL_SDXL_PIPE = None
+# Device-keyed pipeline cache. Empty on CPU; single entry {0: pipe} on
+# T4x1; two entries {0: pipe0, 1: pipe1} when running on T4x2 with
+# multi-GPU mode enabled. Each pipe is bound to its own CUDA device so
+# round-robin dispatch from _fetch_one can drive both cards concurrently.
+_LOCAL_SDXL_PIPES: dict = {}
 _LOCAL_SDXL_BROKEN = False
 _LOCAL_SDXL_BROKEN_REASON = ""
-# Serialises the one-shot model load. Parallel shot fetches from
-# fetch_storyboard_footage's ThreadPoolExecutor would otherwise all
-# race on the None check → each allocate ~5 GB VRAM for its own copy
-# → CUDA OOM → EVERY concurrent shot fails → 15-shot storyboard
-# collapses to 2-3 clips. With this lock: thread 1 loads (once),
-# threads 2-N wait a few seconds then reuse the same pipe. Standard
-# double-checked locking — the fast path stays lock-free after warm-up.
+# Per-device "this specific card can't load" markers. Used when GPU 0
+# works but GPU 1 OOMs during load — we want to keep serving from GPU 0
+# and just skip GPU 1 in round-robin, not tank the whole provider.
+_LOCAL_SDXL_DEVICE_BROKEN: dict = {}
+# Serialises the one-shot model load PER DEVICE. Two devices load in
+# parallel because they hold different locks. Within a device, the
+# standard double-checked pattern keeps the fast path lock-free.
 import threading as _sdxl_threading
-_LOCAL_SDXL_LOAD_LOCK = _sdxl_threading.Lock()
+_LOCAL_SDXL_LOAD_LOCKS: dict = {}
+_LOCAL_SDXL_LOCKS_LOCK = _sdxl_threading.Lock()
+# Thread-local so shotfetch workers can each pin themselves to a GPU
+# without threading a device_id through the whole provider-callable
+# signature (huggingface/pollinations/horde are HTTP and ignore it).
+_LOCAL_SDXL_TLS = _sdxl_threading.local()
 
 
-def _local_sdxl_load():
-    """Lazy-load the diffusers pipeline (thread-safe).
+def _sdxl_lock_for(device_id: int):
+    with _LOCAL_SDXL_LOCKS_LOCK:
+        lk = _LOCAL_SDXL_LOAD_LOCKS.get(device_id)
+        if lk is None:
+            lk = _sdxl_threading.Lock()
+            _LOCAL_SDXL_LOAD_LOCKS[device_id] = lk
+        return lk
+
+
+def _current_sdxl_device() -> int:
+    """Which cuda:N should this thread's local_sdxl call target?
+
+    _fetch_one sets `_LOCAL_SDXL_TLS.device` per-shot in round-robin
+    order (0,1,0,1,...) when multi-GPU is on. Anything outside that
+    threadpool (e.g. pre-warm on the main thread) passes an explicit
+    device_id, so this default only fires on unexpected callers → 0.
+    """
+    return int(getattr(_LOCAL_SDXL_TLS, "device", 0))
+
+
+def _local_sdxl_load(device_id: int | None = None):
+    """Lazy-load the diffusers pipeline on a specific CUDA device (thread-safe).
 
     Kept out of module import path so CPU workers never pay the
     diffusers/torch import tax. All failure paths WARN with actionable
     text so the priority loop's provider skip is diagnosable from logs.
     """
-    # Fast path — no lock needed once the pipeline exists (or is known broken).
     if _LOCAL_SDXL_BROKEN:
         return None
-    if _LOCAL_SDXL_PIPE is not None:
-        return _LOCAL_SDXL_PIPE
-    # Slow path — grab the lock and re-check inside so exactly ONE
-    # thread performs the download + CUDA move.
-    with _LOCAL_SDXL_LOAD_LOCK:
+    if device_id is None:
+        device_id = _current_sdxl_device()
+    if _LOCAL_SDXL_DEVICE_BROKEN.get(device_id):
+        return None
+    # Fast path — no lock needed once THIS device's pipeline exists.
+    pipe = _LOCAL_SDXL_PIPES.get(device_id)
+    if pipe is not None:
+        return pipe
+    # Slow path — grab the device's lock and re-check inside so exactly
+    # ONE thread performs the download + CUDA move per device.
+    with _sdxl_lock_for(device_id):
         if _LOCAL_SDXL_BROKEN:
             return None
-        if _LOCAL_SDXL_PIPE is not None:
-            return _LOCAL_SDXL_PIPE
-        return _local_sdxl_load_locked()
+        if _LOCAL_SDXL_DEVICE_BROKEN.get(device_id):
+            return None
+        pipe = _LOCAL_SDXL_PIPES.get(device_id)
+        if pipe is not None:
+            return pipe
+        return _local_sdxl_load_locked(device_id)
 
 
-def _local_sdxl_load_locked():
-    """Actual load path. Caller must hold _LOCAL_SDXL_LOAD_LOCK."""
-    global _LOCAL_SDXL_PIPE, _LOCAL_SDXL_BROKEN, _LOCAL_SDXL_BROKEN_REASON
+def _local_sdxl_load_locked(device_id: int):
+    """Actual load path. Caller must hold the per-device load lock."""
+    global _LOCAL_SDXL_BROKEN, _LOCAL_SDXL_BROKEN_REASON
     # Import torch first — every other failure depends on it.
     try:
         import torch
@@ -685,15 +722,20 @@ def _local_sdxl_load_locked():
     # early so we don't waste time downloading a 7 GB SDXL model just
     # to fail on `.to("cuda")` at the end.
     try:
-        _cap = torch.cuda.get_device_capability(0)
+        _cap = torch.cuda.get_device_capability(device_id)
         if _cap[0] < 7:
-            _LOCAL_SDXL_BROKEN = True
-            _LOCAL_SDXL_BROKEN_REASON = (
-                f"GPU compute capability sm_{_cap[0]}.{_cap[1]} < sm_7.0 — "
-                f"modern PyTorch wheels don't ship kernels for this GPU. "
-                f"Use pollinations/horde/huggingface providers instead."
+            # This device can't run SDXL, but a SIBLING device might —
+            # mark just this device broken so the other GPU keeps
+            # serving. If it's the only device visible, the round-robin
+            # dispatcher will fall through to the next AI provider on
+            # its own once every device is broken.
+            _LOCAL_SDXL_DEVICE_BROKEN[device_id] = (
+                f"cuda:{device_id} sm_{_cap[0]}.{_cap[1]} < sm_7.0"
             )
-            log.info(f"local_sdxl skipped: {_LOCAL_SDXL_BROKEN_REASON}")
+            log.info(
+                f"local_sdxl[cuda:{device_id}] skipped: "
+                f"{_LOCAL_SDXL_DEVICE_BROKEN[device_id]}"
+            )
             return None
     except Exception:
         pass   # fall through if the probe itself fails
@@ -738,7 +780,7 @@ def _local_sdxl_load_locked():
         # (contributed to the SDXL scheduler off-by-one indexing bug we
         # were hitting on T4). Gate on compute capability instead:
         # sm_8.0 = Ampere, first arch with hardware bf16.
-        cap = torch.cuda.get_device_capability(0)
+        cap = torch.cuda.get_device_capability(device_id)
         use_bf16 = cap[0] >= 8
         dtype = torch.bfloat16 if use_bf16 else torch.float16
         # The `variant="fp16"` load path only exists for models that
@@ -768,38 +810,48 @@ def _local_sdxl_load_locked():
                 model_id, torch_dtype=dtype, use_safetensors=True,
                 low_cpu_mem_usage=False,
             )
-        pipe = pipe.to("cuda")
+        pipe = pipe.to(f"cuda:{device_id}")
         # Memory-thrift knobs — matters on T4-16GB.
         try:
             pipe.enable_vae_slicing()
             pipe.enable_attention_slicing()
         except Exception:
             pass
-        _LOCAL_SDXL_PIPE = pipe
-        log.warning(f"local_sdxl: pipeline READY (dtype={dtype}, model={model_id})")
+        _LOCAL_SDXL_PIPES[device_id] = pipe
+        log.warning(
+            f"local_sdxl[cuda:{device_id}]: pipeline READY "
+            f"(dtype={dtype}, model={model_id})"
+        )
         return pipe
     except Exception as e:
-        _LOCAL_SDXL_BROKEN = True
-        _LOCAL_SDXL_BROKEN_REASON = f"{type(e).__name__}: {e}"
+        # Per-device failure: mark THIS device broken (not the whole
+        # provider) so a sibling GPU can keep serving. Only when every
+        # device is broken does the provider actually stop responding.
+        _LOCAL_SDXL_DEVICE_BROKEN[device_id] = f"{type(e).__name__}: {e}"
         log.warning(
-            f"local_sdxl: pipeline load FAILED — provider DISABLED "
+            f"local_sdxl[cuda:{device_id}]: pipeline load FAILED "
             f"({type(e).__name__}: {e}). Common causes: OOM (VRAM), "
-            f"corrupted HF cache, model id typo. Try clearing "
-            f"~/.cache/huggingface/hub/ and re-running."
+            f"corrupted HF cache, model id typo. Sibling GPUs (if any) "
+            f"keep serving; if none, priority loop skips to next provider."
         )
         return None
 
 
 def _local_sdxl_generate(prompt, output_dir, trial, negative_prompt=""):
     """Generate one image on the local GPU. Returns (path, seed) on
-    success, (None, seed) on failure or when disabled."""
+    success, (None, seed) on failure or when disabled.
+
+    Device selection: thread-local, set by _fetch_one round-robin. On
+    T4x1 always cuda:0; on T4x2 alternates cuda:0/cuda:1 per shot.
+    """
     seed = int(hashlib.md5(f"{prompt}|{trial}|sdxl".encode()).hexdigest()[:8], 16)
-    pipe = _local_sdxl_load()
+    device_id = _current_sdxl_device()
+    pipe = _local_sdxl_load(device_id)
     if pipe is None:
         return None, seed
     try:
         import torch
-        gen = torch.Generator(device="cuda").manual_seed(seed)
+        gen = torch.Generator(device=f"cuda:{device_id}").manual_seed(seed)
         # SDXL-Turbo is calibrated for very few steps + guidance 0. If the
         # user swapped to a full SDXL model, guidance 5-7 + 25 steps is a
         # good default; we detect via the pipe class name.
@@ -840,15 +892,14 @@ def _local_sdxl_generate(prompt, output_dir, trial, negative_prompt=""):
             return None, seed
         return dest, seed
     except Exception as e:
-        global _LOCAL_SDXL_BROKEN, _LOCAL_SDXL_BROKEN_REASON
         msg = str(e)
         # Terminal errors: CUDA capability mismatch means the torch
-        # wheel doesn't have kernels for this GPU (P100 / T4 on
-        # Kaggle where diffusers pulled a newer torch that dropped
-        # sm_60 support). OOM means the model can't run at all on
-        # this device. Both are permanent for this session — mark
-        # broken so we don't waste 5 attempts per shot repeating the
-        # same failure.
+        # wheel doesn't have kernels for this GPU. OOM means this
+        # device can't run the model. Both are permanent for the
+        # affected device — mark THAT device broken so we don't waste
+        # 5 attempts on the same failure, but let sibling GPUs keep
+        # serving (T4x2). The _provider_ready check demotes the
+        # provider only after every device is broken.
         terminal_markers = (
             "no kernel image is available",
             "cudaErrorNoKernelImageForDevice",
@@ -856,15 +907,14 @@ def _local_sdxl_generate(prompt, output_dir, trial, negative_prompt=""):
             "CUDA driver version is insufficient",
         )
         if any(m in msg for m in terminal_markers):
-            _LOCAL_SDXL_BROKEN = True
-            _LOCAL_SDXL_BROKEN_REASON = msg[:200]
+            _LOCAL_SDXL_DEVICE_BROKEN[device_id] = msg[:200]
             log.warning(
-                f"local_sdxl: TERMINAL error, provider DISABLED for "
-                f"this process — {msg[:200]}. Priority loop will skip to "
-                f"the next AI provider."
+                f"local_sdxl[cuda:{device_id}]: TERMINAL error, this GPU "
+                f"DISABLED — {msg[:200]}. Sibling GPUs (if any) keep "
+                f"serving; provider skips once every device is broken."
             )
         else:
-            log.warning(f"local_sdxl gen failed: {e}")
+            log.warning(f"local_sdxl[cuda:{device_id}] gen failed: {e}")
         return None, seed
 
 
@@ -1040,6 +1090,17 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror"):
         if name == "local_sdxl":
             if _LOCAL_SDXL_BROKEN:
                 return False, f"local pipeline broken ({_LOCAL_SDXL_BROKEN_REASON})"
+            # If every visible device has been marked broken, the
+            # provider has nothing left to serve — skip to the next AI
+            # provider instead of racking up per-shot failures.
+            try:
+                from modules import gpu_topology as _gt
+                if _gt.sdxl_ready_devices and all(
+                    d in _LOCAL_SDXL_DEVICE_BROKEN for d in _gt.sdxl_ready_devices
+                ):
+                    return False, "every GPU marked broken during load/gen"
+            except Exception:
+                pass
         # 'horde' + 'together' have no required key (horde works anon).
         return True, ""
 
@@ -1176,27 +1237,48 @@ def fetch_shots(shots, output_dir, channel="horror", preset_sources=None):
     presets = list(preset_sources or [])
     total = max(1, len(shots))
 
-    # Parallelism: the P100 has 16 GB VRAM; a single SDXL inference at
-    # 1024x576 uses ~4-5 GB, so 3 concurrent shots is a good default
-    # (~12-15 GB, headroom for the CUDA workspace). HF Inference API +
-    # Pollinations are HTTP calls with no per-worker cost, so
-    # parallelism is a free speedup for them too. Setting exposed under
-    # settings.image_gen.shot_parallelism — default 3.
+    # Parallelism: a single SDXL inference at 1024x576 uses ~4-5 GB
+    # VRAM, so 3 concurrent shots fits comfortably on a 16 GB T4
+    # (~12-15 GB peak). HF Inference API + Pollinations are HTTP calls
+    # with no per-worker cost, so parallelism is a free speedup for
+    # them too. Setting exposed under settings.image_gen.shot_parallelism
+    # — default 3. On T4x2 (multi-GPU) the ceiling doubles to 12: each
+    # card holds its own 3-shot batch and the round-robin dispatcher
+    # below balances load across GPU 0 / GPU 1.
     ig_cfg = (load_settings().get("image_gen") or {})
-    max_workers = max(1, min(6, int(ig_cfg.get("shot_parallelism", 3))))
+    try:
+        from modules import gpu_topology as _gt
+        _sdxl_ceiling = 12 if _gt.supports_multi_gpu else 6
+    except Exception:
+        _sdxl_ceiling = 6
+    max_workers = max(1, min(_sdxl_ceiling, int(ig_cfg.get("shot_parallelism", 3))))
 
     # used_ids is shared across threads; guard mutations with a lock so
     # two shots don't both burn the same pexels/shutterstock id and end
     # up with duplicated stock imagery.
     used_lock = _threading.Lock()
 
+    # Round-robin GPU assignment: shot idx N lands on device_ids[N %
+    # len]. Sticky per-shot so retries stay on the same GPU (keeps the
+    # HF cache hot for that seed's prompt encoding). No-op on T4x1 —
+    # every shot goes to cuda:0.
+    try:
+        from modules import gpu_topology as _gt
+        _sdxl_devices = _gt.sdxl_ready_devices or [0]
+    except Exception:
+        _sdxl_devices = [0]
+
     def _fetch_one(idx: int, shot: dict, preset_src: dict | None):
+        # Pin this worker thread to a specific CUDA device for any
+        # local_sdxl call it makes. Read inside _local_sdxl_load /
+        # _local_sdxl_generate via _current_sdxl_device().
+        _LOCAL_SDXL_TLS.device = _sdxl_devices[idx % len(_sdxl_devices)]
         run_state.check_cancel()
         if preset_src is not None:
             src = dict(preset_src)
             log.info(f"Shot {idx+1}/{total}: preset image {src.get('path')}")
         else:
-            log.info(f"Shot {idx+1}/{total}: fetching")
+            log.info(f"Shot {idx+1}/{total}: fetching (cuda:{_LOCAL_SDXL_TLS.device})")
             # Snapshot used_ids under lock so the provider sees a
             # consistent view; merge new additions back under lock.
             with used_lock:
@@ -1232,8 +1314,30 @@ def fetch_shots(shots, output_dir, channel="horror", preset_sources=None):
         # 2-hour model-download stall on any Kaggle session where torch
         # got clobbered by a dep upgrade.
         if "local_sdxl" in _priority_head and _ig_enabled.get("local_sdxl", False):
-            log.info("shot fetch pre-warm: loading local_sdxl (blocks pool start)")
-            _local_sdxl_load()
+            # On T4x2 (multi-GPU), warm BOTH pipelines in parallel so
+            # the shot pool starts with the second card already ready
+            # instead of paying a serial ~1 min second-load on the
+            # first shot that lands on cuda:1.
+            try:
+                from modules import gpu_topology as _gt2
+                warm_devices = list(_gt2.sdxl_ready_devices) or [0]
+            except Exception:
+                warm_devices = [0]
+            if len(warm_devices) > 1:
+                log.info(
+                    f"shot fetch pre-warm: loading local_sdxl on "
+                    f"cuda:{warm_devices} in parallel (blocks pool start)"
+                )
+                from concurrent.futures import ThreadPoolExecutor as _TPE
+                with _TPE(max_workers=len(warm_devices),
+                          thread_name_prefix="sdxl-warm") as _wex:
+                    list(_wex.map(_local_sdxl_load, warm_devices))
+            else:
+                log.info(
+                    f"shot fetch pre-warm: loading local_sdxl on "
+                    f"cuda:{warm_devices[0]} (blocks pool start)"
+                )
+                _local_sdxl_load(warm_devices[0])
     except Exception as _e:
         log.debug(f"local_sdxl pre-warm skipped: {_e}")
 
