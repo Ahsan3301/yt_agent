@@ -50,6 +50,10 @@ type ChannelDoc = {
   // Per-channel YouTube privacy override — public/unlisted/private.
   // Null = use settings.upload.privacy (global default).
   privacy?: "public" | "unlisted" | "private" | null;
+  // Per-channel Discord webhook — overrides the global one so each
+  // dashboard channel can post to a different Discord server/channel.
+  // Null = use the global DISCORD_WEBHOOK_URL.
+  discord_webhook?: string | null;
 };
 
 /** GET /api/channels — list all channels. */
@@ -129,6 +133,13 @@ export async function POST(req: NextRequest) {
       // allowed values or null (= use global settings.upload.privacy).
       privacy: (body.privacy === "public" || body.privacy === "unlisted" || body.privacy === "private")
         ? body.privacy
+        : null,
+      // Per-channel Discord webhook. Must look like a Discord URL to
+      // save; empty string → null (use global default).
+      discord_webhook: (typeof body.discord_webhook === "string" &&
+                        body.discord_webhook.trim() &&
+                        /^https?:\/\/(discord|canary\.discord|ptb\.discord)\.com\/api\/webhooks\//.test(body.discord_webhook.trim()))
+        ? body.discord_webhook.trim().slice(0, 300)
         : null,
       updated_at: FieldValue.serverTimestamp(),
       ...(existing.exists ? {} : { created_at: FieldValue.serverTimestamp() }),

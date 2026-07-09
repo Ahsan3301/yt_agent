@@ -69,6 +69,45 @@ def write_run(run_id: str, summary: dict, index_entry: dict) -> bool:
         batch.commit()
         return True
     except Exception as e:
+        # Explicit unique-index recovery. The batch adapter has its own
+        # try-PATCH-then-recover path but it silently falls through in
+        # some edge cases (empty query result while PB still reports
+        # the field as taken). Do the fallback here too so
+        # write_run() is idempotent even when the adapter can't find
+        # the offending row by filter. Confirmed live 2026-07-09 on
+        # runs_index/20260709_160402_pxu.
+        _msg = str(e)
+        if "validation_not_unique" in _msg or "must be unique" in _msg.lower():
+            try:
+                c = db.client()
+                # runs_index — find existing row by run_id field, update it.
+                for coll_name, payload in (
+                    ("runs_index", {**index_entry, "updated_at": db.server_timestamp()}),
+                    ("run_summaries", {"data": summary, "updated_at": db.server_timestamp()}),
+                ):
+                    coll = c.collection(coll_name)
+                    # Prefer the ref by doc_id first — the hashed PB id
+                    # may already exist under the same run_id even if
+                    # the batch adapter couldn't find it via filter.
+                    try:
+                        coll.document(run_id).update(payload)
+                        continue
+                    except Exception:
+                        pass
+                    # Otherwise walk by explicit filter using the wrapper's
+                    # where() API and update the first match.
+                    for hit in coll.where("run_id", "==", run_id).limit(1).stream():
+                        try:
+                            hit.reference.update(payload)  # type: ignore[attr-defined]
+                        except Exception:
+                            # Some wrapper flavours don't expose .reference —
+                            # fall back to doc(hit.id).update().
+                            coll.document(hit.id).update(payload)
+                        break
+                log.info(f"runs_db.write_run({run_id}) recovered from unique-index conflict via update")
+                return True
+            except Exception as e2:
+                log.warning(f"runs_db.write_run({run_id}) unique-conflict recovery failed: {e2}")
         log.warning(f"runs_db.write_run({run_id}) failed: {e}")
         return False
 

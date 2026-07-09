@@ -42,6 +42,8 @@ type Channel = {
   // it here scopes it to this channel only.
   tone?: string | null;
   privacy?: "public" | "unlisted" | "private" | null;
+  // Per-channel Discord webhook. Null → use global DISCORD_WEBHOOK_URL.
+  discord_webhook?: string | null;
 };
 
 const TONE_OPTIONS = [
@@ -514,6 +516,7 @@ function ChannelForm({
   const [privacy, setPrivacy] = useState<"" | "public" | "unlisted" | "private">(
     (initial?.privacy as "public" | "unlisted" | "private" | undefined) || "",
   );
+  const [discordWebhook, setDiscordWebhook] = useState<string>(initial?.discord_webhook || "");
 
   const submit = () => {
     if (!name.trim()) return;
@@ -536,6 +539,7 @@ function ChannelForm({
       run_at_hour: runAtHour,
       tone: tone.trim() || null,
       privacy: privacy || null,
+      discord_webhook: discordWebhook.trim() || null,
     });
   };
 
@@ -719,6 +723,22 @@ function ChannelForm({
             How videos from this channel land on YouTube. Overrides
             settings.upload.privacy for renders bound to this channel.
           </div>
+        </div>
+      </div>
+
+      <div>
+        <label className="label">Discord webhook (per-channel)</label>
+        <input
+          type="url"
+          className="input w-full"
+          placeholder="https://discord.com/api/webhooks/... (blank = use global)"
+          value={discordWebhook}
+          onChange={(e) => setDiscordWebhook(e.target.value)}
+        />
+        <div className="text-[10px] text-neutral-500 mt-1">
+          Alerts + published-video notifications for this channel post
+          here. Blank = fall back to the global DISCORD_WEBHOOK_URL set
+          on /keys.
         </div>
       </div>
 

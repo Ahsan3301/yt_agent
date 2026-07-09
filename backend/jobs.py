@@ -541,9 +541,10 @@ def _run_one(job: dict[str, Any]):
             # Worker identity in the embed — tells you at a glance whether
             # Colab, Kaggle, or HF Space handled the job.
             worker_label = os.getenv("INSTANCE_LABEL") or "unknown"
+            _niche = job.get("channel") or "unknown"
             if job["status"] == "complete":
                 notifier.info(
-                    f"✅ Pipeline complete · {job.get('channel', 'unknown')}",
+                    f"✅ Pipeline complete · {_niche}",
                     body=f"Run `{job['run_id']}` finished in {elapsed}s",
                     fields=[
                         ("worker", worker_label, True),
@@ -551,6 +552,7 @@ def _run_one(job: dict[str, Any]):
                         ("public_url", job.get("public_url") or "—", False),
                     ],
                     url=job.get("public_url") or None,
+                    channel_niche=_niche,
                 )
             else:
                 # Persist to Firestore `errors` collection + fire the
@@ -559,7 +561,7 @@ def _run_one(job: dict[str, Any]):
                 from backend import logbuf as _lb
                 notifier.report_error(
                     err=str(job.get("error") or "unknown pipeline failure"),
-                    title=f"❌ Pipeline failed · {job.get('channel', 'unknown')}",
+                    title=f"❌ Pipeline failed · {_niche}",
                     run_id=job.get("run_id") or job["id"],
                     req_id=_lb.current_req_id(),
                     extra={
@@ -567,6 +569,7 @@ def _run_one(job: dict[str, Any]):
                         "elapsed": elapsed,
                         "dry_run": bool(job.get("dry_run", False)),
                     },
+                    channel_niche=_niche,
                 )
         except Exception as _e:
             log.debug(f"notifier hook failed: {_e}")

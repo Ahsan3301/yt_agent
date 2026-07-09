@@ -47,11 +47,44 @@ _dedup_lock = threading.Lock()
 _dedup: dict[tuple[str, str], float] = {}
 
 
-def _webhook_url() -> str:
-    """Look up the webhook URL. Env var wins; falls back to Firestore."""
+def _webhook_url(channel_niche: str | None = None) -> str:
+    """Look up the webhook URL.
+
+    Priority order:
+      1. Per-channel URL — channels/<niche>.discord_webhook, so each
+         dashboard channel can post to its own server/channel
+      2. DISCORD_WEBHOOK_URL env var
+      3. Firestore api_keys/DISCORD_WEBHOOK_URL (global default)
+
+    Passing channel_niche=None (default) skips step 1 and behaves like
+    the pre-2026-07-09 single-webhook world. Callers with a channel
+    should always pass it — otherwise a horror-channel Discord post
+    could land in the science-channel Discord.
+    """
+    # 1. Per-channel — first enabled channels row matching this niche.
+    if channel_niche:
+        try:
+            from backend import db
+            if db.is_configured():
+                for ch_doc in (db.client()
+                                 .collection("channels")
+                                 .where("niche", "==", channel_niche)
+                                 .limit(3)
+                                 .stream()):
+                    d = ch_doc.to_dict() or {}
+                    if d.get("enabled") is False:
+                        continue
+                    per_ch = str(d.get("discord_webhook", "")).strip()
+                    if per_ch:
+                        return per_ch
+        except Exception as e:
+            log.debug(f"notifier: per-channel webhook lookup failed: {e}")
+
+    # 2. Env var (fastest global path).
     v = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
     if v:
         return v
+    # 3. Firestore api_keys global.
     try:
         from backend import db
         if not db.is_configured():
@@ -84,6 +117,7 @@ def send(
     body: str = "",
     fields: Iterable[tuple[str, str, bool]] | None = None,
     url: str | None = None,
+    channel_niche: str | None = None,
 ) -> bool:
     """Post one Discord embed. Returns True on success, False on any
     failure (including config missing — silent so callers don't care).
@@ -93,8 +127,12 @@ def send(
     `body`   — main description (under ~2000 chars; auto-truncated)
     `fields` — iterable of (name, value, inline). Each value < 1024 chars.
     `url`    — clickable link on the title (use for YouTube URLs etc.)
+    `channel_niche` — if passed, the notifier looks up
+                      channels/<niche>.discord_webhook first so per-
+                      channel Discord routing works. Falls back to the
+                      global webhook when the channel row doesn't set one.
     """
-    webhook = _webhook_url()
+    webhook = _webhook_url(channel_niche=channel_niche)
     if not webhook:
         return False
     if not _should_send(level, title):

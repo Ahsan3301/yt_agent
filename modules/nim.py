@@ -163,12 +163,18 @@ def _post_chat(payload, timeout=60, attempts=3):
     return _retry(_once, attempts=attempts, desc="chat")
 
 
-def _post_chat_streamed_pair(payload, read_timeout=60, total_timeout=240):
+def _post_chat_streamed_pair(payload, read_timeout=20, total_timeout=60):
     """
     Stream the response and return (content, reasoning) separately so
-    callers can decide which to use. Read timeout is per-chunk; total cap
-    is absolute wall-clock. Retries the WHOLE stream on transient errors
-    (5xx, connection drops, partial-content interruptions).
+    callers can decide which to use. Read timeout is per-chunk; total
+    cap is absolute wall-clock. Retries the WHOLE stream on transient
+    errors (5xx, connection drops, partial-content interruptions).
+
+    read_timeout was 60s but NIM's free tier stalls between chunks
+    constantly — a stuck stream would burn 3 attempts × 60s = 180s
+    per model × 4 models = 12 min worst case before the render moved
+    on. Now 20s per chunk × 2 attempts + Groq escape = ~1-2 min
+    absolute worst case. Confirmed live 2026-07-09.
     """
     _k = _nim_key()
     if not _k:
@@ -185,7 +191,7 @@ def _post_chat_streamed_pair(payload, read_timeout=60, total_timeout=240):
         _wait_for_slot()
         return _stream_once(payload, headers, read_timeout, total_timeout)
 
-    return _retry(_once, attempts=3, desc="chat-stream")
+    return _retry(_once, attempts=2, desc="chat-stream")
 
 
 def _stream_once(payload, headers, read_timeout, total_timeout):
@@ -237,8 +243,8 @@ def _stream_once(payload, headers, read_timeout, total_timeout):
 
 
 def chat(messages, model=None, max_tokens=2048, temperature=0.7,
-         response_format=None, timeout=60, stream=None, thinking=False,
-         tools=None, tool_choice=None, attempts=3):
+         response_format=None, timeout=20, stream=None, thinking=False,
+         tools=None, tool_choice=None, attempts=2):
     """
     OpenAI-compatible chat completion. Returns the assistant message string.
 
@@ -290,7 +296,7 @@ def chat(messages, model=None, max_tokens=2048, temperature=0.7,
         try:
             if use_stream:
                 content, reasoning = _post_chat_streamed_pair(
-                    payload, read_timeout=60, total_timeout=max(120, timeout)
+                    payload, read_timeout=20, total_timeout=max(60, timeout * 3)
                 )
             else:
                 data = _post_chat(payload, timeout=timeout, attempts=attempts)
@@ -325,9 +331,66 @@ def chat(messages, model=None, max_tokens=2048, temperature=0.7,
         # Empty everything — retry on next model (some free-tier models
         # transiently return no content under load).
         log.warning(f"NIM {m_name} returned empty response; trying next model")
+
+    # ── GROQ LAST-DITCH FALLBACK ──
+    # All NIM models exhausted. Groq is much faster + more reliable
+    # (Azure/Groq backend vs NIM's free-tier queue) but has a stricter
+    # daily cap (~100k tokens/day on llama-3.3-70b-versatile). Kept
+    # as LAST resort so we don't burn the Groq budget on every render;
+    # NIM's chain succeeds most of the time. Confirmed live 2026-07-09.
+    try:
+        content = _groq_chat_fallback(
+            messages, max_tokens=max_tokens, temperature=temperature,
+            response_format=response_format, timeout=45,
+        )
+        if content and content.strip():
+            log.info("NIM chat: succeeded on Groq fallback (llama-3.3-70b-versatile)")
+            return content
+    except Exception as e:
+        log.warning(f"Groq fallback also failed: {e}")
+
     if last_err:
         raise last_err
     return ""
+
+
+def _groq_chat_fallback(messages, max_tokens=2048, temperature=0.7,
+                       response_format=None, timeout=45):
+    """Call Groq's llama-3.3-70b-versatile as a last-ditch fallback
+    when the entire NIM chain has failed. OpenAI-compatible endpoint.
+
+    Reads GROQ_API_KEY at call time (like _nim_key) so a key added
+    after the process started is picked up on the next call.
+
+    Returns the content string on success, or empty string / raises
+    on failure — same shape as chat().
+    """
+    _g = os.getenv("GROQ_API_KEY", "") or ""
+    if not _g:
+        raise RuntimeError("GROQ_API_KEY not set (add via /keys)")
+
+    payload = {
+        "model": os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    }
+    if response_format:
+        payload["response_format"] = response_format
+    headers = {
+        "Authorization": f"Bearer {_g}",
+        "Content-Type": "application/json",
+    }
+    r = requests.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        headers=headers, json=payload, timeout=timeout,
+    )
+    r.raise_for_status()
+    data = r.json() or {}
+    choices = data.get("choices") or []
+    if not choices:
+        return ""
+    return (choices[0].get("message") or {}).get("content", "") or ""
 
 
 def chat_with_tools(messages, tools, model=None, max_tokens=2048,
@@ -459,6 +522,54 @@ def vision_score(image_url, fit_description, premise="", model=None, timeout=90)
             continue
         score = max(0, min(10, int(m.group(1))))
         return score
+
+    # ── GROQ VISION FALLBACK ──
+    # All NIM vision models failed. Groq's llama-4-scout-17b-16e-
+    # instruct is multimodal + fast. Only fires when NIM's whole
+    # vision chain is down — Groq's free-tier vision TPM would blow
+    # inside one render if used as primary (60 calls × ~200KB images
+    # = way over the daily cap).
+    try:
+        text = _groq_vision_score_fallback(messages, timeout=30)
+        m = _INT_RE.search(text or "")
+        if m:
+            score = max(0, min(10, int(m.group(1))))
+            log.info(f"vision_score: succeeded on Groq fallback (llama-4-scout) → {score}")
+            return score
+    except Exception as e:
+        log.warning(f"vision_score: Groq fallback also failed: {e}")
+
     if last_err:
         log.warning(f"vision_score: all models failed; last error {last_err}")
     return -1
+
+
+def _groq_vision_score_fallback(messages, timeout=30):
+    """Score an image via Groq's llama-4-scout vision model as a
+    last-ditch fallback when NIM's vision chain has failed.
+    OpenAI-compatible endpoint. Returns raw text; caller parses.
+    """
+    _g = os.getenv("GROQ_API_KEY", "") or ""
+    if not _g:
+        raise RuntimeError("GROQ_API_KEY not set")
+    payload = {
+        "model": os.getenv("GROQ_VISION_MODEL",
+                           "meta-llama/llama-4-scout-17b-16e-instruct"),
+        "messages": messages,
+        "max_tokens": 16,
+        "temperature": 0.0,
+    }
+    headers = {
+        "Authorization": f"Bearer {_g}",
+        "Content-Type": "application/json",
+    }
+    r = requests.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        headers=headers, json=payload, timeout=timeout,
+    )
+    r.raise_for_status()
+    data = r.json() or {}
+    choices = data.get("choices") or []
+    if not choices:
+        return ""
+    return (choices[0].get("message") or {}).get("content", "") or ""

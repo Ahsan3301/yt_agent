@@ -390,6 +390,7 @@ def upload_video(video_path, script_data, channel_type="horror", youtube_account
             ),
             url=f"https://youtu.be/{video_id}",
             fields=fields,
+            channel_niche=channel_type,
         )
     except Exception as _e:
         log.debug(f"notifier on upload skipped: {_e}")

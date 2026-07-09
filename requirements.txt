@@ -43,6 +43,15 @@ schedule>=1.2
 # transformers that killed local_sdxl + Kokoro on the same worker.
 transformers>=4.44,<4.50
 
+# diffusers CAPPED below 0.32 — 0.32+ ships the flux2 pipeline that
+# lazy-imports `Qwen3ForCausalLM` from transformers >= 4.50. Since we
+# pinned transformers < 4.50 (for AlbertModel), that import fails and
+# takes down `AutoPipelineForText2Image.from_pretrained()` when it
+# scans the pipeline registry — breaks local_sdxl on every shot.
+# 0.30-0.31 has low_cpu_mem_usage=False and no flux2. Confirmed live
+# 2026-07-09.
+diffusers>=0.30,<0.32
+
 # Optional — local Kokoro TTS (requires PyTorch).
 # Skip if you only use edge-tts; install on demand:
 #   pip install kokoro soundfile
