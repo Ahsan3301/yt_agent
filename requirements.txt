@@ -36,6 +36,13 @@ cryptography>=45.0.0
 # Scheduling (used by main.py --schedule mode)
 schedule>=1.2
 
+# transformers CAPPED below 4.50 — anything newer removes/renames
+# AlbertModel (Kokoro's TTS backbone) and PreTrainedModel (diffusers
+# lazy-import target), which breaks both providers at import time.
+# Confirmed live 2026-07-09: unpinned upper-bound let pip pull a
+# transformers that killed local_sdxl + Kokoro on the same worker.
+transformers>=4.44,<4.50
+
 # Optional — local Kokoro TTS (requires PyTorch).
 # Skip if you only use edge-tts; install on demand:
 #   pip install kokoro soundfile

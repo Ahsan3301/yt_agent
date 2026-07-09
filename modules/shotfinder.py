@@ -830,15 +830,33 @@ def _local_sdxl_load_locked(device_id: int):
         )
         return pipe
     except Exception as e:
+        _msg = f"{type(e).__name__}: {e}"
+        # Import-time errors are TERMINAL for the whole provider (both
+        # GPUs), not per-device. Example: transformers>=4.50 removed
+        # AlbertModel + PreTrainedModel lazy-imports that Kokoro and
+        # diffusers depend on. Retrying on the sibling GPU crashes with
+        # the same error. Kill the whole provider so the shot fetch
+        # loop falls through to pollinations after the first attempt.
+        if any(m in _msg for m in ("Could not import module",
+                                   "Failed to import",
+                                   "No module named")):
+            _LOCAL_SDXL_BROKEN = True
+            _LOCAL_SDXL_BROKEN_REASON = _msg[:200]
+            log.warning(
+                f"local_sdxl: TERMINAL import error, provider DISABLED "
+                f"for this process — {_msg[:200]}. All shots skip to next "
+                f"AI provider (pollinations/horde/hf)."
+            )
+            return None
         # Per-device failure: mark THIS device broken (not the whole
         # provider) so a sibling GPU can keep serving. Only when every
         # device is broken does the provider actually stop responding.
-        _LOCAL_SDXL_DEVICE_BROKEN[device_id] = f"{type(e).__name__}: {e}"
+        _LOCAL_SDXL_DEVICE_BROKEN[device_id] = _msg[:200]
         log.warning(
             f"local_sdxl[cuda:{device_id}]: pipeline load FAILED "
-            f"({type(e).__name__}: {e}). Common causes: OOM (VRAM), "
-            f"corrupted HF cache, model id typo. Sibling GPUs (if any) "
-            f"keep serving; if none, priority loop skips to next provider."
+            f"({_msg}). Common causes: OOM (VRAM), corrupted HF cache, "
+            f"model id typo. Sibling GPUs (if any) keep serving; if "
+            f"none, priority loop skips to next provider."
         )
         return None
 
@@ -941,6 +959,27 @@ def _local_sdxl_generate(prompt, output_dir, trial, negative_prompt=""):
             "CUDA out of memory",
             "CUDA driver version is insufficient",
         )
+        # Import-time markers: diffusers/transformers version conflict
+        # (e.g. transformers>=4.50 removed AlbertModel + PreTrainedModel
+        # lazy-import) breaks the ENTIRE provider on every shot, not
+        # just this device. Kill the whole provider so the fetch loop
+        # falls through to pollinations instead of retrying the same
+        # broken import 5×N shots. Confirmed live 2026-07-09.
+        import_markers = (
+            "Could not import module",
+            "Failed to import",
+            "No module named",
+        )
+        if any(m in msg for m in import_markers):
+            global _LOCAL_SDXL_BROKEN, _LOCAL_SDXL_BROKEN_REASON
+            _LOCAL_SDXL_BROKEN = True
+            _LOCAL_SDXL_BROKEN_REASON = msg[:200]
+            log.warning(
+                f"local_sdxl: TERMINAL import error, provider DISABLED for "
+                f"this process — {msg[:200]}. All shots will skip to next "
+                f"AI provider (pollinations/horde/hf)."
+            )
+            return None, seed
         if any(m in msg for m in terminal_markers):
             _LOCAL_SDXL_DEVICE_BROKEN[device_id] = msg[:200]
             log.warning(
