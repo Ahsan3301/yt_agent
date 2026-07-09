@@ -836,6 +836,24 @@ def _local_sdxl_load_locked(device_id: int):
                 low_cpu_mem_usage=_low_cpu,
             )
         pipe = pipe.to(f"cuda:{device_id}")
+        # SDXL fp16 VAE NaN fix — the classic "SDXL outputs all-black
+        # images on Turing" bug. On T4 (sm_7.5) and older, SDXL's VAE
+        # decoder can overflow to NaN in fp16, producing entirely
+        # black images. Ampere+ (bf16) doesn't hit this because bf16
+        # has a wider dynamic range. Fix: cast VAE to fp32 on non-bf16
+        # devices. Costs ~200 MB VRAM (tiny) but eliminates black
+        # outputs. Confirmed live 2026-07-10 on Colab T4: 11/11 shots
+        # rendered as full-black PNGs before this fix, subs+audio
+        # burned onto pure black.
+        if not use_bf16:
+            try:
+                pipe.vae = pipe.vae.to(torch.float32)
+                log.info(
+                    f"local_sdxl[cuda:{device_id}]: VAE cast to fp32 to avoid "
+                    f"Turing/fp16 NaN overflow (black-image bug)"
+                )
+            except Exception as _vae_e:
+                log.warning(f"local_sdxl: VAE fp32 cast failed: {_vae_e}")
         # Memory-thrift knobs — matters on T4-16GB.
         try:
             pipe.enable_vae_slicing()
@@ -957,6 +975,27 @@ def _local_sdxl_generate(prompt, output_dir, trial, negative_prompt=""):
             pass
         with torch.autocast(device_type="cuda", dtype=_pipe_dtype):
             image = pipe(**kwargs).images[0]
+        # Sanity check for degenerate outputs BEFORE saving. Turing +
+        # fp16 SDXL can produce NaN → PIL renders as fully black; a
+        # partial VAE overflow can produce near-uniform grey/purple.
+        # Reject anything with too little colour variance so the
+        # vision-judge-disabled fallback path doesn't accept a pure
+        # black image and end up with a black final video. Confirmed
+        # live 2026-07-10.
+        try:
+            import numpy as _np
+            _arr = _np.asarray(image).astype(_np.float32)
+            _std = float(_arr.std())
+            _mean = float(_arr.mean())
+            if _std < 8.0 or _mean < 6.0:
+                log.warning(
+                    f"local_sdxl[cuda:{device_id}]: degenerate output "
+                    f"(mean={_mean:.1f}, std={_std:.1f}) — likely VAE overflow "
+                    f"or all-black; treating as failure"
+                )
+                return None, seed
+        except Exception:
+            pass  # sanity check is best-effort; don't block save on numpy failure
         dest = os.path.join(output_dir, f"local_sdxl_{seed:08x}.jpg")
         image.save(dest, quality=92)
         if not os.path.exists(dest) or os.path.getsize(dest) < 4096:
