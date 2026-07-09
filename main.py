@@ -73,7 +73,7 @@ from modules.editor       import assemble_video
 from modules.uploader     import upload_video
 
 
-def _refine_user_script(manual_script: str, manual_title: str, channel_cfg: dict) -> dict:
+def _refine_user_script(manual_script: str, manual_title: str, channel_cfg: dict, language: str | None = None) -> dict:
     """Take a user-pasted script and polish it: tighten phrasing, add a
     punchy first-3-second hook in the channel's style, generate a
     YouTube title + description + tags.
@@ -88,6 +88,19 @@ def _refine_user_script(manual_script: str, manual_title: str, channel_cfg: dict
     hook_style = channel_cfg.get("hook_style", "open with the most surprising claim")
     tone = channel_cfg.get("tone", "engaging")
     channel_name = channel_cfg.get("display_name") or channel_cfg.get("name") or "video"
+    # Effective language: explicit arg > channel_cfg > default en. Feeds
+    # into the polish prompt so the LLM doesn't translate a German
+    # user-script back into English, and so the youtube_title/description
+    # come out in the same language as the narration.
+    _lang = (language or channel_cfg.get("language") or "en").lower()[:2]
+    _lang_names = {
+        "en":"English","de":"German","fr":"French","es":"Spanish",
+        "it":"Italian","pt":"Portuguese","ru":"Russian","tr":"Turkish",
+        "nl":"Dutch","pl":"Polish","ar":"Arabic","ur":"Urdu","hi":"Hindi",
+        "bn":"Bengali","ja":"Japanese","ko":"Korean","zh":"Chinese",
+        "vi":"Vietnamese","th":"Thai","id":"Indonesian",
+    }
+    _lang_full = _lang_names.get(_lang, _lang)
 
     image_style = channel_cfg.get("image_style", "professional photography")
     perspective = channel_cfg.get(
@@ -97,6 +110,12 @@ def _refine_user_script(manual_script: str, manual_title: str, channel_cfg: dict
     prompt = f"""You are polishing a user-written script for a YouTube Shorts
 video. The script must hit hard — Shorts metrics live and die on the
 first 3 seconds and on completion rate.
+
+Language: {_lang_full} ({_lang}) — the narration, youtube_title, and
+description MUST be written IN THIS LANGUAGE. Do NOT translate the
+user's script to English. Do NOT respond in English if the language
+is anything other than English. The `tags` and `search_keywords`
+arrays MAY stay in English for YouTube SEO reach.
 
 Channel: {channel_name}
 Tone target: {tone}
@@ -309,6 +328,18 @@ def run_pipeline(
     channel_type = channel_type or config.CHANNEL_TYPE
     # Resolve the channel config UP FRONT — every later step reads from it.
     channel_cfg = _ch.resolve(channel_type, manual_channel_desc)
+    # SINGLE SOURCE OF TRUTH for language across the whole pipeline. The
+    # job-level `language` param wins; otherwise fall back to the
+    # channel preset's language; otherwise 'en'. Merge it back into
+    # channel_cfg so every step that reads channel_cfg.language (SEO
+    # writer, storyboard, scriptwriter fallback, custom-niche
+    # synthesizer) sees the SAME value — no more "narration=de but
+    # SEO=en" split. eff_language is still defined again below at the
+    # voiceover step for backward-compat with existing references.
+    _pipeline_lang = (
+        (language or channel_cfg.get("language") or "en") or "en"
+    ).lower()[:2]
+    channel_cfg["language"] = _pipeline_lang
     # run_id — timestamp + 3-char random tail. Two workers that boot
     # the exact same second would previously collide on the timestamp
     # alone and overwrite each other's output/videos/<run_id>/ dir.
@@ -334,6 +365,11 @@ def run_pipeline(
         "channel_cfg": {k: channel_cfg.get(k) for k in ("display_name", "tone", "color_grade")},
         "dry_run": dry_run,
         "manual_mode": manual_mode,
+        # Language of the entire pipeline output — persisted so publish
+        # side-jobs (backend/side_jobs.py) can set YouTube's
+        # defaultLanguage/defaultAudioLanguage even when the render is
+        # published hours later from the /library UI.
+        "language": _pipeline_lang,
         "started_at": datetime.datetime.now().isoformat(timespec="seconds"),
         "steps": {},
     }
@@ -391,6 +427,7 @@ def run_pipeline(
                             max_steps=10,   # bumped from 6 — the model spends 3-4 steps exploring before starting to converge; 6 was too tight under NIM 429 throttling and caused "exhausted step budget" with no final JSON. overall_timeout_sec=180 still bounds runaway agents.
                             channel_cfg=channel_cfg,
                             overall_timeout_sec=180,
+                            language=_pipeline_lang,
                         )
                         if bundle:
                             content["facts"]   = bundle.get("facts") or []
@@ -458,6 +495,7 @@ def run_pipeline(
                             max_steps=10,   # bumped from 6 — the model spends 3-4 steps exploring before starting to converge; 6 was too tight under NIM 429 throttling and caused "exhausted step budget" with no final JSON. overall_timeout_sec=180 still bounds runaway agents.
                             channel_cfg=channel_cfg,
                             overall_timeout_sec=180,
+                            language=_pipeline_lang,
                         )
                     elif not _ra.is_available():
                         log.info("  research_agent: requested but playwright unavailable — skipping")
@@ -508,6 +546,37 @@ def run_pipeline(
                 return _finish(summary, work_dir, False)
         log.info(f"Topic: {content['raw_title'][:80]}")
 
+        # On T4x2, kick SDXL pre-warm on both GPUs in a background thread
+        # NOW so it races the ~30-90 sec script LLM call AND the ~30-60
+        # sec TTS call that follows. Previously this fired at [3/6]
+        # voiceover start — moving it to [2/6] script start doubles the
+        # window it has to finish, which matters most on the first job
+        # after a cold Kaggle boot where the SDXL fetch/materialize
+        # runs long. Joined right before fetch_shots. Single-GPU path
+        # is a no-op (regression-free).
+        _sdxl_warm_thread = None
+        try:
+            from modules import gpu_topology as _gt_warm
+            if _gt_warm.supports_multi_gpu:
+                import threading as _th_warm
+                from modules.shotfinder import _local_sdxl_load as _sdxl_warm_load
+                _warm_devs = list(_gt_warm.sdxl_ready_devices)
+                def _warm_all():
+                    from concurrent.futures import ThreadPoolExecutor as _TPE
+                    try:
+                        with _TPE(max_workers=len(_warm_devs),
+                                  thread_name_prefix="sdxl-warm-bg") as _wex:
+                            list(_wex.map(_sdxl_warm_load, _warm_devs))
+                    except Exception as _we:
+                        log.debug(f"bg SDXL warm crashed: {_we}")
+                log.info(f"[2/6] bg SDXL warm on cuda:{_warm_devs} overlapping script+TTS")
+                _sdxl_warm_thread = _th_warm.Thread(
+                    target=_warm_all, name="sdxl-warm-overlap", daemon=True,
+                )
+                _sdxl_warm_thread.start()
+        except Exception as _wex:
+            log.debug(f"bg SDXL warm skipped: {_wex}")
+
         # ── STEP 2: Script (or manual + refine) ──────────────────
         if manual_script:
             log.info("[2/6] Refining user-provided script (hook + polish)...")
@@ -515,6 +584,7 @@ def run_pipeline(
                 manual_script=manual_script,
                 manual_title=manual_title,
                 channel_cfg=channel_cfg,
+                language=_pipeline_lang,
             ), run_id=run_id)
         else:
             log.info("[2/6] Writing script with LLM...")
@@ -538,37 +608,16 @@ def run_pipeline(
         # ── STEP 3: Voiceover ─────────────────────────────────────
         log.info("[3/6] Generating voiceover...")
         audio_dir = os.path.join(work_dir, "audio")
-        # Resolve effective language for voiceover (matches scriptwriter).
-        eff_language = ((language or channel_cfg.get("language") or "en") or "en").lower()[:2]
-        # On T4x2, kick SDXL pre-warm on both GPUs in a background thread
-        # NOW so it races the ~30-60 sec Kokoro TTS call instead of the
-        # shot pool paying that cost serially at [4/6]. Joined right
-        # before fetch_shots so we don't start dispatching shots on a
-        # not-yet-warmed pipeline. Single-GPU path stays serial — no-op.
-        _sdxl_warm_thread = None
-        try:
-            from modules import gpu_topology as _gt_warm
-            if _gt_warm.supports_multi_gpu:
-                import threading as _th_warm
-                from modules.shotfinder import _local_sdxl_load as _sdxl_warm_load
-                _warm_devs = list(_gt_warm.sdxl_ready_devices)
-                def _warm_all():
-                    from concurrent.futures import ThreadPoolExecutor as _TPE
-                    try:
-                        with _TPE(max_workers=len(_warm_devs),
-                                  thread_name_prefix="sdxl-warm-bg") as _wex:
-                            list(_wex.map(_sdxl_warm_load, _warm_devs))
-                    except Exception as _we:
-                        log.debug(f"bg SDXL warm crashed: {_we}")
-                log.info(f"[3/6] bg SDXL warm on cuda:{_warm_devs} overlapping TTS")
-                _sdxl_warm_thread = _th_warm.Thread(
-                    target=_warm_all, name="sdxl-warm-overlap", daemon=True,
-                )
-                _sdxl_warm_thread.start()
-        except Exception as _wex:
-            log.debug(f"bg SDXL warm skipped: {_wex}")
+        # Resolve effective language for voiceover — same value as the
+        # pipeline-wide _pipeline_lang set above, kept as a local for
+        # backward compat with existing references below.
+        eff_language = _pipeline_lang
+        # (SDXL bg warm was kicked at [2/6] script start above — it's
+        # still running here overlapping TTS. Joined before fetch_shots.)
         audio_path = _step(summary, "voiceover", lambda: generate_voiceover(
-            script["narration"], channel_type, audio_dir, language=eff_language,
+            script["narration"], channel_type, audio_dir,
+            language=eff_language,
+            voice_override=voice_override,
         ), run_id=run_id)
         if not audio_path:
             log.error("Voiceover generation failed. Aborting.")
@@ -771,6 +820,7 @@ def run_pipeline(
             video_id = _step(summary, "upload", lambda: upload_video(
                 final_video, script, channel_type,
                 youtube_account_id=youtube_account_id,
+                language=eff_language,
             ), run_id=run_id)
             if video_id:
                 summary["video_id"]  = video_id

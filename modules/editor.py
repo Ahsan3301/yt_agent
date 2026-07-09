@@ -282,7 +282,12 @@ def caption_chunks(narration_text, max_words=5):
     # Normalize whitespace; keep punctuation attached to the preceding word.
     text = " ".join(narration_text.split())
     # Split into clauses, keeping the trailing punctuation with its clause.
-    pieces = re.split(r"(?<=[\.\!\?\;\:\—])\s+", text)
+    # Includes non-Latin sentence enders so CJK/Arabic/Devanagari narration
+    # doesn't ship as one giant unchunked caption line:
+    #   。 、 ！ ？   — CJK
+    #   ؟ ،           — Arabic
+    #   ।             — Devanagari (Hindi/Bengali danda)
+    pieces = re.split(r"(?<=[\.\!\?\;\:\—。、！？؟،।])\s+", text)
 
     chunks = []
     for piece in pieces:
@@ -577,7 +582,15 @@ def create_caption_file(narration_text, audio_duration, output_path, audio_path:
         "\n"
         "[V4+ Styles]\n"
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        f"Style: Default,Arial,{base_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&HA0000000,-1,0,0,0,100,100,0,0,1,4,2,2,60,60,220,1\n"
+        # Font: DejaVu Sans covers Latin + Cyrillic + Greek + Vietnamese
+        # + Arabic + many extended scripts and is bundled with every
+        # Ubuntu/Debian base image (Kaggle, Colab, Coolify VPS). Arial
+        # was here before but Arial can't render Devanagari (Hindi),
+        # Bengali, CJK (ja/ko/zh), Thai — those languages shipped as
+        # tofu boxes. libass falls back to the system font list for any
+        # glyph DejaVu doesn't cover, so CJK still renders on hosts that
+        # have Noto CJK installed (kaggle notebook cell now apt-installs it).
+        f"Style: Default,DejaVu Sans,{base_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&HA0000000,-1,0,0,0,100,100,0,0,1,4,2,2,60,60,220,1\n"
         "\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
@@ -683,19 +696,23 @@ def _plan_segments(sources, target_duration):
     return segments
 
 
-def _render_video_segment(src, start, dur, out_path):
+def _render_video_segment(src, start, dur, out_path, device_id: int = 0):
     """Cut a video segment, scale + crop to portrait, no audio.
 
     Dispatches to the GPU renderer (modules.editor_gpu) when available
     AND settings.video.render_pipeline allows it. Per-segment fallback:
     on any non-Cancelled exception from the GPU path we log and fall
     through to the ffmpeg path for this one segment.
+
+    device_id chooses which CUDA device runs the decode+torch work
+    (T4x2). Ignored on CPU path.
     """
     if _use_gpu_renderer():
         try:
             return editor_gpu.render_video_segment_gpu(
                 src["path"], start, dur, out_path,
                 fps=OUTPUT_FPS, w=OUTPUT_WIDTH, h=OUTPUT_HEIGHT, crf=23,
+                device_id=int(device_id or 0),
             )
         except Exception as e:
             from modules import run_state as _rs
@@ -818,7 +835,7 @@ def _pick_motion(index):
 _image_segment_index = 0
 
 
-def _render_image_segment(src, dur, out_path, channel="horror"):
+def _render_image_segment(src, dur, out_path, channel="horror", device_id: int = 0):
     """
     Render a still image as a dur-seconds clip with a cinematic motion
     style (zoom in/out, pan in 4 directions) plus color grading, vignette,
@@ -826,6 +843,8 @@ def _render_image_segment(src, dur, out_path, channel="horror"):
 
     Dispatches to the GPU renderer (modules.editor_gpu) when available.
     Same per-segment fallback discipline as _render_video_segment.
+
+    device_id: which CUDA device (0/1 on T4x2) does the torch compute.
     """
     global _image_segment_index
     motion = _pick_motion(_image_segment_index)
@@ -840,6 +859,7 @@ def _render_image_segment(src, dur, out_path, channel="horror"):
                 src["path"], dur, out_path,
                 motion=motion, channel=channel, intensity=intensity,
                 fps=OUTPUT_FPS, w=OUTPUT_WIDTH, h=OUTPUT_HEIGHT, crf=22,
+                device_id=int(device_id or 0),
             )
         except Exception as e:
             from modules import run_state as _rs
@@ -908,17 +928,64 @@ def prepare_clips(sources, target_duration, work_dir, channel="horror"):
     # ~70% of that work and the rest is concat + final mux. So scale the
     # per-segment tick from 0.0 to 0.7.
     from modules import run_state
-    segment_files = []
+    segment_files: list[str] = [""] * len(segments)
     n = max(1, len(segments))
-    for i, (src, start, dur) in enumerate(segments):
-        run_state.check_cancel()
-        out = os.path.join(work_dir, f"seg_{i:02d}.mp4")
-        if src["type"] == "video":
-            _render_video_segment(src, start, dur, out)
-        else:
-            _render_image_segment(src, dur, out, channel=channel)
-        segment_files.append(out)
-        run_state.tick("edit", 0.7 * (i + 1) / n)
+
+    # Multi-GPU dispatch: on T4x2 we split segments across cuda:0 and
+    # cuda:1 with a 2-worker ThreadPool. Each device gets its own
+    # decord decoder + torch compute; NVENC sessions run concurrently
+    # (T4's NVENC handles 2+ streams). Falls back to the serial loop
+    # on single-GPU or CPU workers — same wall-clock as before.
+    try:
+        from modules import gpu_topology as _gt
+        _edit_devices = list(_gt.sdxl_ready_devices) if _use_gpu_renderer() else []
+    except Exception:
+        _edit_devices = []
+
+    if len(_edit_devices) >= 2:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        log.info(
+            f"Edit dispatch: {len(segments)} segments across "
+            f"cuda:{_edit_devices} (2-worker pool)"
+        )
+        done_count = [0]
+
+        def _do_one(idx: int, src: dict, start: float, dur: float):
+            run_state.check_cancel()
+            device_id = _edit_devices[idx % len(_edit_devices)]
+            out = os.path.join(work_dir, f"seg_{idx:02d}.mp4")
+            if src["type"] == "video":
+                _render_video_segment(src, start, dur, out, device_id=device_id)
+            else:
+                _render_image_segment(src, dur, out, channel=channel, device_id=device_id)
+            return idx, out
+
+        with ThreadPoolExecutor(
+            max_workers=len(_edit_devices), thread_name_prefix="edit-seg"
+        ) as ex:
+            futs = [ex.submit(_do_one, i, s, st, du)
+                    for i, (s, st, du) in enumerate(segments)]
+            for fut in as_completed(futs):
+                try:
+                    idx, out = fut.result()
+                except Exception as e:
+                    from modules import run_state as _rs
+                    if isinstance(e, _rs.Cancelled):
+                        raise
+                    raise
+                segment_files[idx] = out
+                done_count[0] += 1
+                run_state.tick("edit", 0.7 * done_count[0] / n)
+    else:
+        for i, (src, start, dur) in enumerate(segments):
+            run_state.check_cancel()
+            out = os.path.join(work_dir, f"seg_{i:02d}.mp4")
+            if src["type"] == "video":
+                _render_video_segment(src, start, dur, out)
+            else:
+                _render_image_segment(src, dur, out, channel=channel)
+            segment_files[i] = out
+            run_state.tick("edit", 0.7 * (i + 1) / n)
 
     concat_list = os.path.join(work_dir, "concat.txt")
     with open(concat_list, "w") as f:

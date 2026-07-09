@@ -57,8 +57,18 @@ OUTPUT_FPS    = 30
 
 # ── Helpers ──────────────────────────────────────────────────────
 
-def _device() -> torch.device:
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+def _device(device_id: int = 0) -> torch.device:
+    """Return cuda:{device_id} when CUDA is up, else CPU. Callers on a
+    T4x2 pass device_id=0/1 to split segments across both GPUs."""
+    if torch.cuda.is_available():
+        try:
+            n = int(torch.cuda.device_count())
+        except Exception:
+            n = 1
+        if 0 <= device_id < n:
+            return torch.device(f"cuda:{device_id}")
+        return torch.device("cuda:0")
+    return torch.device("cpu")
 
 
 def is_available() -> bool:
@@ -214,21 +224,27 @@ def render_video_segment_gpu(
     w: int = OUTPUT_WIDTH,
     h: int = OUTPUT_HEIGHT,
     crf: int = 23,
+    device_id: int = 0,
 ) -> str:
     """
     Decode the slice [start_t, start_t+dur] from src_path on GPU, scale +
     crop to (h, w), encode H.264 NVENC to out_path. Returns out_path.
+
+    device_id selects which CUDA device to use for the decode + torch
+    ops. On T4x2 callers alternate 0/1 across segments to keep both
+    cards busy. NVENC session goes to the driver default (usually
+    device 0) — see _open_nvenc_encoder.
     """
-    dev = _device()
+    dev = _device(device_id)
     if dev.type != "cuda":
         raise RuntimeError("CUDA not available")
 
-    # Decord can decode to GPU via VideoReader(ctx=decord.gpu(0)). On
+    # Decord can decode to GPU via VideoReader(ctx=decord.gpu(N)). On
     # current decord (0.6.0) the GPU ctx requires the build to have been
     # compiled with NVDEC. Fall back gracefully if not — the calling
     # editor still gets the win from torch GPU effects + NVENC encode.
     try:
-        ctx = decord.gpu(0)
+        ctx = decord.gpu(device_id)
         vr = VideoReader(src_path, ctx=ctx)
     except Exception:
         vr = VideoReader(src_path, ctx=decord.cpu(0))
@@ -301,12 +317,16 @@ def render_image_segment_gpu(
     w: int = OUTPUT_WIDTH,
     h: int = OUTPUT_HEIGHT,
     crf: int = 22,
+    device_id: int = 0,
 ) -> str:
     """
     Render a still image as a clip with Ken Burns motion + grade +
     vignette + grain — all on GPU. Returns out_path.
+
+    device_id: which CUDA device (0/1 on T4x2) does the torch compute.
+    NVENC session lands on driver default.
     """
-    dev = _device()
+    dev = _device(device_id)
     if dev.type != "cuda":
         raise RuntimeError("CUDA not available")
 

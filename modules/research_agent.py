@@ -60,11 +60,30 @@ def is_available() -> bool:
     return browser_agent.is_available()
 
 
-def _build_initial_messages(topic: str, channel_hint: str, max_steps: int) -> list[dict]:
+def _build_initial_messages(topic: str, channel_hint: str, max_steps: int, language: str = "en") -> list[dict]:
     sys_msg = _SYSTEM.format(max_steps=max_steps)
+    _lang_names = {
+        "en":"English","de":"German","fr":"French","es":"Spanish",
+        "it":"Italian","pt":"Portuguese","ru":"Russian","tr":"Turkish",
+        "nl":"Dutch","pl":"Polish","ar":"Arabic","ur":"Urdu","hi":"Hindi",
+        "bn":"Bengali","ja":"Japanese","ko":"Korean","zh":"Chinese",
+        "vi":"Vietnamese","th":"Thai","id":"Indonesian",
+    }
+    _lang_full = _lang_names.get(language, language)
+    # Non-English: steer the agent to prefer sources IN that language
+    # (higher-quality facts + less awkward literal translation later),
+    # and to return facts phrased in the target language so the
+    # scriptwriter doesn't quote English text inside a German script.
+    lang_line = ""
+    if language and language != "en":
+        lang_line = (
+            f"\nRESEARCH LANGUAGE: {_lang_full}. Prefer sources written "
+            f"in {_lang_full}. Return every 'fact' string in {_lang_full}. "
+            f"Search queries themselves may be in either language."
+        )
     user_msg = (
         f"Topic to research: {topic.strip()}\n"
-        f"Channel style hint: {channel_hint}\n\n"
+        f"Channel style hint: {channel_hint}{lang_line}\n\n"
         f"Find me 4-6 specific verified facts plus images. Return the JSON bundle when done."
     )
     return [
@@ -97,6 +116,7 @@ def research_topic(
     max_steps: int = 6,
     channel_cfg: Optional[dict] = None,
     overall_timeout_sec: int = 180,
+    language: str = "en",
 ) -> Optional[dict]:
     """Run a NIM-driven browser research loop on `topic`. Returns the
     parsed JSON bundle, or None if Playwright isn't available / NIM
@@ -115,7 +135,7 @@ def research_topic(
         f"channel '{channel_cfg.get('name')}' tone={channel_cfg.get('tone')!r}"
         if channel_cfg else "generic"
     )
-    messages = _build_initial_messages(topic, channel_hint, max_steps)
+    messages = _build_initial_messages(topic, channel_hint, max_steps, language=language)
 
     start = time.time()
     session = browser_agent.Session(headless=True)

@@ -192,6 +192,10 @@ def _publish_youtube(job: dict[str, Any]) -> tuple[bool, str]:
     title = str(job.get("title") or "")
     description = str(job.get("description") or "")
     tags = job.get("tags") or []
+    # Language for YouTube metadata (defaultLanguage / defaultAudioLanguage).
+    # Reads job override first, then falls through to the run summary /
+    # index / channel binding. Defaults to en if nothing found.
+    language = str(job.get("language") or "").strip().lower()[:2]
     try:
         from backend import db
         if db.is_configured():
@@ -212,6 +216,8 @@ def _publish_youtube(job: dict[str, Any]) -> tuple[bool, str]:
                 description = description or str(data.get("description") or "")
                 if not tags:
                     tags = data.get("tags") or []
+                if not language:
+                    language = str(data.get("language") or "").strip().lower()[:2]
             # Runs_index fallback — set by earlier scriptwriter runs
             # that landed the SEO fields directly on the index doc.
             if not (title and description and tags):
@@ -253,6 +259,7 @@ def _publish_youtube(job: dict[str, Any]) -> tuple[bool, str]:
             script_data=script_data,
             channel_type=channel or "horror",
             youtube_account_id=yt_account_id,
+            language=language or None,
         )
     except Exception as e:
         return False, f"uploader.upload_video failed: {e}"

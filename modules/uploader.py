@@ -276,7 +276,7 @@ def _resumable_upload(request, max_retries=8):
     return response
 
 
-def upload_video(video_path, script_data, channel_type="horror", youtube_account_id=None):
+def upload_video(video_path, script_data, channel_type="horror", youtube_account_id=None, language=None):
     """
     Upload video to YouTube; return video ID on success, None on failure.
     Also generates and uploads a thumbnail (best-effort).
@@ -285,6 +285,12 @@ def upload_video(video_path, script_data, channel_type="horror", youtube_account
     uploader falls back to the legacy single-doc credential. With
     multi-account support each dashboard channel can target a different
     YouTube channel.
+
+    `language`: BCP-47 code (en/de/hi/es/fr/...) written into the video's
+    `defaultLanguage` + `defaultAudioLanguage` fields so YouTube treats
+    the title/description in the right script and enables auto-translate
+    for viewers in other locales. Falls back to script_data['language']
+    then 'en'.
     """
     if not os.path.exists(video_path):
         log.error(f"Video file not found: {video_path}")
@@ -306,13 +312,20 @@ def upload_video(video_path, script_data, channel_type="horror", youtube_account
     description = _repair_mojibake((script_data.get("description") or ""))[:5000]
     tags = [_repair_mojibake(t) for t in (script_data.get("tags") or [])[:500]]
 
+    eff_lang = (
+        (language or script_data.get("language") or "en") or "en"
+    ).lower()[:2]
     body = {
         "snippet": {
             "title": title,
             "description": description,
             "tags": tags,
             "categoryId": category_id,
-            "defaultLanguage": "en",
+            # BCP-47: 'en' is fine, so is 'de', 'hi', 'ja'. Matters for
+            # YouTube search + auto-translate; wrong value hides non-EN
+            # videos from their intended audience.
+            "defaultLanguage": eff_lang,
+            "defaultAudioLanguage": eff_lang,
         },
         "status": {
             "privacyStatus": privacy,

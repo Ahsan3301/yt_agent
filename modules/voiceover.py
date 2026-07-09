@@ -40,6 +40,18 @@ LANG_DEFAULT_VOICES: dict[str, dict[str, str]] = {
     "de": {"male": "de-DE-ConradNeural",             "female": "de-DE-KatjaNeural"},
     "ar": {"male": "ar-SA-HamedNeural",              "female": "ar-SA-ZariyahNeural"},
     "pt": {"male": "pt-BR-AntonioNeural",            "female": "pt-BR-FranciscaNeural"},
+    "it": {"male": "it-IT-DiegoNeural",              "female": "it-IT-ElsaNeural"},
+    "ja": {"male": "ja-JP-KeitaNeural",              "female": "ja-JP-NanamiNeural"},
+    "ko": {"male": "ko-KR-InJoonNeural",             "female": "ko-KR-SunHiNeural"},
+    "zh": {"male": "zh-CN-YunxiNeural",              "female": "zh-CN-XiaoxiaoNeural"},
+    "pl": {"male": "pl-PL-MarekNeural",              "female": "pl-PL-ZofiaNeural"},
+    "nl": {"male": "nl-NL-MaartenNeural",            "female": "nl-NL-ColetteNeural"},
+    "tr": {"male": "tr-TR-AhmetNeural",              "female": "tr-TR-EmelNeural"},
+    "id": {"male": "id-ID-ArdiNeural",               "female": "id-ID-GadisNeural"},
+    "ru": {"male": "ru-RU-DmitryNeural",             "female": "ru-RU-SvetlanaNeural"},
+    "vi": {"male": "vi-VN-NamMinhNeural",            "female": "vi-VN-HoaiMyNeural"},
+    "th": {"male": "th-TH-NiwatNeural",              "female": "th-TH-PremwadeeNeural"},
+    "bn": {"male": "bn-IN-BashkarNeural",            "female": "bn-IN-TanishaaNeural"},
 }
 
 # Niche → preferred gender for the language default lookup. Picked to
@@ -59,15 +71,37 @@ NICHE_GENDER_HINT = {
 }
 
 
-def _resolve_voice(preset: dict, language: str | None) -> tuple[str, str, str]:
+def _resolve_voice(preset: dict, language: str | None, voice_override: str | None = None) -> tuple[str, str, str]:
     """Resolve (voice_id, rate, pitch) from the channel preset honoring
     the requested language. settings.json can override either the per-
     niche voice OR the per-language voice — useful when a user wants a
     specific voice for ALL their Urdu content regardless of niche.
+
+    `voice_override` — user's per-render pick from the /create wizard.
+    Wins over every other source unless it's obviously wrong for the
+    selected language (BCP-47 prefix mismatch), in which case we log
+    and fall through so we don't get "German script, English voice".
     """
     settings = load_settings().get("voice", {})
     niche = preset.get("name") or "horror"
     lang = (language or preset.get("language") or "en").lower()[:2]
+
+    # 0. Per-render voice override from the wizard. Sanity check that the
+    # picked voice's locale prefix matches the requested language — if a
+    # user picked en-US-Aria for a German render (either UI bug or stale
+    # pick from a previous session), fall through to language defaults
+    # so audio doesn't ship in the wrong language.
+    if voice_override:
+        ov = voice_override.strip()
+        ov_lang = ov.split("-", 1)[0].lower()[:2] if "-" in ov else ""
+        if not ov_lang or ov_lang == lang:
+            return ov, settings.get(f"edge_rate_{niche}", preset.get("rate", "+0%")), \
+                   settings.get(f"edge_pitch_{niche}", preset.get("pitch", "+0Hz"))
+        else:
+            log.warning(
+                f"voice_override {ov!r} language={ov_lang} doesn't match "
+                f"pipeline language={lang}; falling back to language defaults"
+            )
 
     # 1. settings.json override for THIS niche + language pair.
     override = settings.get(f"edge_voice_{niche}_{lang}")
@@ -99,13 +133,13 @@ def _resolve_voice(preset: dict, language: str | None) -> tuple[str, str, str]:
     return voice, rate, pitch
 
 
-def _voice_config(channel_type, language=None):
+def _voice_config(channel_type, language=None, voice_override=None):
     """Build the per-channel voice config dict. Reads the niche preset
     (which is the source of truth) and merges any settings.json overrides
-    + language selection."""
+    + language selection + wizard-picked voice_override."""
     from modules.channels import get_channel
     preset = get_channel(channel_type)
-    voice, rate, pitch = _resolve_voice(preset, language)
+    voice, rate, pitch = _resolve_voice(preset, language, voice_override=voice_override)
     s = load_settings().get("voice", {})
     return {
         "edge":         voice,
@@ -163,12 +197,12 @@ async def _edge_tts_async(text, voice, output_path, rate="+0%", pitch="+0Hz"):
             log.warning(f"edge-tts: failed to write word-timing sidecar: {e}")
 
 
-def generate_with_edge_tts(text, channel_type, output_path, language=None):
+def generate_with_edge_tts(text, channel_type, output_path, language=None, voice_override=None):
     """
     Generate voiceover using Microsoft edge-tts (free, no key needed).
     Returns path to .mp3 file.
     """
-    cfg = _voice_config(channel_type, language=language)
+    cfg = _voice_config(channel_type, language=language, voice_override=voice_override)
     voice = cfg["edge"]
     rate = cfg.get("edge_rate", "+0%")
     pitch = cfg.get("edge_pitch", "+0Hz")
@@ -373,7 +407,7 @@ def generate_with_kokoro(text, channel_type, output_path, language=None):
     return None
 
 
-def generate_voiceover(narration_text, channel_type, output_dir, language=None):
+def generate_voiceover(narration_text, channel_type, output_dir, language=None, voice_override=None):
     """
     Main entry point. Tries preferred engine, falls back automatically.
     Returns path to generated audio file.
@@ -381,6 +415,10 @@ def generate_voiceover(narration_text, channel_type, output_dir, language=None):
     `language` is a 2-letter ISO code — "en", "ur", "hi", "es"... When
     non-English, kokoro is skipped (English-only model) and edge-tts
     picks a matching neural voice.
+
+    `voice_override` — a specific edge-tts voice id the /create wizard
+    let the user pick. Wins over niche/language defaults; ignored (with
+    a warning) if its locale doesn't match `language`.
     """
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     output_path = os.path.join(output_dir, "voiceover.mp3")
@@ -393,5 +431,8 @@ def generate_voiceover(narration_text, channel_type, output_dir, language=None):
         log.warning("Kokoro failed, falling back to edge-tts")
 
     # Default / fallback: edge-tts
-    result = generate_with_edge_tts(narration_text, channel_type, output_path, language=language)
+    result = generate_with_edge_tts(
+        narration_text, channel_type, output_path,
+        language=language, voice_override=voice_override,
+    )
     return result
