@@ -340,7 +340,7 @@ def upload_video(video_path, script_data, channel_type="horror", youtube_account
         chunksize=1024 * 1024 * 5,
     )
 
-    log.info(f"Uploading '{title}' as {privacy}...")
+    log.info(f"Uploading '{title}' as {privacy} | defaultLanguage={eff_lang!r}")
     request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
 
     try:

@@ -281,10 +281,15 @@ def caption_chunks(narration_text, max_words=5):
     """
     # Normalize whitespace; keep punctuation attached to the preceding word.
     text = " ".join(narration_text.split())
+    # CJK doesn't use inter-sentence whitespace — 「これは短い文です。もう
+    # 一つ短い文です」 has no space after the 。. Inject one so the same
+    # split regex catches it. Idempotent: only inserts before a
+    # non-whitespace/non-EOL char.
+    text = re.sub(r"([。、！？])(?=\S)", r"\1 ", text)
     # Split into clauses, keeping the trailing punctuation with its clause.
     # Includes non-Latin sentence enders so CJK/Arabic/Devanagari narration
     # doesn't ship as one giant unchunked caption line:
-    #   。 、 ！ ？   — CJK
+    #   。 、 ！ ？   — CJK (space injected above)
     #   ؟ ،           — Arabic
     #   ।             — Devanagari (Hindi/Bengali danda)
     pieces = re.split(r"(?<=[\.\!\?\;\:\—。、！？؟،।])\s+", text)

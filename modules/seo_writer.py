@@ -87,6 +87,7 @@ def write_seo_metadata(
             parsed = _normalise(parsed, viral, script)
             parsed["_source"] = "nim"
             log.info(f"seo_writer: NIM metadata ready for niche={niche} "
+                     f"lang={channel_cfg.get('language','en')!r} "
                      f"title='{parsed['youtube_title'][:40]}...'")
             return parsed
         log.warning(f"seo_writer attempt {attempt}: {problems}")

@@ -340,6 +340,24 @@ def run_pipeline(
         (language or channel_cfg.get("language") or "en") or "en"
     ).lower()[:2]
     channel_cfg["language"] = _pipeline_lang
+    # Verification log — every render's PB run_logs starts with a
+    # single line summarising the language + voice + GPU state so we
+    # can audit any published video by grep. Cheap and self-documenting.
+    try:
+        from modules import gpu_topology as _gt_v
+        _gpu_summary = (
+            f"multi_gpu={_gt_v.supports_multi_gpu} "
+            f"devices={_gt_v.device_ids} "
+            f"kokoro_dev={_gt_v.kokoro_device}"
+        )
+    except Exception:
+        _gpu_summary = "gpu_topology_unavailable"
+    log.info(
+        f"pipeline_lang={_pipeline_lang!r} "
+        f"channel={channel_type!r} "
+        f"voice_override={voice_override!r} "
+        f"{_gpu_summary}"
+    )
     # run_id — timestamp + 3-char random tail. Two workers that boot
     # the exact same second would previously collide on the timestamp
     # alone and overwrite each other's output/videos/<run_id>/ dir.

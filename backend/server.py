@@ -30,7 +30,7 @@ from typing import Optional, Any
 
 from fastapi import FastAPI, HTTPException, Body, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel
 from dotenv import load_dotenv, set_key, unset_key
 
@@ -159,6 +159,24 @@ def _on_shutdown():
 @app.get("/api/health")
 def health():
     return {"ok": True}
+
+
+@app.get("/api/health/self-check")
+def health_self_check(text: bool = False):
+    """Runtime verification of the multi-GPU + multilingual wiring.
+
+    Returns JSON by default; ?text=1 returns a plain-text report. Called
+    by the notebook's self-check cell + can be curled from anywhere the
+    worker is reachable (outbound-poll workers aren't publicly exposed,
+    so this is mostly for the notebook / debugging).
+    """
+    try:
+        from backend import self_check as _sc
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"ok": False, "error": f"self_check import failed: {e}"})
+    if text:
+        return Response(_sc.run(text=True), media_type="text/plain")
+    return _sc.run(text=False)
 
 
 @app.get("/api/preflight")
