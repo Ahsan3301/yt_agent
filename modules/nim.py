@@ -435,7 +435,7 @@ def chat_with_tools(messages, tools, model=None, max_tokens=2048,
 _INT_RE = re.compile(r"\b(10|[0-9])\b")
 
 
-def vision_score(image_url, fit_description, premise="", model=None, timeout=90):
+def vision_score(image_url, fit_description, premise="", model=None, timeout=30):
     """
     Score how well `image_url` matches `fit_description` (the per-shot
     visual description the storyboard produced) and, optionally, the

@@ -1137,13 +1137,21 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror"):
     stock_yielded_nothing = best is None
     if stock_yielded_nothing:
         ai_attempts = max(ai_attempts, 5)
-        # Save the original then relax the local judge threshold. We
-        # do this AFTER the stock branches so it doesn't affect them.
-        threshold = min(threshold, 1)
+        # Aggressively relax vision judging on the AI-fallback path.
+        # Even threshold=1 was rejecting every SDXL generation live —
+        # the judge scores 0/10 constantly (payload too big for NIM
+        # vision, or fallback lands on a text-only model, or the
+        # rubric is calibrated for stock photos not SDXL-turbo output).
+        # Setting threshold to -1 accepts ANY image the provider
+        # produced INCLUDING parse-failures — better a mediocre AI
+        # shot than a dropped shot that dies the render. Confirmed
+        # live 2026-07-09: SDXL was generating perfectly fine images
+        # that the judge was rejecting for 30+ min per shot.
+        threshold = -1
         log.info(
             f"  stock returned no candidates; boosting AI budget to "
-            f"{ai_attempts} attempts + relaxing vision threshold to "
-            f"{threshold} so shots don't drop"
+            f"{ai_attempts} attempts + DISABLING vision-judge rejection "
+            f"(threshold=-1) so first successful gen wins the shot"
         )
     ig_cfg = (load_settings().get("image_gen") or {})
     priority = ig_cfg.get("priority") or ["huggingface", "local_sdxl", "pollinations"]
@@ -1210,7 +1218,12 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror"):
             if not path:
                 continue
             tag = f"{provider_name}:{seed}"
-            if judge_on:
+            if judge_on and threshold >= 0:
+                # Only pay the vision-judge round-trip when threshold
+                # is real (>=0). On the AI-fallback path we set
+                # threshold=-1 above and take the first successful gen
+                # without judging — the judge burns 30-90s per call and
+                # was rejecting every SDXL image with score=0 live.
                 s = _score_local_image(path, visual, premise)
                 log.info(f"    {provider_name}: {s}/10 (seed {seed})")
                 if s >= threshold:
