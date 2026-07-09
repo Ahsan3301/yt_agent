@@ -87,6 +87,10 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
           c.real_events === false ? false : null,
         language: (typeof c.language === "string" && c.language) ? String(c.language) : null,
         voice_override: (typeof c.voice === "string" && c.voice) ? String(c.voice) : null,
+        // Per-channel tone + privacy overrides — carried on the job so
+        // the worker's run_pipeline gets them without a PB round-trip.
+        tone_override: (typeof c.tone === "string" && c.tone) ? String(c.tone) : null,
+        privacy_override: (c.privacy === "public" || c.privacy === "unlisted" || c.privacy === "private") ? String(c.privacy) : null,
         youtube_account_id: yt,
         unbound: !yt,
         source_channel_name: String(c.name || id),

@@ -81,15 +81,18 @@ NIM_KEY = _KeyProxy()
 #   images (root of the user's 'clips are irrelevant' report). Falls
 #   back to 11B if 90B is briefly unavailable so scoring never fully
 #   breaks.
-TEXT_MODEL_PRIMARY   = os.getenv("NIM_TEXT_MODEL",   "minimaxai/minimax-m3")
+TEXT_MODEL_PRIMARY   = os.getenv("NIM_TEXT_MODEL",   "meta/llama-3.3-70b-instruct")
 TEXT_MODEL_FALLBACKS = [
-    # Strong general-purpose fallback, no reasoning trace to strip.
-    "meta/llama-3.3-70b-instruct",
-    # Nemotron 120B — kept as LAST resort. It's a reasoning model,
-    # which is why it was leaking 'reasoning-soup' fragments into
-    # topic/script when the token budget was tight. Still valuable
-    # for genuinely hard reasoning but not the default anymore.
+    # Nemotron 3 Super 120B (MoE, ~12B active/token) — big reasoning
+    # model, second-most-reliable in prod when llama-3.3 times out.
+    # Its reasoning trace was a problem in earlier prompts but current
+    # prompts either strip it or benefit from it (SEO metadata, storyboard).
     "nvidia/nemotron-3-super-120b-a12b",
+    # Minimax-m3 — was primary but rate-limits heavily (429s constantly
+    # per prod logs) and read-timeouts often. Kept as third fallback so
+    # its throughput still helps under sudden burst load.
+    "minimaxai/minimax-m3",
+    # Llama-3.1-70b — last-resort classic dense fallback.
     "meta/llama-3.1-70b-instruct",
 ]
 

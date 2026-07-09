@@ -43,6 +43,13 @@ type ChannelDoc = {
   // The YouTube channel id this dashboard channel uploads to. Null /
   // unset = use whichever YouTube account is the legacy default.
   youtube_account_id?: string | null;
+  // Per-channel tone override. Overrides the niche preset's tone JUST
+  // for this channel — otherwise the global settings tone bleeds
+  // across every niche.
+  tone?: string | null;
+  // Per-channel YouTube privacy override — public/unlisted/private.
+  // Null = use settings.upload.privacy (global default).
+  privacy?: "public" | "unlisted" | "private" | null;
 };
 
 /** GET /api/channels — list all channels. */
@@ -114,6 +121,15 @@ export async function POST(req: NextRequest) {
          body.run_at_hour >= 0 && body.run_at_hour <= 23)
           ? Math.floor(body.run_at_hour)
           : null,
+      // Per-channel tone override (free-form string; empty/null = niche default).
+      tone: (typeof body.tone === "string" && body.tone.trim())
+        ? body.tone.trim().slice(0, 40)
+        : null,
+      // Per-channel YouTube privacy — must be one of the three
+      // allowed values or null (= use global settings.upload.privacy).
+      privacy: (body.privacy === "public" || body.privacy === "unlisted" || body.privacy === "private")
+        ? body.privacy
+        : null,
       updated_at: FieldValue.serverTimestamp(),
       ...(existing.exists ? {} : { created_at: FieldValue.serverTimestamp() }),
     };

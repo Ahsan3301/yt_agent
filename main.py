@@ -300,6 +300,13 @@ def run_pipeline(
     # youtube_accounts/<id> doc. None falls back to the legacy single
     # api_keys/YOUTUBE_REFRESH_TOKEN credential.
     youtube_account_id: Optional[str] = None,
+    # Per-channel tone override from the channels doc. Overrides the
+    # niche preset's tone (which is baked into modules/channels.py)
+    # ONLY for this render — no global bleed. Empty/None = niche default.
+    tone_override: Optional[str] = None,
+    # Per-channel YouTube privacy override — "public"/"unlisted"/"private".
+    # None = fall back to settings.upload.privacy (global default).
+    privacy_override: Optional[str] = None,
 ):
     """
     Execute the full automation pipeline for one video.
@@ -340,6 +347,14 @@ def run_pipeline(
         (language or channel_cfg.get("language") or "en") or "en"
     ).lower()[:2]
     channel_cfg["language"] = _pipeline_lang
+    # Per-channel tone override — if the dashboard channels doc supplied
+    # one, it wins over the niche preset's default so a horror channel's
+    # "chilling" doesn't bleed into a science channel that reuses the
+    # settings.tone knob. Empty string skipped.
+    if tone_override:
+        _tone_clean = str(tone_override).strip()[:40]
+        if _tone_clean:
+            channel_cfg["tone"] = _tone_clean
     # Verification log — every render's PB run_logs starts with a
     # single line summarising the language + voice + GPU state so we
     # can audit any published video by grep. Cheap and self-documenting.
@@ -839,6 +854,7 @@ def run_pipeline(
                 final_video, script, channel_type,
                 youtube_account_id=youtube_account_id,
                 language=eff_language,
+                privacy_override=privacy_override,
             ), run_id=run_id)
             if video_id:
                 summary["video_id"]  = video_id

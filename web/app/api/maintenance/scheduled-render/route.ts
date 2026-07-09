@@ -93,6 +93,8 @@ export async function POST(req: NextRequest) {
       real_events: boolean | null;
       language: string | null;
       voice: string | null;
+      tone: string | null;
+      privacy: "public" | "unlisted" | "private" | null;
       youtube_account_id: string | null;
       unbound: boolean;
     }> = [];
@@ -135,6 +137,8 @@ export async function POST(req: NextRequest) {
               c.real_events === false ? false : null,
             language: (typeof c.language === "string" && c.language) ? String(c.language) : null,
             voice:    (typeof c.voice === "string" && c.voice) ? String(c.voice) : null,
+            tone:     (typeof c.tone === "string" && c.tone) ? String(c.tone) : null,
+            privacy:  (c.privacy === "public" || c.privacy === "unlisted" || c.privacy === "private") ? c.privacy : null,
             youtube_account_id: yt,
             unbound: !yt,
           });
@@ -160,6 +164,7 @@ export async function POST(req: NextRequest) {
           channelMeta.push({
             niche, channel_name: niche,
             web_research: null, real_events: null, language: null, voice: null,
+            tone: null, privacy: null,
             youtube_account_id: inherited,
             unbound: !inherited,
           });
@@ -247,6 +252,8 @@ export async function POST(req: NextRequest) {
         real_events:  slot.real_events,
         language:     slot.language,
         voice_override: slot.voice,
+        tone_override: slot.tone,
+        privacy_override: slot.privacy,
         youtube_account_id: slot.youtube_account_id,
         // When true, this scheduled slot didn't find a bound YouTube
         // account — publish will either fall back to legacy default OR

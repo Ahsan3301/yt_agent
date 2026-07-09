@@ -37,7 +37,22 @@ type Channel = {
   voice?: string | null;
   youtube_account_id?: string | null;
   run_at_hour?: number | null;
+  // Per-channel overrides — when unset, the niche preset's default wins.
+  // tone bleeds across channels if only set in global /settings; setting
+  // it here scopes it to this channel only.
+  tone?: string | null;
+  privacy?: "public" | "unlisted" | "private" | null;
 };
+
+const TONE_OPTIONS = [
+  "chilling", "eerie", "suspenseful", "dark",
+  "motivational", "inspirational", "empowering",
+  "educational", "curious", "thoughtful",
+  "comedic", "playful", "light",
+  "dramatic", "cinematic", "epic",
+  "calm", "soothing", "meditative",
+  "energetic", "hyped", "intense",
+];
 
 type YouTubeAccount = {
   id: string;
@@ -495,6 +510,10 @@ function ChannelForm({
   const [runAtHour, setRunAtHour] = useState<number | null>(
     typeof initial?.run_at_hour === "number" ? initial.run_at_hour : null,
   );
+  const [tone, setTone] = useState<string>(initial?.tone || "");
+  const [privacy, setPrivacy] = useState<"" | "public" | "unlisted" | "private">(
+    (initial?.privacy as "public" | "unlisted" | "private" | undefined) || "",
+  );
 
   const submit = () => {
     if (!name.trim()) return;
@@ -515,6 +534,8 @@ function ChannelForm({
       voice: voice || null,
       youtube_account_id: youtubeAccountId || null,
       run_at_hour: runAtHour,
+      tone: tone.trim() || null,
+      privacy: privacy || null,
     });
   };
 
@@ -660,6 +681,43 @@ function ChannelForm({
           </select>
           <div className="text-[10px] text-neutral-500 mt-1">
             Override the niche&apos;s default voice for this language.
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div>
+          <label className="label">Tone (per-channel override)</label>
+          <input
+            list={`tones-${initial?.id || "new"}`}
+            className="input w-full"
+            placeholder="Niche default (e.g. chilling for horror)"
+            value={tone}
+            onChange={(e) => setTone(e.target.value)}
+          />
+          <datalist id={`tones-${initial?.id || "new"}`}>
+            {TONE_OPTIONS.map((t) => <option key={t} value={t} />)}
+          </datalist>
+          <div className="text-[10px] text-neutral-500 mt-1">
+            Overrides the niche preset&apos;s tone JUST for this channel.
+            Leave blank to inherit. Free-text — dropdown suggests common tones.
+          </div>
+        </div>
+        <div>
+          <label className="label">YouTube privacy (per-channel)</label>
+          <select
+            className="select"
+            value={privacy}
+            onChange={(e) => setPrivacy(e.target.value as "" | "public" | "unlisted" | "private")}
+          >
+            <option value="">Use global default (Settings)</option>
+            <option value="private">Private</option>
+            <option value="unlisted">Unlisted</option>
+            <option value="public">Public</option>
+          </select>
+          <div className="text-[10px] text-neutral-500 mt-1">
+            How videos from this channel land on YouTube. Overrides
+            settings.upload.privacy for renders bound to this channel.
           </div>
         </div>
       </div>

@@ -881,7 +881,15 @@ def _local_sdxl_generate(prompt, output_dir, trial, negative_prompt=""):
         is_turbo = "turbo" in pipe_name or "turbo" in env_model or "turbo" in settings_model
         kwargs = {
             "prompt": prompt,
-            "negative_prompt": negative_prompt or None,
+            # Passing "" (not None) matters on SDXL-turbo. With
+            # negative_prompt=None + guidance_scale=0, diffusers builds
+            # DEFAULT negative embeddings in torch's default dtype
+            # (float32) instead of matching the pipe's fp16 weights —
+            # then the first cross-attention op throws "expected scalar
+            # type Half but found Float". Empty-string forces the
+            # tokenizer path which produces embeddings in the right
+            # dtype. Confirmed live on both cuda:0 and cuda:1.
+            "negative_prompt": negative_prompt or "",
             "height": 1024,
             "width": 576,   # 9:16 portrait; SDXL handles this via 32-multiple sizes
             "generator": gen,
@@ -900,7 +908,18 @@ def _local_sdxl_generate(prompt, output_dir, trial, negative_prompt=""):
             kwargs.update({"num_inference_steps": 5, "guidance_scale": 0.0})
         else:
             kwargs.update({"num_inference_steps": 25, "guidance_scale": 6.5})
-        image = pipe(**kwargs).images[0]
+        # Belt-and-suspenders: autocast to fp16 forces every internal op
+        # to fp16 regardless of what dtype a rogue tensor was allocated
+        # in. Cheap on T4 and catches any negative-embedding / latent
+        # / conditioning-tensor path we haven't seen yet. Torch's
+        # autocast is context-manager based and thread-safe.
+        _pipe_dtype = torch.float16  # T4 uses fp16; sm_8+ uses bfloat16
+        try:
+            _pipe_dtype = next(pipe.unet.parameters()).dtype
+        except Exception:
+            pass
+        with torch.autocast(device_type="cuda", dtype=_pipe_dtype):
+            image = pipe(**kwargs).images[0]
         dest = os.path.join(output_dir, f"local_sdxl_{seed:08x}.jpg")
         image.save(dest, quality=92)
         if not os.path.exists(dest) or os.path.getsize(dest) < 4096:

@@ -276,7 +276,7 @@ def _resumable_upload(request, max_retries=8):
     return response
 
 
-def upload_video(video_path, script_data, channel_type="horror", youtube_account_id=None, language=None):
+def upload_video(video_path, script_data, channel_type="horror", youtube_account_id=None, language=None, privacy_override=None):
     """
     Upload video to YouTube; return video ID on success, None on failure.
     Also generates and uploads a thumbnail (best-effort).
@@ -302,9 +302,15 @@ def upload_video(video_path, script_data, channel_type="horror", youtube_account
 
     s = load_settings()
     up = s.get("upload", {})
-    privacy = (up.get("privacy") or config.PRIVACY or "private").lower()
-    if privacy not in ("public", "unlisted", "private"):
-        privacy = "private"
+    # Per-channel privacy override wins over the global settings.upload.privacy
+    # so different channels can publish differently (e.g. horror = private
+    # while science = public) without touching the global default.
+    if privacy_override and str(privacy_override).lower() in ("public", "unlisted", "private"):
+        privacy = str(privacy_override).lower()
+    else:
+        privacy = (up.get("privacy") or config.PRIVACY or "private").lower()
+        if privacy not in ("public", "unlisted", "private"):
+            privacy = "private"
     made_for_kids = bool(up.get("made_for_kids", False))
     category_id = up.get(f"category_{channel_type}") or CATEGORY_IDS.get(channel_type, "24")
 

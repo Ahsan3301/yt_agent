@@ -414,6 +414,8 @@ def _run_one(job: dict[str, Any]):
         language=job.get("language"),
         voice_override=job.get("voice_override"),
         youtube_account_id=job.get("youtube_account_id"),
+        tone_override=job.get("tone_override"),
+        privacy_override=job.get("privacy_override"),
     )
 
     # Pipeline finished — final state and (optionally) upload.
