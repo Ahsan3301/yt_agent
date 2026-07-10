@@ -107,6 +107,12 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         cf_own_api_token: c.cloudflare_source === "own"
           ? String(c.cloudflare_api_token || "").trim()
           : "",
+        // Per-channel account pool (JSON list). When set with cf_source=own,
+        // the worker's channel_cf shim exports it as CLOUDFLARE_ACCOUNTS_JSON
+        // so shotfinder's pool-aware CF path rotates through it.
+        cf_pool: c.cloudflare_source === "own"
+          ? String(c.cloudflare_pool || "").trim()
+          : "",
         llm_priority: (typeof c.llm_priority === "string" && c.llm_priority.trim())
           ? String(c.llm_priority).trim().slice(0, 60)
           : "",

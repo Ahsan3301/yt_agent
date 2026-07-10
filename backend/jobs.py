@@ -166,6 +166,10 @@ def submit(payload: dict[str, Any]) -> dict[str, Any]:
         "cf_source":           str(payload.get("cf_source") or "off")[:10],
         "cf_own_account_id":   str(payload.get("cf_own_account_id") or "")[:64],
         "cf_own_api_token":    str(payload.get("cf_own_api_token") or "")[:500],
+        # Per-channel Cloudflare account POOL (JSON list, same shape as
+        # the operator's global CLOUDFLARE_ACCOUNTS_JSON). Empty = fall
+        # back to the single-account own creds above.
+        "cf_pool":             str(payload.get("cf_pool") or "")[:5000],
         # Per-channel LLM priority (comma list of nim/groq/openrouter).
         # Empty = worker uses default (nim,openrouter,groq).
         "llm_priority":        str(payload.get("llm_priority") or "")[:60],
@@ -227,6 +231,7 @@ def adopt_remote(remote_job: dict[str, Any]) -> bool:
         "cf_source":           str(remote_job.get("cf_source") or "off")[:10],
         "cf_own_account_id":   str(remote_job.get("cf_own_account_id") or "")[:64],
         "cf_own_api_token":    str(remote_job.get("cf_own_api_token") or "")[:500],
+        "cf_pool":             str(remote_job.get("cf_pool") or "")[:5000],
         "llm_priority":        str(remote_job.get("llm_priority") or "")[:60],
         "allowed_workers":     list(remote_job.get("allowed_workers") or []),
         "oracle_password_hash": str(remote_job.get("oracle_password_hash") or ""),

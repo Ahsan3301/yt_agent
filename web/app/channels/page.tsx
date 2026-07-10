@@ -61,6 +61,10 @@ type Channel = {
   //              mode requires the operator unlock password.
   cloudflare_source?: "off" | "own" | "global";
   has_cloudflare_own_creds?: boolean;
+  // Server-projected: true when a pool JSON is stored on this channel.
+  // The pool itself is never returned (write-only secret).
+  has_cloudflare_pool?: boolean;
+  cloudflare_pool_count?: number;
   // Comma-separated ordered list of LLM providers this channel should
   // use, e.g. "nim,openrouter,groq". Empty = worker default.
   llm_priority?: string;
@@ -636,6 +640,13 @@ function ChannelForm({
   );
   const [cfOwnAccount, setCfOwnAccount] = useState<string>("");
   const [cfOwnToken, setCfOwnToken] = useState<string>("");
+  // Multi-account pool (JSON blob). Same shape as global /keys pool.
+  const hasCfPool = !!initial?.has_cloudflare_pool;
+  const cfPoolCount = Number(initial?.cloudflare_pool_count || 0);
+  const [cfPoolAction, setCfPoolAction] = useState<"keep" | "set" | "clear">(
+    hasCfPool ? "keep" : "set",
+  );
+  const [cfPoolJson, setCfPoolJson] = useState<string>("");
   // Operator unlock required to switch INTO global mode. Same value as
   // ORACLE_UNLOCK_PASSWORD env, prompted here only when the user picks
   // global; never round-trips back to the client.
@@ -679,6 +690,8 @@ function ChannelForm({
       cloudflare_action?: "set" | "clear";
       cloudflare_account_id?: string;
       cloudflare_api_token?: string;
+      cloudflare_pool?: string;
+      cloudflare_pool_action?: "set" | "clear";
       cloudflare_global_password?: string;
     } = {
       id: initial?.id || "",
@@ -718,6 +731,25 @@ function ChannelForm({
     } else if (cfSource === "off") {
       // Toggling OFF wipes stored creds server-side.
       payload.cloudflare_action = "clear";
+    }
+    // Pool patch — independent of the single-account patch.
+    if (cfSource === "own" && cfPoolAction === "set" && cfPoolJson.trim()) {
+      // Client-side JSON sanity check so the user sees the mistake before
+      // a server round-trip. Server re-validates fully.
+      try {
+        const parsed = JSON.parse(cfPoolJson);
+        if (!Array.isArray(parsed) || parsed.length === 0) {
+          alert("Cloudflare pool must be a JSON array with at least one entry.");
+          return;
+        }
+      } catch (e) {
+        alert(`Cloudflare pool JSON is invalid: ${String(e).slice(0, 200)}`);
+        return;
+      }
+      payload.cloudflare_pool_action = "set";
+      payload.cloudflare_pool = cfPoolJson.trim();
+    } else if (cfSource === "own" && cfPoolAction === "clear") {
+      payload.cloudflare_pool_action = "clear";
     }
     if (cfSource === "global" && cfGlobalPassword) {
       payload.cloudflare_global_password = cfGlobalPassword;
@@ -1240,6 +1272,76 @@ function ChannelForm({
                 </div>
               </div>
             )}
+
+            {/* Multi-account pool (JSON list). Wins over single-account
+                creds when set. ~60 imgs/day per account × N accounts. */}
+            <div className="pt-3 border-t border-line/60 space-y-2">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-[11px] font-medium text-neutral-300">
+                  Account pool (optional — for multi-account rotation)
+                </span>
+                {hasCfPool && (
+                  <span className="pill text-[9px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                    {cfPoolCount} account(s) in pool
+                  </span>
+                )}
+                {hasCfPool && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => { setCfPoolAction("keep"); setCfPoolJson(""); }}
+                      className={clsx(
+                        "px-2 h-6 rounded-md border text-[10px]",
+                        cfPoolAction === "keep" ? "border-accent/50 bg-accent/10 text-white"
+                          : "border-line text-neutral-400 hover:text-neutral-200"
+                      )}
+                    >Keep</button>
+                    <button
+                      type="button"
+                      onClick={() => setCfPoolAction("set")}
+                      className={clsx(
+                        "px-2 h-6 rounded-md border text-[10px]",
+                        cfPoolAction === "set" ? "border-accent/50 bg-accent/10 text-white"
+                          : "border-line text-neutral-400 hover:text-neutral-200"
+                      )}
+                    >Replace</button>
+                    <button
+                      type="button"
+                      onClick={() => setCfPoolAction("clear")}
+                      className={clsx(
+                        "px-2 h-6 rounded-md border text-[10px]",
+                        cfPoolAction === "clear" ? "border-red-500/50 bg-red-500/10 text-red-300"
+                          : "border-line text-neutral-400 hover:text-neutral-200"
+                      )}
+                    >Clear</button>
+                  </>
+                )}
+              </div>
+              {(cfPoolAction === "set" || !hasCfPool) && (
+                <>
+                  <textarea
+                    className="input w-full text-[11px] font-mono min-h-[110px]"
+                    placeholder={`[{"label":"primary","account_id":"aaa...","api_token":"cfut_..."},{"label":"backup","account_id":"bbb...","api_token":"cfut_..."}]`}
+                    value={cfPoolJson}
+                    onChange={(e) => setCfPoolJson(e.target.value)}
+                    spellCheck={false}
+                  />
+                  <p className="text-[10px] text-neutral-500">
+                    Paste a JSON array of Cloudflare accounts. Each free account
+                    ≈ 60 klein-9b images/day at step=6. When one is exhausted,
+                    the render rotates to the next in the list. Wins over the
+                    single-account fields above when set. Sign up for extra
+                    free CF accounts with different email aliases.
+                  </p>
+                </>
+              )}
+              {cfPoolAction === "clear" && (
+                <p className="text-[10px] text-red-300">
+                  Pool will be cleared on save. Single-account creds above will
+                  be used instead (if set).
+                </p>
+              )}
+            </div>
           </div>
         )}
 

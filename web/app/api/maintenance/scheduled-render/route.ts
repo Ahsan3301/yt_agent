@@ -102,6 +102,7 @@ export async function POST(req: NextRequest) {
       cf_source: string;
       cf_own_account_id: string;
       cf_own_api_token: string;
+      cf_pool: string;
       llm_priority: string;
     }> = [];
     // Build a niche→binding lookup so the legacy fallback path (below)
@@ -145,6 +146,9 @@ export async function POST(req: NextRequest) {
           ? String(c.cloudflare_account_id || "").trim() : "";
         const cfOwnTok = cfSource === "own"
           ? String(c.cloudflare_api_token || "").trim() : "";
+        // Per-channel Cloudflare account POOL for multi-account rotation.
+        const cfPool = cfSource === "own"
+          ? String(c.cloudflare_pool || "").trim() : "";
         for (let i = 0; i < count; i++) {
           channelMeta.push({
             niche,
@@ -166,6 +170,7 @@ export async function POST(req: NextRequest) {
             cf_source: cfSource,
             cf_own_account_id: cfOwnAcc,
             cf_own_api_token: cfOwnTok,
+            cf_pool: cfPool,
             llm_priority: (typeof c.llm_priority === "string" && c.llm_priority.trim())
               ? String(c.llm_priority).trim().slice(0, 60) : "",
           });
@@ -199,6 +204,7 @@ export async function POST(req: NextRequest) {
             cf_source: "off",
             cf_own_account_id: "",
             cf_own_api_token: "",
+            cf_pool: "",
             llm_priority: "",
           });
         }
@@ -333,6 +339,7 @@ export async function POST(req: NextRequest) {
         cf_source: slot.cf_source,
         cf_own_account_id: slot.cf_own_account_id,
         cf_own_api_token: slot.cf_own_api_token,
+        cf_pool: slot.cf_pool,
         llm_priority: slot.llm_priority,
         updated_at: FieldValue.serverTimestamp(),
       };

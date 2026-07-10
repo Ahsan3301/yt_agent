@@ -62,6 +62,12 @@ type ChannelDoc = {
   // Known providers: nim, groq, openrouter. Absent = default.
   llm_priority?: string | string[];
   cloudflare_api_token?: string;    // own mode only, write-only
+  // Per-channel Cloudflare account POOL — same JSON shape as the global
+  // CLOUDFLARE_ACCOUNTS_JSON at /keys. When set with cf_source=own, the
+  // render rotates through these accounts. Wins over single-account
+  // account_id+api_token when both are configured.
+  cloudflare_pool?: string;         // own mode only, write-only
+  cloudflare_pool_action?: "set" | "clear";
   cloudflare_action?: "set" | "clear";
   cloudflare_global_password?: string;  // required when switching to "global"
 };
@@ -74,16 +80,29 @@ function _publicView(d: Record<string, unknown>): Record<string, unknown> {
     oracle_password_hash,
     cloudflare_account_id,
     cloudflare_api_token,
+    cloudflare_pool,
     ...rest
   } = d as {
     oracle_password_hash?: string;
     cloudflare_account_id?: string;
     cloudflare_api_token?: string;
+    cloudflare_pool?: string;
   };
+  // Count pool entries for a friendly "3 accounts pooled" chip in the UI
+  // without ever leaking the actual account_ids/tokens.
+  let cf_pool_count = 0;
+  if (cloudflare_pool) {
+    try {
+      const parsed = JSON.parse(String(cloudflare_pool));
+      if (Array.isArray(parsed)) cf_pool_count = parsed.length;
+    } catch { /* count stays 0 */ }
+  }
   return {
     ...rest,
     has_oracle_password: Boolean(oracle_password_hash),
     has_cloudflare_own_creds: Boolean(cloudflare_account_id && cloudflare_api_token),
+    has_cloudflare_pool: cf_pool_count > 0,
+    cloudflare_pool_count: cf_pool_count,
   };
 }
 
@@ -190,6 +209,7 @@ export async function POST(req: NextRequest) {
       cfPatch.cloudflare_source = "off";
       cfPatch.cloudflare_account_id = "";
       cfPatch.cloudflare_api_token = "";
+      cfPatch.cloudflare_pool = "";
     } else if (requestedSource === "global") {
       const oracleEnv = (process.env.ORACLE_UNLOCK_PASSWORD || "").trim();
       const supplied = String(body.cloudflare_global_password || "").trim();
@@ -209,7 +229,9 @@ export async function POST(req: NextRequest) {
       // Wipe any prior own-creds so the two modes stay clean.
       cfPatch.cloudflare_account_id = "";
       cfPatch.cloudflare_api_token = "";
+      cfPatch.cloudflare_pool = "";
     } else if (requestedSource === "own") {
+      // Single-account creds (legacy path — still supported).
       if (body.cloudflare_action === "set") {
         const accId = String(body.cloudflare_account_id || "").trim();
         const tok = String(body.cloudflare_api_token || "").trim();
@@ -232,17 +254,79 @@ export async function POST(req: NextRequest) {
         cfPatch.cloudflare_source = "off";
         cfPatch.cloudflare_account_id = "";
         cfPatch.cloudflare_api_token = "";
+        cfPatch.cloudflare_pool = "";
       } else {
-        // action absent → switching to "own" without new creds: only OK
-        // if the doc already has some stored (existing rotation).
-        if (!existing.exists ||
-            !(existing.data() as Record<string, unknown>)?.cloudflare_account_id) {
+        // action absent → switching to "own" without new single-account
+        // creds: OK if the doc already has some stored, OR if a pool
+        // is set / about to be set (see pool_action handling below).
+        const existingData = existing.exists ? (existing.data() as Record<string, unknown>) : {};
+        const hasStoredAccount = Boolean(existingData?.cloudflare_account_id);
+        const hasStoredPool = Boolean(existingData?.cloudflare_pool);
+        const settingPool = body.cloudflare_pool_action === "set";
+        if (!hasStoredAccount && !hasStoredPool && !settingPool) {
           return NextResponse.json(
-            { error: "own mode selected but no cloudflare_account_id / cloudflare_api_token supplied" },
+            { error: "own mode selected but no single-account creds nor pool supplied" },
             { status: 400 }
           );
         }
         cfPatch.cloudflare_source = "own";
+      }
+
+      // Pool patch — independent of the single-account action. Both can
+      // coexist; when both are set the render path prefers the pool.
+      if (body.cloudflare_pool_action === "set") {
+        const raw = String(body.cloudflare_pool || "").trim();
+        if (!raw) {
+          return NextResponse.json(
+            { error: "cloudflare_pool_action=set but cloudflare_pool is empty" },
+            { status: 400 }
+          );
+        }
+        // Validate the JSON server-side so we never store garbage that
+        // silently disables the pool at render time.
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(raw);
+        } catch (e) {
+          return NextResponse.json(
+            { error: `cloudflare_pool is not valid JSON: ${String(e).slice(0, 120)}` },
+            { status: 400 }
+          );
+        }
+        if (!Array.isArray(parsed) || parsed.length === 0) {
+          return NextResponse.json(
+            { error: "cloudflare_pool must be a JSON array with at least one account entry" },
+            { status: 400 }
+          );
+        }
+        for (let i = 0; i < parsed.length; i++) {
+          const it = parsed[i] as Record<string, unknown>;
+          if (!it || typeof it !== "object") {
+            return NextResponse.json(
+              { error: `cloudflare_pool[${i}] must be an object` },
+              { status: 400 }
+            );
+          }
+          const acc = String(it.account_id || "").trim();
+          const tok = String(it.api_token  || "").trim();
+          if (!/^[a-f0-9]{16,64}$/i.test(acc)) {
+            return NextResponse.json(
+              { error: `cloudflare_pool[${i}].account_id looks invalid — expect 32-char hex` },
+              { status: 400 }
+            );
+          }
+          if (tok.length < 20) {
+            return NextResponse.json(
+              { error: `cloudflare_pool[${i}].api_token missing or too short` },
+              { status: 400 }
+            );
+          }
+        }
+        // Store the re-serialised (canonicalised) form so trailing
+        // whitespace + comment-junk from copy/paste doesn't survive.
+        cfPatch.cloudflare_pool = JSON.stringify(parsed);
+      } else if (body.cloudflare_pool_action === "clear") {
+        cfPatch.cloudflare_pool = "";
       }
     }
 
