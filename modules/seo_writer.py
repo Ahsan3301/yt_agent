@@ -192,7 +192,7 @@ Tone: {tone}
 Language: {language_full} ({language}) — youtube_title/description/pinned_comment MUST be in this language
 YouTube category id (must be returned as an integer): {cat_id}
 
-VIRAL HOOK PATTERNS for this niche (title MUST open with one of these, filling in the slots with SPECIFIC nouns from the narration below — NOT the literal placeholder text):
+VIRAL HOOK PATTERNS for this niche (title MUST follow the STRUCTURE of one of these, filling in the slots with SPECIFIC nouns from the narration — NOT the literal placeholder text{f". Patterns are shown in English for structure only — TRANSLATE the wording into {language_full} in your final title" if language != "en" else ""}):
 {chr(10).join(f'  - {p}' for p in hook_patterns) if hook_patterns else '  (none — use the tone above and open with the most surprising angle)'}
 
 BANNED TITLE OPENERS (title must NOT begin with any of these — case-insensitive):
@@ -434,8 +434,33 @@ def _regex_fallback(narration: str, script: dict, channel_cfg: dict, viral: dict
     thumb = kw[:_THUMB_IDEAS_COUNT] if len(kw) >= _THUMB_IDEAS_COUNT else (kw + [niche] * _THUMB_IDEAS_COUNT)[:_THUMB_IDEAS_COUNT]
     thumb = [(" ".join(t.split()[:5])).upper() for t in thumb]
 
-    # Pinned comment
-    pinned = f"{cta} What did you think of this one?"
+    # Pinned comment — language-aware suffix so a German channel doesn't
+    # ship an English "What did you think of this one?" tag on the pinned
+    # comment when the NIM path fails and this regex-fallback fires.
+    language = (channel_cfg.get("language") or "en").lower()
+    _PINNED_SUFFIX = {
+        "en": "What did you think of this one?",
+        "de": "Was hältst du davon?",
+        "fr": "Qu'en pensez-vous ?",
+        "es": "¿Qué opinas de esto?",
+        "it": "Cosa ne pensi?",
+        "pt": "O que você achou disso?",
+        "ru": "Что думаете об этом?",
+        "tr": "Bunu ne düşünüyorsun?",
+        "nl": "Wat vind je hiervan?",
+        "pl": "Co o tym sądzisz?",
+        "ar": "ما رأيك في هذا؟",
+        "ur": "آپ کا اس بارے میں کیا خیال ہے؟",
+        "hi": "आपको यह कैसा लगा?",
+        "bn": "আপনি এটা সম্পর্কে কি মনে করেন?",
+        "ja": "これについてどう思いますか？",
+        "ko": "이것에 대해 어떻게 생각하세요?",
+        "zh": "你觉得这个怎么样？",
+        "vi": "Bạn nghĩ gì về điều này?",
+        "th": "คุณคิดยังไงกับเรื่องนี้?",
+        "id": "Bagaimana pendapatmu?",
+    }
+    pinned = f"{cta} {_PINNED_SUFFIX.get(language, _PINNED_SUFFIX['en'])}"
 
     return {
         "youtube_title": title,

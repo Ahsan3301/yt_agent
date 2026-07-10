@@ -37,11 +37,20 @@ def _extract_frame(video_path, dest_path, timestamp="00:00:02"):
     return dest_path
 
 
-def _shorten_title(title, max_words=5):
-    """Trim a YouTube title into a punchy 3-5 word headline."""
+def _shorten_title(title, max_words=5, language: str = "en"):
+    """Trim a YouTube title into a punchy 3-5 word headline.
+
+    Stopword-drop is English-only — for a German/Hindi/etc. title we
+    keep every word and just clip to the first `max_words`, otherwise
+    non-EN articles ("DIE", "DER", "एक") are kept anyway (not in the set)
+    and the trim degrades to a random truncation."""
     words = [w.strip(" \"'.,;:!?") for w in title.split()]
-    keep = [w for w in words if w and (len(words) <= max_words or w.lower() not in _STOPWORDS)]
-    if not keep:
+    words = [w for w in words if w]
+    if (language or "en").lower() == "en":
+        keep = [w for w in words if len(words) <= max_words or w.lower() not in _STOPWORDS]
+        if not keep:
+            keep = words[:max_words]
+    else:
         keep = words[:max_words]
     return " ".join(keep[:max_words]).upper()
 
@@ -63,7 +72,7 @@ def _find_font(size):
     return ImageFont.load_default()
 
 
-def generate_thumbnail(video_path, youtube_title, output_path):
+def generate_thumbnail(video_path, youtube_title, output_path, language: str = "en"):
     """
     Render a thumbnail PNG. Returns path on success, None on failure.
     Safe to call without ffmpeg/Pillow problems crashing the pipeline —
@@ -90,7 +99,7 @@ def generate_thumbnail(video_path, youtube_title, output_path):
         composed = Image.alpha_composite(bg.convert("RGBA"), overlay)
 
         # Headline
-        headline = _shorten_title(youtube_title or "")
+        headline = _shorten_title(youtube_title or "", language=language)
         if headline:
             font = _find_font(140)
             d = ImageDraw.Draw(composed)

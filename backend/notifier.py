@@ -206,6 +206,7 @@ def report_error(
     level: str = "error",
     extra: dict | None = None,
     fire_discord: bool = True,
+    channel_niche: str | None = None,
 ) -> bool:
     """
     Persist an error to Firestore + (optionally) fire a Discord embed.
@@ -279,7 +280,8 @@ def report_error(
             discord_ok = send(level if level in _COLORS else "error",
                               title=("❌ " + auto_title)[:240],
                               body=body[:3500],
-                              fields=fields)
+                              fields=fields,
+                              channel_niche=channel_niche)
         except Exception as _e:
             log.debug(f"report_error discord sink failed: {_e}")
 

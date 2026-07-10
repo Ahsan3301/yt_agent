@@ -398,7 +398,7 @@ def upload_video(video_path, script_data, channel_type="horror", youtube_account
     # ── Thumbnail (best effort; never fails the upload) ──
     try:
         thumb_path = os.path.join(os.path.dirname(video_path), "thumbnail.jpg")
-        if generate_thumbnail(video_path, title, thumb_path):
+        if generate_thumbnail(video_path, title, thumb_path, language=(language or "en")):
             log.info("Uploading thumbnail...")
             youtube.thumbnails().set(
                 videoId=video_id,
