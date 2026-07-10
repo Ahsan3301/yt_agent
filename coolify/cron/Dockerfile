@@ -7,7 +7,11 @@
 
 FROM alpine:3.20
 
-RUN apk add --no-cache curl tzdata && \
+# docker-cli is added so the nightly `docker builder prune` can hit the
+# host daemon via the bind-mounted /var/run/docker.sock (see the
+# side-worker's compose entry). Without it we'd have to shell out to
+# SSH which needs a key baked in.
+RUN apk add --no-cache curl tzdata docker-cli && \
     ln -sf /usr/share/zoneinfo/UTC /etc/localtime
 
 # crontab format: m h dom mon dow command

@@ -32,5 +32,14 @@
 # orphan_retention=604800 → keep orphan videos for 7 days before deleting.
 */15 * * * *  curl -fsS -X POST -H "X-API-Key: $RENDER_TRIGGER_KEY" "$DASHBOARD_INTERNAL_URL/api/maintenance/cleanup-stale?stale_seconds=600&orphan_retention=604800" >> /proc/1/fd/1 2>&1
 
+# 03:30 UTC daily — reclaim Docker build cache + dangling images on
+# the host. Frequent image rebuilds (dashboard + side-worker) leave
+# multi-GB BuildKit layer cache; without this it accumulates 15-20 GB
+# per week and eats the VPS disk. Confirmed live 2026-07-10: freed
+# 18 GB in a single prune after a busy dev day.
+# Requires docker-cli in this image + /var/run/docker.sock mount from
+# the host (see coolify/docker-compose.yml cron service).
+30 3 * * *  (docker builder prune -a -f && docker image prune -f && docker container prune -f) >> /proc/1/fd/1 2>&1
+
 # Trailing newline is required — Linux crontab silently ignores the last
 # line if it doesn't end with one.

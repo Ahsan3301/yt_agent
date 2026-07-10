@@ -230,19 +230,37 @@ export async function POST(req: NextRequest) {
   }
 
   // ── idempotency (kept short — 7d ceiling; days<7 uses days) ─
+  // PB's idempotency collection may not have an expires_at column
+  // depending on migration state — try server-side filter first,
+  // fall through to a client-side sweep on the small collection.
   try {
     const idempCutoff = Math.min(cutoff, now - 7 * 86400);
-    const snap = await adminDb().collection("idempotency")
-      .where("expires_at", "<", idempCutoff)
-      .where("expires_at", ">", 0)
-      .limit(500).get();
     let n = 0;
-    for (const doc of snap.docs) {
-      try { await doc.ref.delete(); n += 1; }
-      catch (_de) { summary.errors.push(`idem delete ${doc.id}: ${String(_de)}`); }
+    let usedFallback = false;
+    try {
+      const snap = await adminDb().collection("idempotency")
+        .where("expires_at", "<", idempCutoff)
+        .limit(500).get();
+      for (const doc of snap.docs) {
+        try { await doc.ref.delete(); n += 1; }
+        catch (_de) { summary.errors.push(`idem delete ${doc.id}: ${String(_de)}`); }
+      }
+    } catch (_fe) {
+      // Server-side filter refused — probably missing schema field.
+      // Do a bounded client-side sweep instead.
+      usedFallback = true;
+      const snap = await adminDb().collection("idempotency").limit(500).get();
+      for (const doc of snap.docs) {
+        const d = doc.data() as { expires_at?: number };
+        const exp = typeof d.expires_at === "number" ? d.expires_at : 0;
+        if (exp > 0 && exp < idempCutoff) {
+          try { await doc.ref.delete(); n += 1; }
+          catch (_de) { summary.errors.push(`idem delete ${doc.id}: ${String(_de)}`); }
+        }
+      }
     }
     summary.idempotency_deleted = n;
-    if (n > 0) summary.detail.push(`Deleted ${n} idempotency records`);
+    if (n > 0) summary.detail.push(`Deleted ${n} idempotency records${usedFallback ? " (client-side fallback)" : ""}`);
   } catch (e) {
     summary.errors.push(`idempotency: ${String(e)}`);
   }
@@ -283,8 +301,14 @@ export async function POST(req: NextRequest) {
   // every delete loop above so the operator can audit what happened
   // months / years later. `pre_snapshot` lets /reports show the
   // historical picture even after the source rows are pruned.
+  //
+  // Note: PB adapter doesn't support Firestore's auto-id .add() —
+  // synthesise a 15-char id (PB constraint) from reqId + timestamp
+  // and use .doc(id).set() instead.
   try {
-    await adminDb().collection("cleanup_runs").add({
+    const logId = (reqId + Date.now().toString(36)).toLowerCase()
+      .replace(/[^a-z0-9]/g, "").slice(0, 15).padEnd(15, "0");
+    await adminDb().collection("cleanup_runs").doc(logId).set({
       ts: now,
       req_id: reqId,
       triggered_by: "operator",

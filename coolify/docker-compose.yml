@@ -221,6 +221,12 @@ services:
     environment:
       DASHBOARD_INTERNAL_URL: http://dashboard:3000
       RENDER_TRIGGER_KEY: ${RENDER_TRIGGER_KEY}
+    # Bind-mount the host docker socket so the 03:30 UTC
+    # `docker builder prune` cron entry can reclaim BuildKit cache.
+    # Without this, every image rebuild leaves multi-GB layer cache
+    # that fills the disk within a week.
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       - dashboard
     networks: [yt_agent_net]
