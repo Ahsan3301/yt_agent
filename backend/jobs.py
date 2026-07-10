@@ -151,9 +151,24 @@ def submit(payload: dict[str, Any]) -> dict[str, Any]:
         "language":            (str(payload.get("language") or "")[:5].lower() or None),
         # Voice override (one of the niche's voices_by_lang entries).
         "voice_override":      str(payload.get("voice_override") or "")[:80] or None,
+        # Per-channel tone + privacy overrides (populated on render-now/
+        # scheduled-render from the channel doc). Missing → pipeline uses
+        # niche preset defaults.
+        "tone_override":       str(payload.get("tone_override") or "")[:40] or None,
+        "privacy_override":    str(payload.get("privacy_override") or "")[:12] or None,
         # YouTube account id (multi-channel mode). None falls back to
         # the legacy single api_keys/YOUTUBE_REFRESH_TOKEN credential.
         "youtube_account_id":  str(payload.get("youtube_account_id") or "")[:80] or None,
+        # Per-channel Cloudflare Workers AI creds. Without these three
+        # fields channel_cf.apply_from_job defaults to "off" and the
+        # Cloudflare provider skips the render — that's the fail-closed
+        # behaviour we want when a queue path forgot to include them.
+        "cf_source":           str(payload.get("cf_source") or "off")[:10],
+        "cf_own_account_id":   str(payload.get("cf_own_account_id") or "")[:64],
+        "cf_own_api_token":    str(payload.get("cf_own_api_token") or "")[:500],
+        # Channel worker prefs — priority list + Oracle password gate.
+        "allowed_workers":     list(payload.get("allowed_workers") or []),
+        "oracle_password_hash": str(payload.get("oracle_password_hash") or ""),
     }
     with _lock:
         _jobs[jid] = job
@@ -198,7 +213,19 @@ def adopt_remote(remote_job: dict[str, Any]) -> bool:
         "real_events":         remote_job.get("real_events"),
         "language":            (str(remote_job.get("language") or "")[:5].lower() or None),
         "voice_override":      str(remote_job.get("voice_override") or "")[:80] or None,
+        "tone_override":       str(remote_job.get("tone_override") or "")[:40] or None,
+        "privacy_override":    str(remote_job.get("privacy_override") or "")[:12] or None,
         "youtube_account_id":  str(remote_job.get("youtube_account_id") or "")[:80] or None,
+        # Per-channel Cloudflare Workers AI creds — MUST be propagated
+        # or channel_cf.apply_from_job on this worker will fall back to
+        # "off" and every render will silently skip Cloudflare. Was
+        # the root cause of "cloudflare: skipped" on Kaggle/Colab even
+        # after the PB schema migration landed.
+        "cf_source":           str(remote_job.get("cf_source") or "off")[:10],
+        "cf_own_account_id":   str(remote_job.get("cf_own_account_id") or "")[:64],
+        "cf_own_api_token":    str(remote_job.get("cf_own_api_token") or "")[:500],
+        "allowed_workers":     list(remote_job.get("allowed_workers") or []),
+        "oracle_password_hash": str(remote_job.get("oracle_password_hash") or ""),
     }
     with _lock:
         if jid in _jobs:
@@ -541,8 +568,29 @@ def _run_one(job: dict[str, Any]):
             except Exception as _e:
                 log.warning(f"job {job_id} housekeeping failed: {_e}")
         else:
-            job["status"] = "failed"
-            job["error"] = final_state.get("error") or "pipeline failed"
+            # Distinguish user-cancel from real failure. On cancel the
+            # operator doesn't need a red-chip failure, Discord report,
+            # or an entry in the errors collection.
+            try:
+                from modules import run_state as _rs_check
+                _was_cancelled = _rs_check.cancellation_requested() or bool(final_state.get("cancelled"))
+            except Exception:
+                _was_cancelled = False
+            job["status"] = "cancelled" if _was_cancelled else "failed"
+            job["error"] = (
+                "cancelled by user" if _was_cancelled
+                else (final_state.get("error") or "pipeline failed")
+            )
+
+            # Force-clean the work_dir on non-published runs. finalize_run
+            # refuses when published=False; without this every failed +
+            # cancelled render leaked ~1 GB on disk.
+            try:
+                from backend import housekeeping as _hk
+                _hk.force_cleanup(f"output/videos/{job['run_id']}",
+                                  reason=job["status"])
+            except Exception as _e:
+                log.warning(f"job {job_id} force_cleanup failed: {_e}")
 
             # Even on failure, mirror an index entry so the Library shows
             # every attempt with a red chip instead of silently swallowing.
@@ -590,6 +638,10 @@ def _run_one(job: dict[str, Any]):
                     url=job.get("public_url") or None,
                     channel_niche=_niche,
                 )
+            elif job["status"] == "cancelled":
+                # Deliberate operator cancel — no Discord spam, no
+                # entry in the errors collection.
+                pass
             else:
                 # Persist to Firestore `errors` collection + fire the
                 # Discord embed in one call. The /health page reads

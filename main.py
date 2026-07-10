@@ -890,8 +890,14 @@ def _finish(summary, work_dir, ok):
     summary["finished_at"] = datetime.datetime.now().isoformat(timespec="seconds")
     summary["ok"] = ok
     try:
-        with open(os.path.join(work_dir, "run_summary.json"), "w") as f:
+        # Atomic write — worker restart mid-write used to corrupt
+        # this file, and backend/jobs.py reads it on the next boot
+        # to recover a run's terminal state. Write to .tmp + rename.
+        _sum_path = os.path.join(work_dir, "run_summary.json")
+        _sum_tmp = _sum_path + ".tmp"
+        with open(_sum_tmp, "w") as f:
             json.dump(summary, f, indent=2)
+        os.replace(_sum_tmp, _sum_path)
     except OSError as e:
         log.warning(f"Could not write run_summary.json: {e}")
     run_state.finish(

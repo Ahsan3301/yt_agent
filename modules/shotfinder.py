@@ -1731,8 +1731,24 @@ def fetch_shots(shots, output_dir, channel="horror", preset_sources=None):
             for i, s in enumerate(shots)
         ]
         for fut in as_completed(futures):
+            # Bail immediately on cancel — otherwise as_completed()
+            # blocks on the ThreadPoolExecutor's context exit, which
+            # waits for every outstanding shot to finish (up to a full
+            # minute per shot). Cancel appeared frozen for the user
+            # even though the flag was set.
+            if run_state.cancellation_requested():
+                for _f in futures:
+                    _f.cancel()
+                ex.shutdown(wait=False, cancel_futures=True)
+                raise run_state.Cancelled("shot fetch cancelled")
             try:
                 idx, src = fut.result()
+            except run_state.Cancelled:
+                # A worker thread saw check_cancel() — propagate up so
+                # the whole render unwinds instead of continuing to
+                # collect partial results from other threads.
+                ex.shutdown(wait=False, cancel_futures=True)
+                raise
             except Exception as e:
                 log.warning(f"shot fetch worker crashed: {e}")
                 continue

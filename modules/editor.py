@@ -265,7 +265,9 @@ def get_audio_duration(audio_path):
         "-show_entries", "format=duration",
         "-of", "json", audio_path,
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    # Hard cap — a wedged ffprobe on a corrupt file used to hang the
+    # entire pipeline forever with no cancel path.
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     data = json.loads(result.stdout)
     return float(data["format"]["duration"])
 
@@ -278,7 +280,7 @@ def get_video_duration(video_path):
         "-of", "json", video_path,
     ]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         return float(json.loads(result.stdout)["format"]["duration"])
     except Exception:
         return 0.0

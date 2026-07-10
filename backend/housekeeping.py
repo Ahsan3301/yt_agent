@@ -159,6 +159,16 @@ def force_cleanup(work_dir: str, *, reason: str = "cancelled") -> dict:
     if not work_dir or not os.path.isdir(work_dir):
         out["skipped_reason"] = f"work_dir missing: {work_dir!r}"
         return out
+    # Guard rail: refuse to nuke anything that isn't clearly a
+    # per-run directory under output/videos/<non-empty run_id>. If the
+    # caller passed "output/videos" or "output/videos/" (empty run_id
+    # after a pre-start crash), rmtree would take out every run.
+    abspath = os.path.abspath(work_dir)
+    parent = os.path.basename(os.path.normpath(abspath))
+    if not parent or parent in ("videos", "output", ".", "/"):
+        out["skipped_reason"] = f"refusing to force-clean suspicious path: {abspath}"
+        log.error(out["skipped_reason"])
+        return out
     freed = 0
     try:
         for root, _dirs, files in os.walk(work_dir):

@@ -118,7 +118,13 @@ def tick(step_key, fraction):
 def finish(ok, video_path=None, video_url=None, error=None):
     """Mark the run complete (or failed)."""
     cur = read()
-    cur["status"] = "complete" if ok else "failed"
+    # Preserve the cancel_requested flag on the finished record so
+    # callers (backend/jobs.py + side_worker) can distinguish a
+    # user-cancel from a real failure without re-reading the flag
+    # from a since-cleared state.
+    _was_cancelled = bool(cur.get("cancel_requested"))
+    cur["status"] = "complete" if ok else ("cancelled" if _was_cancelled else "failed")
+    cur["cancelled"] = _was_cancelled and not ok
     cur["percent"] = 100 if ok else cur.get("percent", 0)
     cur["finished_at"] = time.time()
     if video_path:

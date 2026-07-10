@@ -414,8 +414,19 @@ def handle(job: dict) -> None:
                 except Exception as _e:
                     log.warning(f"housekeeping failed: {_e}")
     except Exception as e:
-        ok, msg = False, f"dispatch crashed: {e}"
-        log.exception(msg)
+        # Distinguish user-cancel from real crash so the dashboard
+        # doesn't get Discord-spammed and the job doesn't show a red
+        # "failed" chip for a run the operator killed on purpose.
+        try:
+            from modules import run_state as _rs_check
+            _cancelled_flag = _rs_check.cancellation_requested() or isinstance(e, _rs_check.Cancelled)
+        except Exception:
+            _cancelled_flag = False
+        if _cancelled_flag:
+            ok, msg = False, "cancelled by user"
+        else:
+            ok, msg = False, f"dispatch crashed: {e}"
+            log.exception(msg)
 
     # Belt-and-suspenders disk cleanup — finalize_run() above REFUSES
     # to delete on !published, which means every cancelled / failed /
@@ -433,8 +444,14 @@ def handle(job: dict) -> None:
         except Exception as _e2:
             log.warning(f"force_cleanup failed: {_e2}")
 
+    # Compute the final PB status. A user-cancel is NOT a failure —
+    # keeping them separate stops Discord spam + keeps the /reports
+    # graphs honest.
+    _final_status = "complete" if ok else (
+        "cancelled" if msg == "cancelled by user" else "failed"
+    )
     _update_job(job_id, {
-        "status": "complete" if ok else "failed",
+        "status": _final_status,
         "error": "" if ok else msg,
         "current_step": kind,
         "current_step_label": f"{kind}: {msg[:100]}",
@@ -443,11 +460,14 @@ def handle(job: dict) -> None:
     })
     log.info(f"job {job_id} done ok={ok} msg={msg[:200]}")
 
-    # Discord alert.
+    # Discord alert. Skip on user-cancel — the operator did it on
+    # purpose, no need to spam the channel or write to errors/.
     try:
         from backend import notifier
         if ok:
             notifier.info(f"✅ {kind} complete (Oracle)", body=msg)
+        elif _final_status == "cancelled":
+            pass  # silence — user cancelled deliberately
         else:
             notifier.report_error(err=msg, title=f"❌ {kind} failed (Oracle)",
                                   run_id=job.get("run_id"), req_id=job.get("req_id"))
