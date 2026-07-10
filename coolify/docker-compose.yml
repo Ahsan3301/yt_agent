@@ -239,6 +239,12 @@ services:
       POCKETBASE_ADMIN_EMAIL: ${POCKETBASE_ADMIN_EMAIL}
       POCKETBASE_ADMIN_PASSWORD: ${POCKETBASE_ADMIN_PASSWORD}
       STORAGE_PROVIDERS_ENC_KEY: ${STORAGE_PROVIDERS_ENC_KEY}
+      # Shared Oracle unlock password. Set via Coolify env — every
+      # channel that wants Oracle-as-fallback must store a hash of this
+      # SAME value on their channel doc via the /channels edit form.
+      # If unset, Oracle can only claim jobs whose channel has no
+      # oracle_password_hash (i.e. jobs deliberately opened up).
+      ORACLE_UNLOCK_PASSWORD: ${ORACLE_UNLOCK_PASSWORD:-}
       DB_BACKEND: pocketbase
     depends_on:
       - dashboard
