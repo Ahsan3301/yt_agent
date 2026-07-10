@@ -99,6 +99,9 @@ export async function POST(req: NextRequest) {
       unbound: boolean;
       allowed_workers: string[];
       oracle_password_hash: string | null;
+      cf_source: string;
+      cf_own_account_id: string;
+      cf_own_api_token: string;
     }> = [];
     // Build a niche→binding lookup so the legacy fallback path (below)
     // can inherit a YouTube account from the channels row of the same
@@ -133,6 +136,14 @@ export async function POST(req: NextRequest) {
         const oraclePwHash = (typeof c.oracle_password_hash === "string" && c.oracle_password_hash)
           ? String(c.oracle_password_hash)
           : null;
+        // Cloudflare (per-channel image gen). Carry the source AND, for
+        // own-mode, the account_id+token so the worker can override the
+        // global env before running the pipeline.
+        const cfSource = String(c.cloudflare_source || "off");
+        const cfOwnAcc = cfSource === "own"
+          ? String(c.cloudflare_account_id || "").trim() : "";
+        const cfOwnTok = cfSource === "own"
+          ? String(c.cloudflare_api_token || "").trim() : "";
         for (let i = 0; i < count; i++) {
           channelMeta.push({
             niche,
@@ -151,6 +162,9 @@ export async function POST(req: NextRequest) {
             unbound: !yt,
             allowed_workers: allowedWorkers,
             oracle_password_hash: oraclePwHash,
+            cf_source: cfSource,
+            cf_own_account_id: cfOwnAcc,
+            cf_own_api_token: cfOwnTok,
           });
         }
         targets[niche] = (targets[niche] || 0) + count;
@@ -179,6 +193,9 @@ export async function POST(req: NextRequest) {
             unbound: !inherited,
             allowed_workers: [],
             oracle_password_hash: null,
+            cf_source: "off",
+            cf_own_account_id: "",
+            cf_own_api_token: "",
           });
         }
         if (n > 0) targets[niche] = (targets[niche] || 0) + n;
@@ -306,6 +323,12 @@ export async function POST(req: NextRequest) {
         // Consumed by the /api/jobs/claim gate — see route.ts.
         allowed_workers: slot.allowed_workers,
         oracle_password_hash: slot.oracle_password_hash,
+        // Per-channel Cloudflare source + own creds if any. Worker
+        // overrides os.environ CLOUDFLARE_* before entering the pipeline
+        // so shotfinder's _cloudflare_generate sees the right creds.
+        cf_source: slot.cf_source,
+        cf_own_account_id: slot.cf_own_account_id,
+        cf_own_api_token: slot.cf_own_api_token,
         updated_at: FieldValue.serverTimestamp(),
       };
       await adminDb().collection("jobs").doc(jobId).set(job);

@@ -47,14 +47,41 @@ type ChannelDoc = {
   //   (neither)                                                       → leave existing hash alone
   oracle_password_action?: "set" | "clear";
   oracle_password?: string;
+  // Per-channel Cloudflare Workers AI mode:
+  //   "off"    → Cloudflare provider skipped on this channel entirely
+  //   "own"    → channel supplies its OWN account_id + api_token
+  //              (no operator password needed)
+  //   "global" → uses the operator's global CLOUDFLARE_ACCOUNT_ID /
+  //              CLOUDFLARE_API_TOKEN from /keys — REQUIRES the
+  //              operator unlock (ORACLE_UNLOCK_PASSWORD env) at
+  //              save time so a random channel editor can't steal
+  //              the shared quota.
+  cloudflare_source?: "off" | "own" | "global";
+  cloudflare_account_id?: string;   // own mode only, write-only
+  cloudflare_api_token?: string;    // own mode only, write-only
+  cloudflare_action?: "set" | "clear";
+  cloudflare_global_password?: string;  // required when switching to "global"
 };
 
 // Strip sensitive fields before returning to the client. Also
-// projects a `has_oracle_password` boolean so the UI can render
-// "Password set — clear/replace" without ever seeing the hash.
+// projects boolean flags so the UI can render "Password set — clear/replace"
+// or "Own creds set" pills without ever seeing the actual values.
 function _publicView(d: Record<string, unknown>): Record<string, unknown> {
-  const { oracle_password_hash, ...rest } = d as { oracle_password_hash?: string };
-  return { ...rest, has_oracle_password: Boolean(oracle_password_hash) };
+  const {
+    oracle_password_hash,
+    cloudflare_account_id,
+    cloudflare_api_token,
+    ...rest
+  } = d as {
+    oracle_password_hash?: string;
+    cloudflare_account_id?: string;
+    cloudflare_api_token?: string;
+  };
+  return {
+    ...rest,
+    has_oracle_password: Boolean(oracle_password_hash),
+    has_cloudflare_own_creds: Boolean(cloudflare_account_id && cloudflare_api_token),
+  };
 }
 
 function _sanitizeAllowedWorkers(v: unknown): string[] {
@@ -127,6 +154,78 @@ export async function POST(req: NextRequest) {
       passwordPatch = { oracle_password_hash: hashOraclePassword(p) };
     }
 
+    // Cloudflare source: off / own / global. Rules:
+    //   - Switching TO "global" requires ORACLE_UNLOCK_PASSWORD in body.
+    //     Same operator-only secret we use for cleanup bootstrap +
+    //     Oracle worker unlock; keeps the shared 150/day quota safe
+    //     from a random channel editor.
+    //   - Switching TO "own" is free but requires either an existing
+    //     stored token OR fresh account_id+token in the body.
+    //   - "off" wipes both fields and returns to global-key-unused.
+    // The `cloudflare_action` field distinguishes "set new creds" from
+    // "leave existing alone" — same shape as oracle_password_action.
+    const cfPatch: Record<string, unknown> = {};
+    const requestedSource = body.cloudflare_source;
+    if (requestedSource === "off") {
+      cfPatch.cloudflare_source = "off";
+      cfPatch.cloudflare_account_id = "";
+      cfPatch.cloudflare_api_token = "";
+    } else if (requestedSource === "global") {
+      const oracleEnv = (process.env.ORACLE_UNLOCK_PASSWORD || "").trim();
+      const supplied = String(body.cloudflare_global_password || "").trim();
+      if (!oracleEnv) {
+        return NextResponse.json(
+          { error: "ORACLE_UNLOCK_PASSWORD not configured on this dashboard — global CF key can't be unlocked" },
+          { status: 409 }
+        );
+      }
+      if (supplied !== oracleEnv) {
+        return NextResponse.json(
+          { error: "cloudflare_global_password does not match the operator unlock" },
+          { status: 401 }
+        );
+      }
+      cfPatch.cloudflare_source = "global";
+      // Wipe any prior own-creds so the two modes stay clean.
+      cfPatch.cloudflare_account_id = "";
+      cfPatch.cloudflare_api_token = "";
+    } else if (requestedSource === "own") {
+      if (body.cloudflare_action === "set") {
+        const accId = String(body.cloudflare_account_id || "").trim();
+        const tok = String(body.cloudflare_api_token || "").trim();
+        if (!accId || !/^[a-f0-9]{16,64}$/i.test(accId)) {
+          return NextResponse.json(
+            { error: "cloudflare_account_id looks invalid — expect 32-char hex from the CF dashboard sidebar" },
+            { status: 400 }
+          );
+        }
+        if (!tok || tok.length < 20) {
+          return NextResponse.json(
+            { error: "cloudflare_api_token missing or too short" },
+            { status: 400 }
+          );
+        }
+        cfPatch.cloudflare_source = "own";
+        cfPatch.cloudflare_account_id = accId;
+        cfPatch.cloudflare_api_token = tok;
+      } else if (body.cloudflare_action === "clear") {
+        cfPatch.cloudflare_source = "off";
+        cfPatch.cloudflare_account_id = "";
+        cfPatch.cloudflare_api_token = "";
+      } else {
+        // action absent → switching to "own" without new creds: only OK
+        // if the doc already has some stored (existing rotation).
+        if (!existing.exists ||
+            !(existing.data() as Record<string, unknown>)?.cloudflare_account_id) {
+          return NextResponse.json(
+            { error: "own mode selected but no cloudflare_account_id / cloudflare_api_token supplied" },
+            { status: 400 }
+          );
+        }
+        cfPatch.cloudflare_source = "own";
+      }
+    }
+
     const payload = {
       id,
       name:        body.name.trim().slice(0, 80),
@@ -168,6 +267,7 @@ export async function POST(req: NextRequest) {
       // Ordered priority list; empty = fall back to defaults at claim time.
       allowed_workers: _sanitizeAllowedWorkers(body.allowed_workers),
       ...passwordPatch,
+      ...cfPatch,
       updated_at: FieldValue.serverTimestamp(),
       ...(existing.exists ? {} : { created_at: FieldValue.serverTimestamp() }),
     };

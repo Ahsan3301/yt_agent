@@ -52,6 +52,15 @@ type Channel = {
   // Server-projected boolean. The hash itself is NEVER sent to the client
   // (write-only field). UI shows "set / clear / replace" based on this.
   has_oracle_password?: boolean;
+  // Per-channel Cloudflare Workers AI creds source:
+  //   "off"    → CF provider skipped on this channel
+  //   "own"    → channel has its own account_id + api_token stored
+  //              (write-only; UI toggles on has_cloudflare_own_creds)
+  //   "global" → uses the operator's global CLOUDFLARE_ACCOUNT_ID /
+  //              CLOUDFLARE_API_TOKEN from /keys. Switching INTO this
+  //              mode requires the operator unlock password.
+  cloudflare_source?: "off" | "own" | "global";
+  has_cloudflare_own_creds?: boolean;
 };
 
 type WorkerKey = "kaggle" | "colab" | "oracle";
@@ -575,6 +584,24 @@ function ChannelForm({
 
   const oracleEnabled = workers.includes("oracle");
 
+  // ── Cloudflare Workers AI (per-channel) ────────────────────
+  // "off" | "own" | "global" — matches server field cloudflare_source.
+  const [cfSource, setCfSource] = useState<"off" | "own" | "global">(
+    (initial?.cloudflare_source as "off" | "own" | "global") || "off",
+  );
+  const hasCfOwnCreds = !!initial?.has_cloudflare_own_creds;
+  // "keep" = leave stored account+token alone (when already set + user
+  // toggles away and back); "set" = replace/create with cfOwnAccount+cfOwnToken.
+  const [cfOwnAction, setCfOwnAction] = useState<"keep" | "set">(
+    hasCfOwnCreds && (initial?.cloudflare_source === "own") ? "keep" : "set",
+  );
+  const [cfOwnAccount, setCfOwnAccount] = useState<string>("");
+  const [cfOwnToken, setCfOwnToken] = useState<string>("");
+  // Operator unlock required to switch INTO global mode. Same value as
+  // ORACLE_UNLOCK_PASSWORD env, prompted here only when the user picks
+  // global; never round-trips back to the client.
+  const [cfGlobalPassword, setCfGlobalPassword] = useState<string>("");
+
   const submit = () => {
     if (!name.trim()) return;
     // Oracle guardrail: if Oracle is in the priority list AND there's
@@ -589,7 +616,32 @@ function ChannelForm({
       );
       return;
     }
-    const payload: Channel & { oracle_password?: string; oracle_password_action?: "set" | "clear" } = {
+    // Cloudflare guardrail: switching TO own without new creds AND no
+    // existing stored creds is invalid; server would reject it too but
+    // catch it here for a friendlier message.
+    if (cfSource === "own" && !hasCfOwnCreds && cfOwnAction !== "set") {
+      alert("Own Cloudflare key selected but no account_id / api_token supplied.");
+      return;
+    }
+    if (cfSource === "own" && cfOwnAction === "set") {
+      if (!cfOwnAccount.trim() || !cfOwnToken.trim()) {
+        alert("Enter both the Cloudflare Account ID and API Token, or switch mode.");
+        return;
+      }
+    }
+    if (cfSource === "global" && (initial?.cloudflare_source !== "global") && !cfGlobalPassword.trim()) {
+      alert("Switching to the global Cloudflare key requires the operator unlock password.");
+      return;
+    }
+
+    const payload: Channel & {
+      oracle_password?: string;
+      oracle_password_action?: "set" | "clear";
+      cloudflare_action?: "set" | "clear";
+      cloudflare_account_id?: string;
+      cloudflare_api_token?: string;
+      cloudflare_global_password?: string;
+    } = {
       id: initial?.id || "",
       name: name.trim(),
       niche: niche.trim() || "horror",
@@ -610,12 +662,25 @@ function ChannelForm({
       privacy: privacy || null,
       discord_webhook: discordWebhook.trim() || null,
       allowed_workers: workers,
+      cloudflare_source: cfSource,
     };
     if (oraclePasswordAction === "set" && oraclePasswordInput.trim().length >= 4) {
       payload.oracle_password_action = "set";
       payload.oracle_password = oraclePasswordInput.trim();
     } else if (oraclePasswordAction === "clear") {
       payload.oracle_password_action = "clear";
+    }
+    // Cloudflare bits — only send what the server needs.
+    if (cfSource === "own" && cfOwnAction === "set") {
+      payload.cloudflare_action = "set";
+      payload.cloudflare_account_id = cfOwnAccount.trim();
+      payload.cloudflare_api_token = cfOwnToken.trim();
+    } else if (cfSource === "off") {
+      // Toggling OFF wipes stored creds server-side.
+      payload.cloudflare_action = "clear";
+    }
+    if (cfSource === "global" && cfGlobalPassword) {
+      payload.cloudflare_global_password = cfGlobalPassword;
     }
     onSave(payload);
   };
@@ -1045,6 +1110,115 @@ function ChannelForm({
                 </button>
               </div>
             )}
+          </div>
+        )}
+      </div>
+
+      {/* ── Cloudflare Workers AI (Flux 2 dev) per-channel ─── */}
+      <div className="space-y-3 rounded-lg border border-line bg-bg-2 p-3">
+        <div className="flex items-center gap-2">
+          <KeyRound className="h-4 w-4 text-accent" />
+          <div className="font-medium text-sm">Cloudflare image gen (Flux 2 dev)</div>
+          {cfSource === "own" && hasCfOwnCreds && (
+            <span className="pill text-[9px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">own creds set</span>
+          )}
+          {cfSource === "global" && (
+            <span className="pill text-[9px] bg-sky-500/20 text-sky-300 border border-sky-500/40">shared operator key</span>
+          )}
+        </div>
+        <p className="text-[10px] text-neutral-500 -mt-1">
+          Each Cloudflare account has its own 150 image/day soft-cap. If
+          multiple channels share ONE key, they burn through the quota
+          together. Give each high-volume channel its OWN key (free
+          Cloudflare account) to isolate limits. The operator-only global
+          key can be selected here too but requires the operator unlock
+          password to prevent quota theft.
+        </p>
+        <div className="flex flex-wrap gap-1.5">
+          {(["off", "own", "global"] as const).map((v) => (
+            <button
+              key={v}
+              type="button"
+              onClick={() => setCfSource(v)}
+              className={clsx(
+                "px-2.5 h-7 rounded-md border text-xs",
+                cfSource === v
+                  ? "border-accent/50 bg-accent/10 text-white"
+                  : "border-line text-neutral-400 hover:text-neutral-200",
+              )}
+            >
+              {v === "off" ? "Off (skip CF)" : v === "own" ? "Own key" : "Global key"}
+            </button>
+          ))}
+        </div>
+
+        {cfSource === "own" && (
+          <div className="space-y-2 pt-1">
+            {hasCfOwnCreds && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-[11px] text-emerald-300">Credentials stored.</span>
+                <button
+                  type="button"
+                  onClick={() => { setCfOwnAction("keep"); setCfOwnAccount(""); setCfOwnToken(""); }}
+                  className={clsx(
+                    "px-2 h-6 rounded-md border text-[10px]",
+                    cfOwnAction === "keep" ? "border-accent/50 bg-accent/10 text-white"
+                      : "border-line text-neutral-400 hover:text-neutral-200"
+                  )}
+                >Keep</button>
+                <button
+                  type="button"
+                  onClick={() => setCfOwnAction("set")}
+                  className={clsx(
+                    "px-2 h-6 rounded-md border text-[10px]",
+                    cfOwnAction === "set" ? "border-accent/50 bg-accent/10 text-white"
+                      : "border-line text-neutral-400 hover:text-neutral-200"
+                  )}
+                >Replace</button>
+              </div>
+            )}
+            {(cfOwnAction === "set" || !hasCfOwnCreds) && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                <div>
+                  <label className="label text-[10px]">Account ID</label>
+                  <input
+                    className="input w-full text-xs"
+                    placeholder="32-char hex from Cloudflare dashboard sidebar"
+                    value={cfOwnAccount}
+                    onChange={(e) => setCfOwnAccount(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="label text-[10px]">API Token</label>
+                  <input
+                    type="password"
+                    className="input w-full text-xs"
+                    placeholder="scope: Account → Workers AI → Read"
+                    value={cfOwnToken}
+                    onChange={(e) => setCfOwnToken(e.target.value)}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {cfSource === "global" && initial?.cloudflare_source !== "global" && (
+          <div className="pt-1">
+            <label className="label text-[10px] flex items-center gap-1">
+              <Lock className="h-3 w-3" /> Operator unlock password
+            </label>
+            <input
+              type="password"
+              className="input w-full text-xs"
+              placeholder="Same value as ORACLE_UNLOCK_PASSWORD (only asked once when switching)"
+              value={cfGlobalPassword}
+              onChange={(e) => setCfGlobalPassword(e.target.value)}
+            />
+            <p className="text-[10px] text-neutral-500 mt-1">
+              Verified server-side against the dashboard env. Never stored
+              on the channel doc.
+            </p>
           </div>
         )}
       </div>

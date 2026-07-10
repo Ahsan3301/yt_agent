@@ -286,24 +286,33 @@ def handle(job: dict) -> None:
                 except Exception:
                     pass
 
+                # Apply per-channel Cloudflare creds (own / global / off)
+                # to os.environ for this render only. Matches the shim
+                # in backend/jobs.py so both worker paths behave the same.
+                from backend import channel_cf as _cf
+                _cf_snap = _cf.apply_from_job(job)
+
                 # Kwarg names mirror backend/jobs.py::_run_pipeline_job.
-                res = _main.run_pipeline(
-                    channel_type=str(job.get("channel") or "").strip(),
-                    dry_run=bool(job.get("dry_run", False)),
-                    resume_run_id=str(job.get("run_id") or ""),
-                    manual_topic=job.get("manual_topic", ""),
-                    manual_script=job.get("manual_script", ""),
-                    manual_title=job.get("manual_title", ""),
-                    manual_images=job.get("manual_images") or [],
-                    manual_channel_desc=job.get("manual_channel_desc", ""),
-                    web_research=job.get("web_research"),
-                    real_events=job.get("real_events"),
-                    language=job.get("language"),
-                    voice_override=job.get("voice_override"),
-                    tone_override=job.get("tone_override"),
-                    privacy_override=job.get("privacy_override"),
-                    youtube_account_id=job.get("youtube_account_id"),
-                )
+                try:
+                    res = _main.run_pipeline(
+                        channel_type=str(job.get("channel") or "").strip(),
+                        dry_run=bool(job.get("dry_run", False)),
+                        resume_run_id=str(job.get("run_id") or ""),
+                        manual_topic=job.get("manual_topic", ""),
+                        manual_script=job.get("manual_script", ""),
+                        manual_title=job.get("manual_title", ""),
+                        manual_images=job.get("manual_images") or [],
+                        manual_channel_desc=job.get("manual_channel_desc", ""),
+                        web_research=job.get("web_research"),
+                        real_events=job.get("real_events"),
+                        language=job.get("language"),
+                        voice_override=job.get("voice_override"),
+                        tone_override=job.get("tone_override"),
+                        privacy_override=job.get("privacy_override"),
+                        youtube_account_id=job.get("youtube_account_id"),
+                    )
+                finally:
+                    _cf.restore_env(_cf_snap)
                 ok = bool(res) if isinstance(res, bool) else bool((res or {}).get("ok"))
                 msg = "render complete" if ok else "render failed"
 

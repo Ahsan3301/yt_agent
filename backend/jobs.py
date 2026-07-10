@@ -401,22 +401,30 @@ def _run_one(job: dict[str, Any]):
     pt = threading.Thread(target=progress_bridge, daemon=True)
     pt.start()
 
-    ok = run_pipeline(
-        channel_type=job["channel"],
-        dry_run=job["dry_run"],
-        manual_topic=job.get("manual_topic", ""),
-        manual_script=job.get("manual_script", ""),
-        manual_title=job.get("manual_title", ""),
-        manual_images=job.get("manual_images") or [],
-        manual_channel_desc=job.get("manual_channel_desc", ""),
-        web_research=job.get("web_research"),
-        real_events=job.get("real_events"),
-        language=job.get("language"),
-        voice_override=job.get("voice_override"),
-        youtube_account_id=job.get("youtube_account_id"),
-        tone_override=job.get("tone_override"),
-        privacy_override=job.get("privacy_override"),
-    )
+    # Apply per-channel Cloudflare Workers AI creds to this render's
+    # env. "own" → channel-provided token; "global" → keys_sync value;
+    # "off" → wiped so shotfinder skips CF entirely on this channel.
+    from backend import channel_cf as _cf
+    _cf_snap = _cf.apply_from_job(job)
+    try:
+        ok = run_pipeline(
+            channel_type=job["channel"],
+            dry_run=job["dry_run"],
+            manual_topic=job.get("manual_topic", ""),
+            manual_script=job.get("manual_script", ""),
+            manual_title=job.get("manual_title", ""),
+            manual_images=job.get("manual_images") or [],
+            manual_channel_desc=job.get("manual_channel_desc", ""),
+            web_research=job.get("web_research"),
+            real_events=job.get("real_events"),
+            language=job.get("language"),
+            voice_override=job.get("voice_override"),
+            youtube_account_id=job.get("youtube_account_id"),
+            tone_override=job.get("tone_override"),
+            privacy_override=job.get("privacy_override"),
+        )
+    finally:
+        _cf.restore_env(_cf_snap)
 
     # Pipeline finished — final state and (optionally) upload.
     final_state = run_state.read()

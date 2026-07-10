@@ -100,6 +100,13 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         oracle_password_hash: (typeof c.oracle_password_hash === "string" && c.oracle_password_hash)
           ? String(c.oracle_password_hash)
           : null,
+        cf_source: String(c.cloudflare_source || "off"),
+        cf_own_account_id: c.cloudflare_source === "own"
+          ? String(c.cloudflare_account_id || "").trim()
+          : "",
+        cf_own_api_token: c.cloudflare_source === "own"
+          ? String(c.cloudflare_api_token || "").trim()
+          : "",
         updated_at: FieldValue.serverTimestamp(),
       };
       await adminDb().collection("jobs").doc(jobId).set(job);

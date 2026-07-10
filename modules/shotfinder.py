@@ -173,8 +173,21 @@ def _cf_today_key() -> str:
     return _dt.datetime.utcnow().strftime("%Y-%m-%d")
 
 
+def _cf_account_key() -> str:
+    """Stable 12-char key identifying the CURRENT account. Own-mode
+    channels each get their own counter automatically because their
+    account_id differs from the global one.
+
+    Falls back to 'global' when no account_id is set (older jobs)."""
+    acc = (os.getenv("CLOUDFLARE_ACCOUNT_ID") or "").strip()
+    if not acc:
+        return "global"
+    return hashlib.sha256(acc.encode()).hexdigest()[:12]
+
+
 def _cf_quota_read() -> int:
-    """Return today's Cloudflare Flux 2 usage. 0 if new day / no doc / DB down."""
+    """Return today's usage for the current CF account_id. 0 if new day
+    / no doc / DB down."""
     try:
         from backend import db as _db
         if not _db.is_configured():
@@ -185,14 +198,15 @@ def _cf_quota_read() -> int:
         d = (doc.to_dict() or {}).get("data") or {}
         if d.get("cloudflare_flux2_date") != _cf_today_key():
             return 0
-        return int(d.get("cloudflare_flux2_used") or 0)
+        per_acc = d.get("cloudflare_flux2_per_account") or {}
+        return int(per_acc.get(_cf_account_key()) or 0)
     except Exception as e:
         log.debug(f"cf quota read failed: {e}")
         return 0
 
 
 def _cf_quota_inc(by: int = 1) -> None:
-    """Best-effort atomic increment of today's usage counter."""
+    """Best-effort atomic-ish increment of today's per-account counter."""
     try:
         from backend import db as _db
         if not _db.is_configured():
@@ -202,9 +216,14 @@ def _cf_quota_inc(by: int = 1) -> None:
         d = ((doc.to_dict() or {}).get("data") if doc.exists else {}) or {}
         today = _cf_today_key()
         if d.get("cloudflare_flux2_date") != today:
-            # New day — reset.
-            d = {"cloudflare_flux2_date": today, "cloudflare_flux2_used": 0}
-        d["cloudflare_flux2_used"] = int(d.get("cloudflare_flux2_used") or 0) + by
+            d = {"cloudflare_flux2_date": today, "cloudflare_flux2_per_account": {}}
+        per_acc = dict(d.get("cloudflare_flux2_per_account") or {})
+        acc_key = _cf_account_key()
+        per_acc[acc_key] = int(per_acc.get(acc_key) or 0) + by
+        d["cloudflare_flux2_per_account"] = per_acc
+        # Keep the legacy single-counter around too so any older reader
+        # (dashboard reports panel) doesn't see zero.
+        d["cloudflare_flux2_used"] = sum(int(v or 0) for v in per_acc.values())
         ref.set({"data": d, "updated_at": time.time()}, merge=True)
     except Exception as e:
         log.debug(f"cf quota inc failed: {e}")
