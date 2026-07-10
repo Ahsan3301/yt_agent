@@ -74,6 +74,24 @@ const SECTIONS: Array<{
         docs_url: "https://huggingface.co/docs/api-inference/index",
         importance: "recommended",
       },
+      {
+        name: "CLOUDFLARE_ACCOUNT_ID",
+        label: "Cloudflare Account ID (Flux 2 dev)",
+        description:
+          "Tier-1 image provider: FLUX.2 [dev] via Workers AI free tier (~150 images/day free at ~56 neurons/image against a 10,000 neurons/day quota). Account ID is the 32-char hex on the right sidebar of any Cloudflare dashboard page.",
+        get_url: "https://dash.cloudflare.com/",
+        docs_url: "https://developers.cloudflare.com/workers-ai/",
+        importance: "recommended",
+      },
+      {
+        name: "CLOUDFLARE_API_TOKEN",
+        label: "Cloudflare API Token (Workers AI Read)",
+        description:
+          "Create at My Profile → API Tokens → Create Custom Token. Only permission needed: Account → Workers AI → Read. Scope to your account.",
+        get_url: "https://dash.cloudflare.com/profile/api-tokens",
+        docs_url: "https://developers.cloudflare.com/workers-ai/get-started/rest-api/",
+        importance: "recommended",
+      },
     ],
   },
   {

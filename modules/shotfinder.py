@@ -124,6 +124,202 @@ def _pexels_download_full(image_id, full_url, output_dir):
     return F.download_file(full_url, dest)
 
 
+# ── Cloudflare Workers AI (Flux 2 dev) — breaker + daily quota ──
+# Free tier: 10k neurons/day. Flux 2 dev = 56 neurons/image → ~178
+# images/day. We soft-cap at 150 to leave headroom + fall through to
+# Pollinations without ever hitting a real Cloudflare 429.
+#
+# Quota lives in PB settings/image_gen_quota (data JSON blob), keyed by
+# UTC date so it auto-resets at 00:00 UTC. Worker restarts + multiple
+# workers all see the same counter.
+_CF_DAILY_CAP = 150
+_CF_CONSECUTIVE_FAILS = 0
+_CF_OPEN_UNTIL = 0.0
+_CF_BACKOFF_FAILS = 3
+_CF_OPEN_FOR_SECONDS = 300     # 5 min — auth issues need operator fix, not a retry storm
+
+
+def _cf_breaker_skip():
+    return time.time() < _CF_OPEN_UNTIL
+
+
+def _cf_breaker_record(success: bool, http_status: int | None = None):
+    global _CF_CONSECUTIVE_FAILS, _CF_OPEN_UNTIL
+    if success:
+        if _CF_CONSECUTIVE_FAILS:
+            log.info("Cloudflare Flux 2: breaker reset after successful call")
+        _CF_CONSECUTIVE_FAILS = 0
+        return
+    # 401 / 403 are auth issues — trip immediately (no point retrying).
+    if http_status in (401, 403):
+        _CF_OPEN_UNTIL = time.time() + _CF_OPEN_FOR_SECONDS
+        log.warning(
+            f"Cloudflare Flux 2: breaker OPEN — HTTP {http_status} (bad token / scope). "
+            f"Skipping for {_CF_OPEN_FOR_SECONDS}s. Fix creds via /keys."
+        )
+        return
+    _CF_CONSECUTIVE_FAILS += 1
+    if _CF_CONSECUTIVE_FAILS >= _CF_BACKOFF_FAILS:
+        _CF_OPEN_UNTIL = time.time() + _CF_OPEN_FOR_SECONDS
+        log.warning(
+            f"Cloudflare Flux 2: breaker OPEN — {_CF_CONSECUTIVE_FAILS} consecutive failures; "
+            f"skipping for {_CF_OPEN_FOR_SECONDS}s"
+        )
+
+
+def _cf_today_key() -> str:
+    """UTC YYYY-MM-DD — the quota partition key. Auto-resets at 00:00 UTC."""
+    import datetime as _dt
+    return _dt.datetime.utcnow().strftime("%Y-%m-%d")
+
+
+def _cf_quota_read() -> int:
+    """Return today's Cloudflare Flux 2 usage. 0 if new day / no doc / DB down."""
+    try:
+        from backend import db as _db
+        if not _db.is_configured():
+            return 0
+        doc = _db.client().collection("settings").document("image_gen_quota").get()
+        if not doc.exists:
+            return 0
+        d = (doc.to_dict() or {}).get("data") or {}
+        if d.get("cloudflare_flux2_date") != _cf_today_key():
+            return 0
+        return int(d.get("cloudflare_flux2_used") or 0)
+    except Exception as e:
+        log.debug(f"cf quota read failed: {e}")
+        return 0
+
+
+def _cf_quota_inc(by: int = 1) -> None:
+    """Best-effort atomic increment of today's usage counter."""
+    try:
+        from backend import db as _db
+        if not _db.is_configured():
+            return
+        ref = _db.client().collection("settings").document("image_gen_quota")
+        doc = ref.get()
+        d = ((doc.to_dict() or {}).get("data") if doc.exists else {}) or {}
+        today = _cf_today_key()
+        if d.get("cloudflare_flux2_date") != today:
+            # New day — reset.
+            d = {"cloudflare_flux2_date": today, "cloudflare_flux2_used": 0}
+        d["cloudflare_flux2_used"] = int(d.get("cloudflare_flux2_used") or 0) + by
+        ref.set({"data": d, "updated_at": time.time()}, merge=True)
+    except Exception as e:
+        log.debug(f"cf quota inc failed: {e}")
+
+
+def _cloudflare_generate(prompt, output_dir, trial, negative_prompt=""):
+    """Generate one image via Cloudflare Workers AI (Flux 2 dev).
+    Returns (path, seed) on success, (None, seed) on any failure.
+
+    Requires CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN in env
+    (populated by keys_sync on worker boot). Soft-caps at
+    _CF_DAILY_CAP images/day via PB counter — beyond that
+    _provider_ready returns False and the chain falls through to
+    Pollinations.
+
+    Flux 2 dev via CF returns a base64 blob under
+    {"result": {"image": "<b64>"}}. We decode and write to
+    output_dir/cloudflare_<seed>.jpg."""
+    seed = int(hashlib.md5(f"{prompt}|{trial}|cf".encode()).hexdigest()[:8], 16)
+
+    if _cf_breaker_skip():
+        wait = int(_CF_OPEN_UNTIL - time.time())
+        log.info(f"Cloudflare Flux 2: breaker OPEN (skipping; reopens in {wait}s)")
+        return None, seed
+
+    account = os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip()
+    token = os.getenv("CLOUDFLARE_API_TOKEN", "").strip()
+    if not account or not token:
+        # _provider_ready should have caught this — belt-and-braces.
+        return None, seed
+
+    # Same Flux-friendly prompt shape Pollinations uses — short comma
+    # tag list, no negative prompt (Flux 2 dev honours it weakly).
+    final_prompt = _distill_prompt_for_flux(prompt)[:400]
+
+    url = (
+        f"https://api.cloudflare.com/client/v4/accounts/{account}"
+        f"/ai/run/@cf/black-forest-labs/flux-2-dev"
+    )
+    body: dict = {"prompt": final_prompt, "seed": seed}
+    if negative_prompt:
+        body["negative_prompt"] = negative_prompt[:200]
+
+    dest = os.path.join(output_dir, f"cloudflare_{seed:08x}.jpg")
+    log.debug(f"Cloudflare Flux 2: attempt {trial+1} seed={seed:08x}")
+
+    try:
+        r = requests.post(
+            url,
+            headers={"Authorization": f"Bearer {token}",
+                     "Content-Type": "application/json"},
+            json=body,
+            timeout=90,
+        )
+    except Exception as e:
+        _cf_breaker_record(success=False)
+        log.warning(f"Cloudflare Flux 2 network error: {e}")
+        return None, seed
+
+    if r.status_code in (401, 403):
+        _cf_breaker_record(success=False, http_status=r.status_code)
+        log.warning(f"Cloudflare Flux 2: HTTP {r.status_code} — auth failure")
+        return None, seed
+    if r.status_code == 429:
+        # Real 429 shouldn't happen under our soft-cap, but if we ever
+        # blow through it (concurrent workers) treat as breaker trip.
+        _cf_breaker_record(success=False, http_status=429)
+        log.warning("Cloudflare Flux 2: HTTP 429 — quota exhausted")
+        return None, seed
+
+    if not r.ok:
+        _cf_breaker_record(success=False)
+        log.warning(f"Cloudflare Flux 2: HTTP {r.status_code} — {r.text[:200]}")
+        return None, seed
+
+    # Two response shapes are documented — some CF Flux endpoints stream
+    # raw bytes, others return {"result": {"image": "<b64>"}}. Handle both.
+    ctype = (r.headers.get("Content-Type") or "").lower()
+    img_bytes: bytes | None = None
+    try:
+        if "image/" in ctype:
+            img_bytes = r.content
+        else:
+            data = r.json()
+            if not (data or {}).get("success", True):
+                _cf_breaker_record(success=False)
+                log.warning(f"Cloudflare Flux 2: API error {data.get('errors')}")
+                return None, seed
+            b64 = ((data.get("result") or {}).get("image") or "").strip()
+            if b64:
+                import base64 as _b64
+                img_bytes = _b64.b64decode(b64)
+    except Exception as e:
+        _cf_breaker_record(success=False)
+        log.warning(f"Cloudflare Flux 2: response parse failed: {e}")
+        return None, seed
+
+    if not img_bytes or len(img_bytes) < 4096:
+        _cf_breaker_record(success=False)
+        log.warning("Cloudflare Flux 2: response empty / too small")
+        return None, seed
+
+    try:
+        with open(dest, "wb") as f:
+            f.write(img_bytes)
+    except Exception as e:
+        _cf_breaker_record(success=False)
+        log.warning(f"Cloudflare Flux 2: write failed: {e}")
+        return None, seed
+
+    _cf_breaker_record(success=True)
+    _cf_quota_inc(1)
+    return dest, seed
+
+
 # ── Pollinations circuit breaker ──────────────────────────────
 # Pollinations rate-limits per ~minute. When we hit 429s we used to retry
 # every shot which made things worse (hammered the same wall). The breaker:
@@ -1212,7 +1408,7 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror"):
             f"(threshold=-1) so first successful gen wins the shot"
         )
     ig_cfg = (load_settings().get("image_gen") or {})
-    priority = ig_cfg.get("priority") or ["huggingface", "local_sdxl", "pollinations"]
+    priority = ig_cfg.get("priority") or ["cloudflare", "pollinations", "local_sdxl", "horde", "huggingface"]
     ig_enabled = ig_cfg.get("enabled") or {}
     negative_prompt = str(ig_cfg.get("negative_prompt") or "").strip()
 
@@ -1227,6 +1423,15 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror"):
         if name == "huggingface":
             if not os.getenv("HF_TOKEN", "").strip():
                 return False, "no HF_TOKEN"
+        if name == "cloudflare":
+            if not (os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip()
+                    and os.getenv("CLOUDFLARE_API_TOKEN", "").strip()):
+                return False, "no CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN"
+            # Daily soft-cap. When today's counter would exceed the cap
+            # if we did another gen, fall through to the next provider.
+            _used = _cf_quota_read()
+            if _used >= _CF_DAILY_CAP:
+                return False, f"daily soft-cap reached ({_used}/{_CF_DAILY_CAP})"
         if name == "local_sdxl":
             if _LOCAL_SDXL_BROKEN:
                 return False, f"local pipeline broken ({_LOCAL_SDXL_BROKEN_REASON})"
@@ -1245,6 +1450,7 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror"):
         return True, ""
 
     _AI_PROVIDERS = {
+        "cloudflare":  _cloudflare_generate,   # Flux 2 dev via Workers AI, ~150/day free
         "horde":       _horde_generate,        # real SDXL crowdsourced, works anon
         "huggingface": _huggingface_generate,
         "local_sdxl":  _local_sdxl_generate,

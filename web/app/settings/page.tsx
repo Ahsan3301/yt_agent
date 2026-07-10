@@ -469,6 +469,11 @@ function Toggle({ checked, onChange, label, hint }:
 // plain-English "avoid: …" clause.
 const IMAGE_GEN_PROVIDERS: { key: string; label: string; hint: string }[] = [
   {
+    key: "cloudflare",
+    label: "Cloudflare Flux 2 dev",
+    hint: "Black Forest Labs' current flagship via Workers AI. Best quality of the free tier providers. ~150 images/day free (auto-soft-cap at 150 to preserve headroom, then falls through to Pollinations). Needs CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN from /keys.",
+  },
+  {
     key: "local_sdxl",
     label: "Local SDXL (worker GPU)",
     hint: "Highest quality once loaded. Needs GPU sm_7.0+ (T4/A100 OK, P100 fails). First-boot download ~10-15 min; cached for the rest of the Kaggle session.",
@@ -491,8 +496,8 @@ const IMAGE_GEN_PROVIDERS: { key: string; label: string; hint: string }[] = [
 ];
 
 const IMAGE_GEN_DEFAULT: NonNullable<Settings["image_gen"]> = {
-  priority: ["local_sdxl", "pollinations", "horde", "huggingface"],
-  enabled: { local_sdxl: true, pollinations: true, horde: true, huggingface: true } as Record<string, boolean>,
+  priority: ["cloudflare", "pollinations", "local_sdxl", "horde", "huggingface"],
+  enabled: { cloudflare: true, local_sdxl: true, pollinations: true, horde: true, huggingface: true } as Record<string, boolean>,
   local_sdxl_model: "stabilityai/sdxl-turbo",
   shot_parallelism: 3,
   negative_prompt:

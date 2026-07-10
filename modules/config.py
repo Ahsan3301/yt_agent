@@ -165,8 +165,13 @@ DEFAULT_SETTINGS = {
         # queue is congested and each shot can spend 90 sec waiting only
         # to time out. HF SDXL third for user-provided-token backup →
         # local_sdxl if user explicitly enables.
-        "priority": ["pollinations", "horde", "huggingface", "local_sdxl"],
+        # Cloudflare (Flux 2 dev via Workers AI) leads — best free-tier
+        # quality with a documented daily quota. Auto-soft-cap at 150/day
+        # (see modules.shotfinder._CF_DAILY_CAP) so overflow falls
+        # through to Pollinations without any operator action.
+        "priority": ["cloudflare", "pollinations", "horde", "huggingface", "local_sdxl"],
         "enabled": {
+            "cloudflare":   True,
             "horde":        True,
             "pollinations": True,
             "huggingface":  True,

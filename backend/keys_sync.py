@@ -42,6 +42,8 @@ MANAGED_KEYS = [
     "PIXABAY_API_KEY",
     "COVERR_API_KEY",
     "HF_TOKEN",                  # HuggingFace Inference API — free SDXL fallback
+    "CLOUDFLARE_ACCOUNT_ID",     # Workers AI — Flux 2 dev, ~150/day free tier
+    "CLOUDFLARE_API_TOKEN",      # Workers AI Read scope only, no other perms needed
     "DISCORD_WEBHOOK_URL",       # alerting channel for renders + cleanup
     "YOUTUBE_REFRESH_TOKEN",     # auto-publish to YouTube
     "RENDER_TRIGGER_KEY",        # shared secret for GitHub Actions → Vercel
