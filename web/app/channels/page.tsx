@@ -61,6 +61,16 @@ type Channel = {
   //              mode requires the operator unlock password.
   cloudflare_source?: "off" | "own" | "global";
   has_cloudflare_own_creds?: boolean;
+  // Comma-separated ordered list of LLM providers this channel should
+  // use, e.g. "nim,openrouter,groq". Empty = worker default.
+  llm_priority?: string;
+};
+
+type LlmProviderKey = "nim" | "openrouter" | "groq";
+const LLM_META: Record<LlmProviderKey, { label: string; note: string }> = {
+  nim:        { label: "NVIDIA NIM",   note: "llama-3.3 → nemotron chain · free tier · slow when congested" },
+  openrouter: { label: "OpenRouter",   note: "llama-3.3 free tier · fast · rate-limited" },
+  groq:       { label: "Groq",         note: "llama-3.3-70b · fastest · strict daily cap" },
 };
 
 type WorkerKey = "kaggle" | "colab" | "oracle";
@@ -584,6 +594,35 @@ function ChannelForm({
 
   const oracleEnabled = workers.includes("oracle");
 
+  // LLM provider priority — mirrors the worker priority UI. Empty
+  // string = use worker's default (nim,openrouter,groq). Missing = same.
+  const _initialLlms = (): LlmProviderKey[] => {
+    const raw = (initial?.llm_priority || "").trim();
+    if (!raw) return ["nim", "openrouter", "groq"];
+    const seen = new Set<string>();
+    const out: LlmProviderKey[] = [];
+    for (const t of raw.split(",")) {
+      const s = t.trim().toLowerCase();
+      if ((s === "nim" || s === "groq" || s === "openrouter") && !seen.has(s)) {
+        seen.add(s); out.push(s as LlmProviderKey);
+      }
+    }
+    return out.length ? out : ["nim"];
+  };
+  const [llms, setLlms] = useState<LlmProviderKey[]>(_initialLlms());
+  const _toggleLlm = (l: LlmProviderKey) => {
+    setLlms((prev) => prev.includes(l) ? prev.filter((x) => x !== l) : [...prev, l]);
+  };
+  const _moveLlm = (l: LlmProviderKey, dir: -1 | 1) => {
+    setLlms((prev) => {
+      const i = prev.indexOf(l); if (i < 0) return prev;
+      const j = i + dir; if (j < 0 || j >= prev.length) return prev;
+      const next = [...prev];
+      [next[i], next[j]] = [next[j], next[i]];
+      return next;
+    });
+  };
+
   // ── Cloudflare Workers AI (per-channel) ────────────────────
   // "off" | "own" | "global" — matches server field cloudflare_source.
   const [cfSource, setCfSource] = useState<"off" | "own" | "global">(
@@ -663,6 +702,7 @@ function ChannelForm({
       discord_webhook: discordWebhook.trim() || null,
       allowed_workers: workers,
       cloudflare_source: cfSource,
+      llm_priority: llms.join(","),
     };
     if (oraclePasswordAction === "set" && oraclePasswordInput.trim().length >= 4) {
       payload.oracle_password_action = "set";
@@ -1220,6 +1260,79 @@ function ChannelForm({
               on the channel doc.
             </p>
           </div>
+        )}
+      </div>
+
+      {/* ── LLM provider priority ─────────────────────────── */}
+      <div className="space-y-3 rounded-lg border border-line bg-bg-2 p-3">
+        <div className="flex items-center gap-2">
+          <KeyRound className="h-4 w-4 text-accent" />
+          <div className="font-medium text-sm">LLM provider priority</div>
+        </div>
+        <p className="text-[10px] text-neutral-500 -mt-1">
+          Ordered fallback for every LLM call (script, SEO, storyboard,
+          per-shot prompts). If the first provider fails/times out, the
+          next is tried. Toggle providers off to remove them entirely.
+          Default: NIM → OpenRouter → Groq.
+        </p>
+        <div className="flex flex-wrap gap-1.5">
+          {(["nim", "openrouter", "groq"] as LlmProviderKey[]).map((l) => {
+            const enabled = llms.includes(l);
+            const idx = llms.indexOf(l);
+            return (
+              <div
+                key={l}
+                className={clsx(
+                  "flex items-center gap-1 rounded-md border px-2 py-1 text-xs",
+                  enabled
+                    ? "border-accent/50 bg-accent/10 text-white"
+                    : "border-line text-neutral-500"
+                )}
+              >
+                {enabled && idx >= 0 && (
+                  <span className="pill text-[9px] bg-neutral-800/70 text-neutral-300 border border-neutral-700">
+                    #{idx + 1}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => _toggleLlm(l)}
+                  className="text-left"
+                  title={LLM_META[l].note}
+                >
+                  {LLM_META[l].label}
+                </button>
+                {enabled && (
+                  <>
+                    <button
+                      type="button"
+                      className="opacity-70 hover:opacity-100 text-[10px] px-1"
+                      onClick={() => _moveLlm(l, -1)}
+                      disabled={idx <= 0}
+                      title="Higher priority"
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      className="opacity-70 hover:opacity-100 text-[10px] px-1"
+                      onClick={() => _moveLlm(l, +1)}
+                      disabled={idx >= llms.length - 1}
+                      title="Lower priority"
+                    >
+                      ↓
+                    </button>
+                  </>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        {llms.length === 0 && (
+          <p className="text-[10px] text-red-400">
+            No LLM providers selected. The pipeline will fail on the first
+            LLM call. Enable at least one.
+          </p>
         )}
       </div>
 

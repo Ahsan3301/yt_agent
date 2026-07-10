@@ -92,6 +92,24 @@ const SECTIONS: Array<{
         docs_url: "https://developers.cloudflare.com/workers-ai/get-started/rest-api/",
         importance: "recommended",
       },
+      {
+        name: "OPENROUTER_API_KEY",
+        label: "OpenRouter API Key (LLM 2nd-layer)",
+        description:
+          "Free-tier llama-3.3 70B via OpenRouter. Used as a second-layer LLM fallback when NIM times out and Groq is rate-limited. Sign up + create an API key at openrouter.ai/keys.",
+        get_url: "https://openrouter.ai/keys",
+        docs_url: "https://openrouter.ai/docs",
+        importance: "recommended",
+      },
+      {
+        name: "OPENROUTER_MODEL",
+        label: "OpenRouter Model (optional override)",
+        description:
+          "Defaults to meta-llama/llama-3.3-70b-instruct:free. Only set this if you want to point OpenRouter at a specific paid model.",
+        get_url: "https://openrouter.ai/models",
+        docs_url: "https://openrouter.ai/docs",
+        importance: "optional",
+      },
     ],
   },
   {

@@ -58,6 +58,9 @@ type ChannelDoc = {
   //              the shared quota.
   cloudflare_source?: "off" | "own" | "global";
   cloudflare_account_id?: string;   // own mode only, write-only
+  // Per-channel LLM priority order. Comma-separated string or string[].
+  // Known providers: nim, groq, openrouter. Absent = default.
+  llm_priority?: string | string[];
   cloudflare_api_token?: string;    // own mode only, write-only
   cloudflare_action?: "set" | "clear";
   cloudflare_global_password?: string;  // required when switching to "global"
@@ -82,6 +85,23 @@ function _publicView(d: Record<string, unknown>): Record<string, unknown> {
     has_oracle_password: Boolean(oracle_password_hash),
     has_cloudflare_own_creds: Boolean(cloudflare_account_id && cloudflare_api_token),
   };
+}
+
+function _sanitizeLlmPriority(v: unknown): string {
+  const known = new Set(["nim", "groq", "openrouter"]);
+  let items: string[] = [];
+  if (Array.isArray(v)) {
+    items = v.filter((x): x is string => typeof x === "string");
+  } else if (typeof v === "string") {
+    items = v.split(",");
+  }
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const t of items) {
+    const s = String(t).trim().toLowerCase();
+    if (known.has(s) && !seen.has(s)) { seen.add(s); out.push(s); }
+  }
+  return out.join(",");
 }
 
 function _sanitizeAllowedWorkers(v: unknown): string[] {
@@ -266,6 +286,10 @@ export async function POST(req: NextRequest) {
         : null,
       // Ordered priority list; empty = fall back to defaults at claim time.
       allowed_workers: _sanitizeAllowedWorkers(body.allowed_workers),
+      // Per-channel LLM priority — comma-separated ordered list of
+      // { nim, groq, openrouter }. Empty = worker default
+      // ("nim,openrouter,groq").
+      llm_priority: _sanitizeLlmPriority(body.llm_priority),
       ...passwordPatch,
       ...cfPatch,
       updated_at: FieldValue.serverTimestamp(),

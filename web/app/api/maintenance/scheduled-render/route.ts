@@ -102,6 +102,7 @@ export async function POST(req: NextRequest) {
       cf_source: string;
       cf_own_account_id: string;
       cf_own_api_token: string;
+      llm_priority: string;
     }> = [];
     // Build a niche→binding lookup so the legacy fallback path (below)
     // can inherit a YouTube account from the channels row of the same
@@ -165,6 +166,8 @@ export async function POST(req: NextRequest) {
             cf_source: cfSource,
             cf_own_account_id: cfOwnAcc,
             cf_own_api_token: cfOwnTok,
+            llm_priority: (typeof c.llm_priority === "string" && c.llm_priority.trim())
+              ? String(c.llm_priority).trim().slice(0, 60) : "",
           });
         }
         targets[niche] = (targets[niche] || 0) + count;
@@ -196,6 +199,7 @@ export async function POST(req: NextRequest) {
             cf_source: "off",
             cf_own_account_id: "",
             cf_own_api_token: "",
+            llm_priority: "",
           });
         }
         if (n > 0) targets[niche] = (targets[niche] || 0) + n;
@@ -329,6 +333,7 @@ export async function POST(req: NextRequest) {
         cf_source: slot.cf_source,
         cf_own_account_id: slot.cf_own_account_id,
         cf_own_api_token: slot.cf_own_api_token,
+        llm_priority: slot.llm_priority,
         updated_at: FieldValue.serverTimestamp(),
       };
       await adminDb().collection("jobs").doc(jobId).set(job);

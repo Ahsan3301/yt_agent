@@ -126,6 +126,69 @@ _rate_lock = threading.Lock()
 # Groq's daily quota is ever bitten.
 GROQ_PRIMARY_FIRST = os.getenv("NIM_GROQ_PRIMARY", "true").lower() != "false"
 
+# ── LLM provider priority chain ──────────────────────────────
+# Read at every chat() call so a per-render env override from
+# backend.channel_llm.apply_from_job takes effect without a restart.
+# Format: comma-separated provider names.
+#   nim         → run the full NIM model chain (llama-3.3 → nemotron)
+#   groq        → Groq llama-3.3-70b-versatile (fastest, strict quota)
+#   openrouter  → OpenRouter's free-tier llama-3.3 (rate-limited)
+# Absent providers are OFF for this render.
+_DEFAULT_LLM_PRIORITY = "nim,openrouter,groq"
+
+
+def _llm_priority() -> list[str]:
+    raw = os.getenv("LLM_PRIORITY", "").strip() or _DEFAULT_LLM_PRIORITY
+    known = {"nim", "groq", "openrouter"}
+    out: list[str] = []
+    for tok in raw.split(","):
+        t = tok.strip().lower()
+        if t in known and t not in out:
+            out.append(t)
+    return out or ["nim"]
+
+
+def _try_provider(name: str, messages, max_tokens, temperature,
+                  response_format):
+    """Dispatch to a non-NIM provider. Returns content string on success,
+    None on skip (missing key / breaker open / empty). Raises on network
+    failure so the caller can record the exception for the last-err path."""
+    if name == "groq":
+        if not os.getenv("GROQ_API_KEY", "").strip():
+            return None
+        if _groq_open():
+            return None
+        try:
+            c = _groq_chat_fallback(messages, max_tokens=max_tokens,
+                                    temperature=temperature,
+                                    response_format=response_format,
+                                    timeout=30)
+        except Exception as e:
+            _groq_record(False)
+            log.warning(f"LLM: Groq failed ({e}); falling to next provider")
+            raise
+        if c and c.strip():
+            _groq_record(True)
+            return c
+        _groq_record(False)
+        return None
+    if name == "openrouter":
+        if not os.getenv("OPENROUTER_API_KEY", "").strip():
+            return None
+        try:
+            c = _openrouter_chat_fallback(messages, max_tokens=max_tokens,
+                                          temperature=temperature,
+                                          response_format=response_format,
+                                          timeout=30)
+        except Exception as e:
+            log.warning(f"LLM: OpenRouter failed ({e}); falling to next provider")
+            raise
+        if c and c.strip():
+            return c
+        return None
+    return None
+
+
 # ── Groq per-worker circuit breaker ──────────────────────────
 # Groq's free tier has a strict per-minute rate limit; hitting 429 on
 # every single call for a whole render (one call per shot × 2 threads
@@ -335,40 +398,42 @@ def chat(messages, model=None, max_tokens=2048, temperature=0.7,
     tool_calls from the response. Passing tools= directly here also
     works but you get the raw string and must parse yourself.
     """
-    # Groq-first priority. Skip only when:
-    #   • caller pinned a specific NIM model (respect their intent)
-    #   • GROQ_PRIMARY_FIRST env is false
-    #   • GROQ_API_KEY isn't set
-    # Same content contract as the NIM path — return content string on
-    # success, fall through to NIM on any failure so no render dies
-    # because Groq's daily cap bit.
+    # Per-render LLM priority chain. LLM_PRIORITY env is populated by
+    # backend.channel_llm.apply_from_job from the channel's own setting.
+    # Format: comma-separated provider names. Absent providers are skipped
+    # entirely (channel opted them off). NIM is a sentinel meaning "run
+    # the full NIM model chain"; the walk defers to the existing NIM
+    # code below when it hits nim.
     last_err: Exception | None = None
-    if (not model and GROQ_PRIMARY_FIRST
-            and os.getenv("GROQ_API_KEY", "").strip()
-            and not _groq_open()):
+    priority = _llm_priority()
+    tried_nim = False
+    if model:
+        # Caller pinned a specific NIM model — respect that intent, run
+        # only the NIM path.
+        priority = ["nim"]
+    for prov in priority:
+        if prov == "nim":
+            tried_nim = True
+            break  # fall through to existing NIM chain below
         try:
-            groq_content = _groq_chat_fallback(
-                messages, max_tokens=max_tokens, temperature=temperature,
-                response_format=response_format, timeout=30,
-            )
-            if groq_content and groq_content.strip():
-                _groq_record(True)
-                # Only log the tier one when it succeeded on the FIRST call
-                # of the render — otherwise noisy. Track via module-level flag.
-                global _GROQ_LOGGED_PRIMARY
-                try:
-                    if not _GROQ_LOGGED_PRIMARY:
-                        log.info("NIM chat: Groq primary (llama-3.3-70b-versatile) responded — subsequent calls suppressed from log")
-                        _GROQ_LOGGED_PRIMARY = True
-                except NameError:
-                    _GROQ_LOGGED_PRIMARY = True
-                return groq_content
-            _groq_record(False)
-            log.warning("NIM chat: Groq primary returned empty; falling to NIM chain")
+            content = _try_provider(prov, messages, max_tokens, temperature,
+                                    response_format)
         except Exception as e:
             last_err = e
-            _groq_record(False)
-            log.warning(f"NIM chat: Groq primary failed ({e}); falling to NIM chain")
+            continue
+        if content and content.strip():
+            return content
+
+    # NIM chain only runs if "nim" was in the per-render priority list
+    # (or the caller pinned a specific NIM model). If the channel toggled
+    # NIM off, skip straight to the post-NIM provider loop below.
+    if not tried_nim and not model:
+        # No NIM run scheduled — walk any providers listed AFTER what
+        # would have been the nim slot (there are none since we broke
+        # on 'nim' above), then raise.
+        if last_err:
+            raise last_err
+        raise RuntimeError(f"all LLM providers exhausted (priority={priority})")
 
     # Model fallback chain — caller-supplied model wins alone; otherwise
     # walk the configured primary + fallbacks so a transient outage on
@@ -454,22 +519,25 @@ def chat(messages, model=None, max_tokens=2048, temperature=0.7,
         # transiently return no content under load).
         log.warning(f"NIM {m_name} returned empty response; trying next model")
 
-    # ── GROQ LAST-DITCH FALLBACK ──
-    # All NIM models exhausted. Groq is much faster + more reliable
-    # (Azure/Groq backend vs NIM's free-tier queue) but has a stricter
-    # daily cap (~100k tokens/day on llama-3.3-70b-versatile). Kept
-    # as LAST resort so we don't burn the Groq budget on every render;
-    # NIM's chain succeeds most of the time. Confirmed live 2026-07-09.
+    # ── POST-NIM PROVIDER FALLBACK ──
+    # NIM chain exhausted. Walk any providers listed AFTER 'nim' in the
+    # per-channel priority chain — e.g. priority='nim,openrouter,groq'
+    # → try OpenRouter then Groq. Providers before 'nim' were already
+    # tried in the pre-loop above.
     try:
-        content = _groq_chat_fallback(
-            messages, max_tokens=max_tokens, temperature=temperature,
-            response_format=response_format, timeout=45,
-        )
+        _post_nim = priority[priority.index("nim") + 1:] if "nim" in priority else []
+    except Exception:
+        _post_nim = []
+    for prov in _post_nim:
+        try:
+            content = _try_provider(prov, messages, max_tokens, temperature,
+                                    response_format)
+        except Exception as e:
+            last_err = e
+            continue
         if content and content.strip():
-            log.info("NIM chat: succeeded on Groq fallback (llama-3.3-70b-versatile)")
+            log.info(f"NIM chat: succeeded on post-NIM fallback provider {prov}")
             return content
-    except Exception as e:
-        log.warning(f"Groq fallback also failed: {e}")
 
     if last_err:
         raise last_err
@@ -505,6 +573,41 @@ def _groq_chat_fallback(messages, max_tokens=2048, temperature=0.7,
     }
     r = requests.post(
         "https://api.groq.com/openai/v1/chat/completions",
+        headers=headers, json=payload, timeout=timeout,
+    )
+    r.raise_for_status()
+    data = r.json() or {}
+    choices = data.get("choices") or []
+    if not choices:
+        return ""
+    return (choices[0].get("message") or {}).get("content", "") or ""
+
+
+def _openrouter_chat_fallback(messages, max_tokens=2048, temperature=0.7,
+                              response_format=None, timeout=30):
+    """Call OpenRouter's OpenAI-compatible chat endpoint. Model is
+    configurable via OPENROUTER_MODEL env; default is the free-tier
+    llama-3.3-70b-instruct which is generous but rate-limited."""
+    _k = os.getenv("OPENROUTER_API_KEY", "") or ""
+    if not _k:
+        raise RuntimeError("OPENROUTER_API_KEY not set (add via /keys)")
+    payload = {
+        "model": os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct:free"),
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    }
+    if response_format:
+        payload["response_format"] = response_format
+    headers = {
+        "Authorization": f"Bearer {_k}",
+        "Content-Type": "application/json",
+        # OpenRouter recommends these for attribution + rate-limit tiers
+        "HTTP-Referer": os.getenv("OPENROUTER_REFERER", "https://yt-agent.thyker.online"),
+        "X-Title": "yt-agent",
+    }
+    r = requests.post(
+        "https://openrouter.ai/api/v1/chat/completions",
         headers=headers, json=payload, timeout=timeout,
     )
     r.raise_for_status()

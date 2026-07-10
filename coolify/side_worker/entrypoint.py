@@ -352,7 +352,9 @@ def handle(job: dict) -> None:
                 # to os.environ for this render only. Matches the shim
                 # in backend/jobs.py so both worker paths behave the same.
                 from backend import channel_cf as _cf
+                from backend import channel_llm as _cllm
                 _cf_snap = _cf.apply_from_job(job)
+                _llm_snap = _cllm.apply_from_job(job)
 
                 # Kwarg names mirror backend/jobs.py::_run_pipeline_job.
                 try:
@@ -375,6 +377,7 @@ def handle(job: dict) -> None:
                     )
                 finally:
                     _cf.restore_env(_cf_snap)
+                    _cllm.restore_env(_llm_snap)
                 ok = bool(res) if isinstance(res, bool) else bool((res or {}).get("ok"))
                 msg = "render complete" if ok else "render failed"
 

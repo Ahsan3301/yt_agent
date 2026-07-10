@@ -166,6 +166,9 @@ def submit(payload: dict[str, Any]) -> dict[str, Any]:
         "cf_source":           str(payload.get("cf_source") or "off")[:10],
         "cf_own_account_id":   str(payload.get("cf_own_account_id") or "")[:64],
         "cf_own_api_token":    str(payload.get("cf_own_api_token") or "")[:500],
+        # Per-channel LLM priority (comma list of nim/groq/openrouter).
+        # Empty = worker uses default (nim,openrouter,groq).
+        "llm_priority":        str(payload.get("llm_priority") or "")[:60],
         # Channel worker prefs — priority list + Oracle password gate.
         "allowed_workers":     list(payload.get("allowed_workers") or []),
         "oracle_password_hash": str(payload.get("oracle_password_hash") or ""),
@@ -224,6 +227,7 @@ def adopt_remote(remote_job: dict[str, Any]) -> bool:
         "cf_source":           str(remote_job.get("cf_source") or "off")[:10],
         "cf_own_account_id":   str(remote_job.get("cf_own_account_id") or "")[:64],
         "cf_own_api_token":    str(remote_job.get("cf_own_api_token") or "")[:500],
+        "llm_priority":        str(remote_job.get("llm_priority") or "")[:60],
         "allowed_workers":     list(remote_job.get("allowed_workers") or []),
         "oracle_password_hash": str(remote_job.get("oracle_password_hash") or ""),
     }
@@ -432,7 +436,9 @@ def _run_one(job: dict[str, Any]):
     # env. "own" → channel-provided token; "global" → keys_sync value;
     # "off" → wiped so shotfinder skips CF entirely on this channel.
     from backend import channel_cf as _cf
+    from backend import channel_llm as _cllm
     _cf_snap = _cf.apply_from_job(job)
+    _llm_snap = _cllm.apply_from_job(job)
     try:
         ok = run_pipeline(
             channel_type=job["channel"],
@@ -452,6 +458,7 @@ def _run_one(job: dict[str, Any]):
         )
     finally:
         _cf.restore_env(_cf_snap)
+        _cllm.restore_env(_llm_snap)
 
     # Pipeline finished — final state and (optionally) upload.
     final_state = run_state.read()

@@ -107,6 +107,9 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         cf_own_api_token: c.cloudflare_source === "own"
           ? String(c.cloudflare_api_token || "").trim()
           : "",
+        llm_priority: (typeof c.llm_priority === "string" && c.llm_priority.trim())
+          ? String(c.llm_priority).trim().slice(0, 60)
+          : "",
         updated_at: FieldValue.serverTimestamp(),
       };
       await adminDb().collection("jobs").doc(jobId).set(job);
