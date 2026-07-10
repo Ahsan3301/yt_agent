@@ -188,39 +188,56 @@ export async function POST(req: NextRequest) {
     const workers = await pickWorkers();
     const targetWorker = workers[0];
 
-    // Auto-wake Kaggle if we have work to queue but NO gpu-tier worker
-    // is currently alive. Prevents scheduled jobs from sitting in the
-    // queue overnight when the last worker's watchdog expired. Only
-    // fires when channelMeta has slots — so an empty schedule tick
-    // (e.g. no channel matches this hour) never spins up a worker.
+    // Smart wake — only fires Kaggle wake if:
+    //   (a) at least one queued channel has Kaggle as its PRIMARY, OR
+    //   (b) at least one queued channel has Colab as primary but Colab
+    //       AND Kaggle are both down (kaggle-as-fallback for colab).
+    // Legacy channels with allowed_workers=[] fall into (a) by
+    // default (kaggle is the historical primary).
     if (channelMeta.length > 0) {
       try {
         const backendsSnap = await adminDb().collection("backends").get();
         const nowEpoch = Date.now() / 1000;
-        let liveGpu = 0;
+        const liveLabels = new Set<string>();
         backendsSnap.forEach((doc) => {
           const b = doc.data() as Record<string, unknown>;
-          if (String(b.tier || "") !== "gpu") return;
           const lastSeen = Number(b.last_seen_at || 0);
-          // 90s heartbeat window matches the /queue liveness threshold.
-          if (nowEpoch - lastSeen < 90) liveGpu += 1;
+          if (nowEpoch - lastSeen >= 90) return;
+          const label = String(b.instance_label || "").toLowerCase();
+          if (label.includes("kaggle")) liveLabels.add("kaggle");
+          else if (label.includes("colab")) liveLabels.add("colab");
+          else if (label.includes("oracle") || String(b.tier || "") === "dashboard") liveLabels.add("oracle");
         });
-        if (liveGpu === 0) {
+
+        let wakeNeeded = false;
+        for (const slot of channelMeta) {
+          const primary = (slot.allowed_workers?.[0]) || "kaggle";
+          if (primary === "kaggle" && !liveLabels.has("kaggle")) { wakeNeeded = true; break; }
+          if (primary === "colab" && !liveLabels.has("colab") && !liveLabels.has("kaggle")) {
+            wakeNeeded = true; break;
+          }
+          // Oracle primary → always up, no wake needed.
+        }
+
+        if (wakeNeeded) {
           const base = (process.env.COOLIFY_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || "").replace(/\/$/, "");
           const wakeUrl = base
             ? `${base}/api/backends/wake-kaggle`
             : new URL("/api/backends/wake-kaggle", req.url).toString();
-          logRoute(reqId, "no gpu worker alive; waking kaggle", { wakeUrl });
-          // Fire-and-forget — wake takes ~30-90s and shouldn't block the
-          // schedule dispatch. Workers claim the queued jobs when they
-          // come up.
+          logRoute(reqId, "waking kaggle (per-channel primary)", {
+            wakeUrl, live: Array.from(liveLabels),
+          });
           fetch(wakeUrl, {
             method: "POST",
             headers: { "X-Request-Id": reqId },
           }).catch(() => {});
+        } else {
+          logRoute(reqId, "scheduled-render: no wake needed", {
+            live: Array.from(liveLabels),
+          });
         }
       } catch (e) {
-        logRoute(reqId, "auto-wake-kaggle probe failed", { err: String(e) });
+        logRoute(reqId, "smart-wake probe failed", { err: String(e) });
       }
     }
 

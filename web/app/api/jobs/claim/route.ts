@@ -20,6 +20,24 @@ export const runtime = "nodejs";
 
 const LIVE_HEARTBEAT_WINDOW_SEC = 90;
 
+// Boot-grace windows — how long the queue waits for each worker to boot
+// before escalating to the next-priority one. Tuned to each worker's
+// typical cold-start:
+//   kaggle → ~2-3 min for kernel wake + git clone + preboot. 8 min gives
+//            headroom for GH Actions queue lag + dep install.
+//   colab  → user has to click "Connect" in the browser. 15 min covers
+//            the "operator was AFK when the job queued" case.
+//   oracle → always-on side-worker. 0 grace.
+// A job with allowed_workers=[kaggle,colab,oracle] flows:
+//   t=0..8min      → only Kaggle can claim
+//   t=8..23min     → Kaggle+Colab can claim; Kaggle wins if both alive
+//   t=23min+       → Kaggle+Colab+Oracle can claim; highest live wins
+const BOOT_GRACE_SEC: Record<string, number> = {
+  kaggle: 8 * 60,
+  colab:  15 * 60,
+  oracle: 0,
+};
+
 // Infer canonical "kaggle" | "colab" | "oracle" from either an
 // explicit label in the body, INSTANCE_LABEL string, or tier.
 function _canonicalLabel(body: Record<string, unknown>): "kaggle" | "colab" | "oracle" | "" {
@@ -141,24 +159,43 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
-      // Per-channel worker allowlist + priority
+      // Per-channel worker allowlist + STAGED priority handover
       if (allowedList.length > 0 && !SIDE_JOB_KINDS.has(kind)) {
-        // If we couldn't infer this worker's canonical label, we can't
-        // safely honor the allowlist — skip the job to avoid picking
-        // it up on a worker the channel forbade.
         if (!workerLabel) continue;
         if (!allowedList.includes(workerLabel)) continue;
 
-        // Priority: only the HIGHEST-priority currently-live worker in
-        // the allowlist may claim. If a Kaggle worker is live and Kaggle
-        // has priority 1, Colab (priority 2) skips this job even though
-        // Colab is technically allowed.
-        if (liveLabels === null) liveLabels = await _liveWorkerLabels(db);
-        let takenBy: string | null = null;
-        for (const cand of allowedList) {
-          if (liveLabels.has(cand)) { takenBy = cand; break; }
+        const myIndex = allowedList.indexOf(workerLabel);
+        const queuedAt = Number(data.queued_at ?? now);
+        const jobAgeSec = now - queuedAt;
+
+        // Cumulative grace before MY slot opens — sum of every
+        // higher-priority worker's boot window. Until that time
+        // elapses, only workers above me may claim; I must wait.
+        let cumGraceBeforeMe = 0;
+        for (let i = 0; i < myIndex; i++) {
+          cumGraceBeforeMe += BOOT_GRACE_SEC[allowedList[i]] ?? 0;
         }
-        if (takenBy && takenBy !== workerLabel) continue;
+        if (jobAgeSec < cumGraceBeforeMe) continue;
+
+        // My slot is open. But if a HIGHER-priority worker whose slot
+        // has ALSO opened is currently alive, they get first crack.
+        // For each entry above me: check if its slot has opened and
+        // it's heartbeating — if so, skip so they can grab it.
+        if (liveLabels === null) liveLabels = await _liveWorkerLabels(db);
+        let higherPriorityEligible: string | null = null;
+        let cumGraceForCheck = 0;
+        for (let i = 0; i < myIndex; i++) {
+          const other = allowedList[i];
+          // `other`'s slot opens at cumGraceForCheck (sum of graces
+          // for entries 0..i-1). Since we're iterating with i and
+          // cumGraceForCheck starts at 0 for i=0, this is correct.
+          if (jobAgeSec >= cumGraceForCheck && liveLabels.has(other)) {
+            higherPriorityEligible = other;
+            break;
+          }
+          cumGraceForCheck += BOOT_GRACE_SEC[other] ?? 0;
+        }
+        if (higherPriorityEligible) continue;
       }
 
       // Oracle password gate — only enforced when this worker is Oracle

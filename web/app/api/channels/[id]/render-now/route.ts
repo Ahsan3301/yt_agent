@@ -108,28 +108,59 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     const jobId = jobIds[0];   // legacy field for the toast
     logRoute(reqId, "run-now queued", { channel_id: id, niche, count, job_ids: jobIds, dry_run });
 
-    // Auto-wake Kaggle if there's no live gpu-tier worker. Same logic
-    // scheduled-render uses; keeps the "run now" path from silently
-    // parking the job in the queue when no worker is alive.
+    // Smart wake — only fires if the CHANNEL'S primary worker is one
+    // we can auto-wake (Kaggle) AND that worker isn't already live.
+    // Priority order = channel.allowed_workers[]. If Colab is primary,
+    // we don't wake Kaggle (Colab can't be auto-woken; the queue
+    // waits + eventually escalates via boot-grace windows in
+    // /api/jobs/claim).
     let woke = false;
     try {
+      const allowedWorkers = Array.isArray(c.allowed_workers)
+        ? (c.allowed_workers as unknown[]).filter((x): x is string => typeof x === "string")
+        : ["kaggle", "colab"];
+      const primary = allowedWorkers[0] || "kaggle";
+
+      // Which canonical labels are alive right now (90s heartbeat).
       const backendsSnap = await adminDb().collection("backends").get();
       const nowEpoch = Date.now() / 1000;
-      let liveGpu = 0;
+      const live = new Set<string>();
       backendsSnap.forEach((d) => {
         const b = d.data() as Record<string, unknown>;
-        if (String(b.tier || "") !== "gpu") return;
         const lastSeen = Number(b.last_seen_at || 0);
-        if (nowEpoch - lastSeen < 90) liveGpu += 1;
+        if (nowEpoch - lastSeen >= 90) return;
+        const label = String(b.instance_label || "").toLowerCase();
+        if (label.includes("kaggle")) live.add("kaggle");
+        else if (label.includes("colab")) live.add("colab");
+        else if (label.includes("oracle") || String(b.tier || "") === "dashboard") live.add("oracle");
       });
-      if (liveGpu === 0) {
+
+      // Fire wake ONLY when the primary is Kaggle AND Kaggle isn't
+      // heartbeating. Colab / Oracle can't be auto-woken from here.
+      if (primary === "kaggle" && !live.has("kaggle")) {
         const base = (process.env.COOLIFY_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || "").replace(/\/$/, "");
         const wakeUrl = base
           ? `${base}/api/backends/wake-kaggle`
           : new URL("/api/backends/wake-kaggle", req.url).toString();
         fetch(wakeUrl, { method: "POST", headers: { "X-Request-Id": reqId } }).catch(() => {});
         woke = true;
-        logRoute(reqId, "run-now waking kaggle (no live gpu worker)", { wakeUrl });
+        logRoute(reqId, "run-now waking kaggle (primary, not live)", { wakeUrl, primary });
+      } else if (primary === "colab" && !live.has("colab") && !live.has("kaggle")) {
+        // Colab primary but not live, AND no fallback GPU alive → wake
+        // Kaggle so the boot-grace escalation (15 min for Colab) has a
+        // fallback ready when it expires.
+        const base = (process.env.COOLIFY_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || "").replace(/\/$/, "");
+        const wakeUrl = base
+          ? `${base}/api/backends/wake-kaggle`
+          : new URL("/api/backends/wake-kaggle", req.url).toString();
+        fetch(wakeUrl, { method: "POST", headers: { "X-Request-Id": reqId } }).catch(() => {});
+        woke = true;
+        logRoute(reqId, "run-now waking kaggle as colab-primary fallback", { wakeUrl, primary });
+      } else {
+        logRoute(reqId, "run-now: no wake needed", {
+          primary,
+          live: Array.from(live),
+        });
       }
     } catch { /* wake is best-effort */ }
 
