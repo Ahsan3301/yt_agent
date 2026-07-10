@@ -278,7 +278,13 @@ def _cloudflare_generate(prompt, output_dir, trial, negative_prompt=""):
     # sometimes works but is spec-fragile. Tuple form: (filename, value, mime).
     fields: dict = {
         "prompt":   (None, final_prompt),
-        "steps":    (None, "20"),   # klein is distilled — 20 steps is the sweet spot
+        # Klein is a DISTILLED Flux 2 — it's designed for 4-8 steps.
+        # Bumping to 20 was a copy-paste mistake from the flux-2-dev
+        # config; it wasted ~3× the neurons per image and burned the
+        # 10k/day free quota in ~20 images instead of the ~60 we get
+        # at step=6. Empirically identical quality at 6-8 steps for
+        # the horror-shorts use case.
+        "steps":    (None, "6"),
         "guidance": (None, "3.5"),
         "seed":     (None, str(seed)),
     }
