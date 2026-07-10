@@ -504,6 +504,34 @@ def _run_one(job: dict[str, Any]):
                 )
             except Exception as _e:
                 log.warning(f"job {job_id} run-summary mirror failed: {_e}")
+
+            # ── Post-publish housekeeping ─────────────────────────
+            # Nuke the local output/videos/<run_id>/ folder now that the
+            # video is on YouTube AND mirrored to R2. Skipped when the
+            # run was dry_run OR YouTube upload failed OR R2 mirror
+            # never produced a durable URL.
+            try:
+                from pathlib import Path as _Path
+                _work_dir = str(_Path("output/videos") / job["run_id"])
+                _pub_yt = ((summary.get("published") or {}).get("youtube_url") or "").strip()
+                from backend import housekeeping
+                _hk = housekeeping.finalize_run(
+                    _work_dir,
+                    job["run_id"],
+                    published=bool(_pub_yt),
+                    dry_run=bool(job.get("dry_run", False)),
+                    local_video_path=local_path or "",
+                    current_public_url=public or "",
+                )
+                if _hk.get("cleaned"):
+                    log.info(
+                        f"job {job_id} housekeeping: freed ~{_hk.get('freed_mb', 0)} MB; "
+                        f"video preserved at {_hk.get('public_url')}"
+                    )
+                elif _hk.get("skipped_reason"):
+                    log.info(f"job {job_id} housekeeping skipped: {_hk['skipped_reason']}")
+            except Exception as _e:
+                log.warning(f"job {job_id} housekeeping failed: {_e}")
         else:
             job["status"] = "failed"
             job["error"] = final_state.get("error") or "pipeline failed"

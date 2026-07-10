@@ -24,6 +24,16 @@ logging.basicConfig(
 )
 log = logging.getLogger("side_worker")
 
+# Attach the ring-buffer + PB log stream. Without this, the dashboard's
+# /queue/[id] LogsPanel shows an empty stream for Oracle renders (the
+# Kaggle/Colab workers get this for free via backend.server startup;
+# the side-worker skips that FastAPI boot path).
+try:
+    from backend import logbuf
+    logbuf.attach()
+except Exception as _e:
+    log.warning(f"logbuf.attach failed — dashboard log stream disabled: {_e}")
+
 INSTANCE_ID    = os.getenv("INSTANCE_ID") or f"oracle-{socket.gethostname()[:12]}"
 INSTANCE_LABEL = os.getenv("INSTANCE_LABEL") or "Oracle side-worker"
 TIER           = "dashboard"
@@ -225,6 +235,30 @@ def handle(job: dict) -> None:
                 )
                 ok = bool(res) if isinstance(res, bool) else bool((res or {}).get("ok"))
                 msg = "render complete" if ok else "render failed"
+
+                # Post-publish housekeeping — mirror final_video.mp4 to
+                # R2 then rmtree the local work_dir. Only fires on a
+                # successful non-dry-run render that actually published
+                # to YouTube (finalize_run guards on both flags).
+                try:
+                    from backend import run_state, housekeeping
+                    _final = run_state.read() or {}
+                    _work_dir = f"output/videos/{_final.get('run_id') or job.get('run_id') or ''}"
+                    _pub_yt = ((_final.get("published") or {}).get("youtube_url") or "").strip()
+                    _hk = housekeeping.finalize_run(
+                        _work_dir,
+                        str(_final.get("run_id") or job.get("run_id") or ""),
+                        published=bool(_pub_yt),
+                        dry_run=bool(job.get("dry_run", False)),
+                        local_video_path=str(_final.get("video_path") or ""),
+                        current_public_url=str(_final.get("video_url") or ""),
+                    )
+                    if _hk.get("cleaned"):
+                        log.info(f"housekeeping: freed ~{_hk.get('freed_mb', 0)} MB")
+                    elif _hk.get("skipped_reason"):
+                        log.info(f"housekeeping skipped: {_hk['skipped_reason']}")
+                except Exception as _e:
+                    log.warning(f"housekeeping failed: {_e}")
     except Exception as e:
         ok, msg = False, f"dispatch crashed: {e}"
         log.exception(msg)
