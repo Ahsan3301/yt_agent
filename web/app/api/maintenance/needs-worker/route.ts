@@ -28,18 +28,34 @@ export async function GET(req: NextRequest) {
 
   const db = adminDb();
 
-  // Count queued jobs not yet claimed by anyone.
+  // Count queued jobs not yet claimed by anyone AND that the channel
+  // allows to run on Kaggle. A queued job whose channel had Kaggle
+  // toggled OFF (allowed_workers=['oracle','colab'] etc.) must NEVER
+  // trigger a wake-kaggle — the wake burns a T4 boot + Kaggle quota
+  // for work Kaggle isn't allowed to touch.
   let queued = 0;
+  let queuedKaggleEligible = 0;
   try {
     const snap = await db
       .collection("jobs")
       .where("status", "==", "queued")
       .limit(50)
       .get();
-    queued = snap.docs.filter((d) => {
-      const v = d.data() as { backend_instance_id?: string | null };
-      return !v.backend_instance_id;
-    }).length;
+    snap.forEach((doc) => {
+      const v = doc.data() as {
+        backend_instance_id?: string | null;
+        allowed_workers?: unknown;
+      };
+      if (v.backend_instance_id) return;
+      queued += 1;
+      // Legacy default when allowed_workers is missing/empty: Kaggle
+      // was historically the primary → treat as eligible.
+      const allowedArr = Array.isArray(v.allowed_workers)
+        ? (v.allowed_workers as unknown[]).filter((x): x is string => typeof x === "string")
+        : [];
+      const kaggleAllowed = allowedArr.length === 0 || allowedArr.includes("kaggle");
+      if (kaggleAllowed) queuedKaggleEligible += 1;
+    });
   } catch (e) {
     return NextResponse.json(
       { error: "firestore jobs read failed", detail: String(e) },
@@ -93,6 +109,12 @@ export async function GET(req: NextRequest) {
   let reason = "";
   if (queued === 0) {
     reason = "no queued jobs";
+  } else if (queuedKaggleEligible === 0) {
+    // Every queued job has Kaggle EXCLUDED from allowed_workers.
+    // Waking Kaggle burns quota + a T4 boot for zero benefit — the
+    // claim gate would refuse to hand any queued job to it. Refuse
+    // to wake.
+    reason = `${queued} queued job(s) but none allow Kaggle (channel(s) opted out)`;
   } else if (gpu_has_headroom) {
     reason = "queued jobs present but a GPU worker with headroom is alive";
   } else if (gpu_alive && !gpu_has_headroom) {
@@ -101,7 +123,7 @@ export async function GET(req: NextRequest) {
     reason = `${queued} queued job(s); ${saturation_reason}`;
   } else {
     needs_worker = true;
-    reason = `${queued} queued job(s) and no GPU worker alive`;
+    reason = `${queuedKaggleEligible}/${queued} queued job(s) allow Kaggle and no GPU worker alive`;
   }
 
   // Optional wake trigger — when ?wake=1 is passed AND we need a worker,
@@ -131,6 +153,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     needs_worker,
     queued,
+    queued_kaggle_eligible: queuedKaggleEligible,
     gpu_alive,
     any_alive,
     reason,

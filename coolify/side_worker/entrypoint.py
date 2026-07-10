@@ -190,10 +190,20 @@ def handle(job: dict) -> None:
         "current_step": kind, "current_step_label": f"{kind}: running", "percent": 5,
     })
 
+    # Hot-reload keys + settings from PB every render. Same worker, same
+    # container — operator changes to /keys or /settings must land on the
+    # NEXT render without a container restart. keys_sync writes to
+    # os.environ; settings_sync writes to the local settings.json that
+    # modules.config.load_settings() reads.
     try:
         keys_sync.pull_into_env(override=True)
     except Exception as e:
         log.warning(f"keys_sync failed: {e}")
+    try:
+        from backend import settings_sync as _settings_sync
+        _settings_sync.pull_into_local()
+    except Exception as e:
+        log.warning(f"settings_sync failed: {e}")
 
     ok, msg = False, "no result"
     try:
@@ -225,8 +235,46 @@ def handle(job: dict) -> None:
                 import threading as _threading
                 _stop = _threading.Event()
 
+                # Also poll the PB job doc every ~2s so we notice if the
+                # operator hits Cancel — request_cancel() propagates
+                # into every check_cancel() call scattered through the
+                # pipeline, which raises Cancelled and aborts cleanly.
+                # Without this the side-worker was rendering a ghost
+                # for the full pipeline duration, blocking the queue.
+                def _read_pb_job_status(jid: str) -> str:
+                    """Return current PB status for this job. Empty on error."""
+                    try:
+                        import requests as _rq
+                        _pb = os.getenv("PB_URL_INTERNAL") or "http://pocketbase:8090"
+                        _em = os.getenv("POCKETBASE_ADMIN_EMAIL")
+                        _pw = os.getenv("POCKETBASE_ADMIN_PASSWORD")
+                        if not (_em and _pw):
+                            return ""
+                        _tok = (_rq.post(
+                            f"{_pb}/api/collections/_superusers/auth-with-password",
+                            json={"identity": _em, "password": _pw}, timeout=4,
+                        ).json() or {}).get("token")
+                        if not _tok:
+                            return ""
+                        import hashlib as _h, base64 as _b64
+                        raw = jid
+                        if not (len(raw) == 15 and raw.isalnum() and raw.islower()):
+                            _hs = _h.sha256(raw.encode()).digest()
+                            raw = "".join(c for c in _b64.b64encode(_hs).decode("ascii").lower() if c.isalnum())[:15]
+                        _r = _rq.get(
+                            f"{_pb}/api/collections/jobs/records/{raw}",
+                            headers={"Authorization": _tok}, timeout=4,
+                        )
+                        if _r.status_code != 200:
+                            return ""
+                        return str((_r.json() or {}).get("status") or "")
+                    except Exception:
+                        return ""
+
                 def _bridge():
                     last = {"percent": -1, "step": None, "run_id": None}
+                    last_status_poll = 0.0
+                    STATUS_POLL_INTERVAL = 2.0
                     # `saw_new_run` gates the terminal-status short-circuit.
                     # Without it the bridge's first tick would read the
                     # PREVIOUS render's terminal state (status=complete,
@@ -272,6 +320,20 @@ def handle(job: dict) -> None:
                                 saw_new_run = True
                             if saw_new_run and s.get("status") in ("complete", "failed"):
                                 return
+                            # Cancel propagation — poll PB every 2s.
+                            _tnow = time.time()
+                            if _tnow - last_status_poll > STATUS_POLL_INTERVAL:
+                                last_status_poll = _tnow
+                                pb_status = _read_pb_job_status(job_id)
+                                if pb_status == "cancelled":
+                                    log.warning(
+                                        f"progress bridge: PB job {job_id} marked "
+                                        f"cancelled — signalling pipeline abort"
+                                    )
+                                    try: run_state.request_cancel()
+                                    except Exception as _rce:
+                                        log.warning(f"request_cancel failed: {_rce}")
+                                    return
                         except Exception as _bre:
                             log.debug(f"progress bridge tick failed: {_bre}")
                         _stop.wait(0.4)
