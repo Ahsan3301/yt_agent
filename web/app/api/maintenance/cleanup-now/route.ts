@@ -131,20 +131,29 @@ export async function POST(req: NextRequest) {
   };
 
   // ── runs_index + run_summaries ─────────────────────────────
+  // Server-side filter (same pattern as errors cleanup below which
+  // reliably works). Earlier version used .get() with client-side
+  // filter but PB batch delete never actually fired the row deletions
+  // in that path — the emulated batch commits individually via
+  // fetch() and something in the pagination silently dropped rows.
+  // Filtering server-side keeps the request small + explicit.
   try {
-    const snap = await adminDb().collection("runs_index").get();
-    const batch = adminDb().batch();
+    const snap = await adminDb().collection("runs_index")
+      .where("finished_at", "<", cutoff)
+      .where("finished_at", ">", 0)   // exclude null/zero
+      .limit(500)
+      .get();
     let n = 0;
-    snap.forEach((doc) => {
-      const d = doc.data() as Record<string, unknown>;
-      const fin = _toEpoch(d.finished_at);
-      if (fin != null && fin < cutoff) {
-        batch.delete(doc.ref);
-        batch.delete(adminDb().collection("run_summaries").doc(doc.id));
+    for (const doc of snap.docs) {
+      try {
+        await doc.ref.delete();
+        // run_summaries mirrors runs_index by id — delete both.
+        await adminDb().collection("run_summaries").doc(doc.id).delete();
         n += 1;
+      } catch (_de) {
+        summary.errors.push(`run delete ${doc.id}: ${String(_de)}`);
       }
-    });
-    if (n > 0) await batch.commit();
+    }
     summary.runs_deleted = n;
     summary.summaries_deleted = n;
     if (n > 0) summary.detail.push(`Deleted ${n} runs_index + run_summaries entries older than ${days}d`);
@@ -154,21 +163,21 @@ export async function POST(req: NextRequest) {
 
   // ── jobs (terminal) ────────────────────────────────────────
   try {
-    const snap = await adminDb().collection("jobs")
-      .where("status", "in", ["complete", "failed", "cancelled"]).get();
-    const batch = adminDb().batch();
-    let n = 0;
-    snap.forEach((doc) => {
-      const d = doc.data() as Record<string, unknown>;
-      const fin = _toEpoch(d.finished_at) ?? _toEpoch(d.queued_at);
-      if (fin != null && fin < cutoff) {
-        batch.delete(doc.ref);
-        n += 1;
+    let total = 0;
+    for (const st of ["complete", "failed", "cancelled"] as const) {
+      const snap = await adminDb().collection("jobs")
+        .where("status", "==", st)
+        .where("finished_at", "<", cutoff)
+        .where("finished_at", ">", 0)
+        .limit(500)
+        .get();
+      for (const doc of snap.docs) {
+        try { await doc.ref.delete(); total += 1; }
+        catch (_de) { summary.errors.push(`job delete ${doc.id}: ${String(_de)}`); }
       }
-    });
-    if (n > 0) await batch.commit();
-    summary.jobs_deleted = n;
-    if (n > 0) summary.detail.push(`Deleted ${n} terminal jobs older than ${days}d`);
+    }
+    summary.jobs_deleted = total;
+    if (total > 0) summary.detail.push(`Deleted ${total} terminal jobs older than ${days}d`);
   } catch (e) {
     summary.errors.push(`jobs cleanup: ${String(e)}`);
   }
@@ -176,23 +185,29 @@ export async function POST(req: NextRequest) {
   // ── orphan queued jobs (always 2h regardless of days) ──────
   try {
     const orphanCutoff = now - ORPHAN_QUEUED_HOURS * 3600;
-    const snap = await adminDb().collection("jobs").where("status", "==", "queued").get();
-    const batch = adminDb().batch();
+    const snap = await adminDb().collection("jobs")
+      .where("status", "==", "queued")
+      .where("queued_at", "<", orphanCutoff)
+      .limit(500)
+      .get();
     let n = 0;
-    snap.forEach((doc) => {
+    for (const doc of snap.docs) {
       const d = doc.data() as Record<string, unknown>;
-      if (d.backend_instance_id) return;
-      const q = _toEpoch(d.queued_at);
-      if (q != null && q < orphanCutoff) {
-        batch.update(doc.ref, {
+      // Skip if a backend actually claimed it (defensive — the queued
+      // filter should already have excluded these, but the field is
+      // sometimes set on the same doc during a race).
+      if (d.backend_instance_id) continue;
+      try {
+        await doc.ref.update({
           status: "failed",
           error: `orphaned in queue >${ORPHAN_QUEUED_HOURS}h with no backend claim`,
           finished_at: now,
         });
         n += 1;
+      } catch (_ue) {
+        summary.errors.push(`orphan update ${doc.id}: ${String(_ue)}`);
       }
-    });
-    if (n > 0) await batch.commit();
+    }
     summary.orphan_queued_failed = n;
     if (n > 0) summary.detail.push(`Marked ${n} orphan-queued jobs (>${ORPHAN_QUEUED_HOURS}h) as failed`);
   } catch (e) {
@@ -203,13 +218,13 @@ export async function POST(req: NextRequest) {
   try {
     const snap = await adminDb().collection("errors")
       .where("ts", "<", cutoff).limit(500).get();
-    if (!snap.empty) {
-      const batch = adminDb().batch();
-      snap.forEach((doc) => batch.delete(doc.ref));
-      await batch.commit();
-      summary.errors_deleted = snap.size;
-      summary.detail.push(`Deleted ${snap.size} error-log entries older than ${days}d`);
+    let n = 0;
+    for (const doc of snap.docs) {
+      try { await doc.ref.delete(); n += 1; }
+      catch (_de) { summary.errors.push(`error delete ${doc.id}: ${String(_de)}`); }
     }
+    summary.errors_deleted = n;
+    if (n > 0) summary.detail.push(`Deleted ${n} error-log entries older than ${days}d`);
   } catch (e) {
     summary.errors.push(`errors cleanup: ${String(e)}`);
   }
@@ -217,18 +232,15 @@ export async function POST(req: NextRequest) {
   // ── idempotency (kept short — 7d ceiling; days<7 uses days) ─
   try {
     const idempCutoff = Math.min(cutoff, now - 7 * 86400);
-    const snap = await adminDb().collection("idempotency").get();
-    const batch = adminDb().batch();
+    const snap = await adminDb().collection("idempotency")
+      .where("expires_at", "<", idempCutoff)
+      .where("expires_at", ">", 0)
+      .limit(500).get();
     let n = 0;
-    snap.forEach((doc) => {
-      const d = doc.data() as Record<string, unknown>;
-      const exp = _toEpoch(d.expires_at);
-      if (exp != null && exp < idempCutoff) {
-        batch.delete(doc.ref);
-        n += 1;
-      }
-    });
-    if (n > 0) await batch.commit();
+    for (const doc of snap.docs) {
+      try { await doc.ref.delete(); n += 1; }
+      catch (_de) { summary.errors.push(`idem delete ${doc.id}: ${String(_de)}`); }
+    }
     summary.idempotency_deleted = n;
     if (n > 0) summary.detail.push(`Deleted ${n} idempotency records`);
   } catch (e) {
