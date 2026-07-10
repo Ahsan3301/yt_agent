@@ -342,27 +342,54 @@ def handle(job: dict) -> None:
         pass
 
 
+# Shared state for the background heartbeat thread. handle() updates
+# _current_active_job_id when a claim lands / completes so the heartbeat
+# carries the right active_job_id even during a long-blocking render.
+import threading as _threading
+_current_active_job_id = ""
+_current_active_lock = _threading.Lock()
+
+
+def _bg_heartbeat_loop():
+    """Fires register() every HEARTBEAT_SEC on its own thread. Kaggle/
+    Colab workers get this for free from backend.server's uvicorn loop;
+    on the side-worker the main() loop is serial, so a long render
+    blocks register() for 30+ minutes and /api/backends deletes the
+    row for going 'stale'. This thread keeps the heartbeat alive
+    regardless of what handle() is doing."""
+    while True:
+        try:
+            with _current_active_lock:
+                aj = _current_active_job_id
+            register(aj)
+        except Exception as e:
+            log.debug(f"bg heartbeat failed: {e}")
+        time.sleep(HEARTBEAT_SEC)
+
+
 def main() -> None:
-    global _startup
+    global _startup, _current_active_job_id
     _startup = time.time()
     log.info(f"side-worker starting  instance_id={INSTANCE_ID}  tier={TIER}  "
              f"platform={platform.machine()}")
     register()
-    last_hb = time.time()
-    active_job_id = ""
+
+    # Background heartbeat — runs forever, independent of the render loop.
+    _threading.Thread(target=_bg_heartbeat_loop, daemon=True).start()
+    log.info(f"heartbeat thread started (interval={HEARTBEAT_SEC}s)")
+
     while True:
         try:
-            if time.time() - last_hb > HEARTBEAT_SEC:
-                register(active_job_id)
-                last_hb = time.time()
             job = claim()
             if job:
-                active_job_id = str(job.get("id") or "")
-                register(active_job_id)
-                handle(job)
-                active_job_id = ""
-                register("")
-                last_hb = time.time()
+                jid = str(job.get("id") or "")
+                with _current_active_lock:
+                    _current_active_job_id = jid
+                register(jid)          # immediate beat with active_job_id set
+                handle(job)            # blocking — but heartbeat thread keeps beating
+                with _current_active_lock:
+                    _current_active_job_id = ""
+                register("")           # immediate beat freeing active_job_id
             else:
                 time.sleep(POLL_SEC)
         except KeyboardInterrupt:
