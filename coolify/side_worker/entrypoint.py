@@ -275,52 +275,62 @@ def handle(job: dict) -> None:
                     last = {"percent": -1, "step": None, "run_id": None}
                     last_status_poll = 0.0
                     STATUS_POLL_INTERVAL = 2.0
-                    # `saw_new_run` gates the terminal-status short-circuit.
-                    # Without it the bridge's first tick would read the
-                    # PREVIOUS render's terminal state (status=complete,
-                    # pct=100, step=upload) and return before this run's
-                    # pipeline had a chance to reset run_state via
-                    # run_state.start() — leaving the PB job frozen on
-                    # the old run's final values. Now we only accept a
-                    # terminal status after we've seen a run_id change
-                    # OR a pct/step change vs the initial snapshot.
-                    saw_new_run = False
+                    # Snapshot the run_id we inherit from the previous
+                    # render (may be the finished job A's if this is the
+                    # second job in a queue burst). We ignore any state
+                    # tied to this inherited run_id — including its
+                    # status="complete" — and only start honouring
+                    # terminal signals once run_state has been reset
+                    # by THIS render's run_state.start() call.
+                    initial_snapshot = run_state.read() or {}
+                    inherited_run_id = str(initial_snapshot.get("run_id") or "")
+                    saw_pipeline_start = False   # true once we see run_id CHANGE from inherited
                     while not _stop.is_set():
                         try:
                             s = run_state.read() or {}
                             new_run_id = s.get("run_id") or ""
+
+                            # Detect pipeline start: the new render's
+                            # run_state.start() writes a DIFFERENT run_id
+                            # than what we inherited. Only from this
+                            # moment on is a terminal status in run_state
+                            # actually about THIS render.
+                            if new_run_id and new_run_id != inherited_run_id:
+                                saw_pipeline_start = True
+
                             if new_run_id and new_run_id != last["run_id"]:
                                 last["run_id"] = new_run_id
                                 _update_job(job_id, {"run_id": new_run_id})
-                                # Bind logbuf to this run_id so log lines
-                                # stream into runs_index/<run_id>/logs
-                                # which the LogsPanel subscribes to.
                                 try: _logbuf.attach_run(new_run_id)
                                 except Exception: pass
+
                             pct = int(s.get("percent") or 0)
                             step = s.get("current_step") or ""
                             label = s.get("current_step_label") or ""
                             if pct != last["percent"] or step != last["step"]:
-                                # The current pipeline has advanced state
-                                # past whatever we inherited — safe to
-                                # honour a terminal signal from here on.
-                                if last["percent"] != -1:
-                                    saw_new_run = True
                                 last["percent"] = pct
                                 last["step"] = step
-                                _update_job(job_id, {
-                                    "percent": pct,
-                                    "current_step": step,
-                                    "current_step_label": label,
-                                })
-                            # Also treat a run_id change as proof the new
-                            # run is active — run_state.start() sets
-                            # status=running BEFORE it writes the run_id.
-                            if new_run_id and last["run_id"] == new_run_id:
-                                saw_new_run = True
-                            if saw_new_run and s.get("status") in ("complete", "failed"):
+                                # Only mirror progress to PB once we're
+                                # inside THIS render — otherwise we'd
+                                # publish inherited pct=100 from the
+                                # previous run.
+                                if saw_pipeline_start:
+                                    _update_job(job_id, {
+                                        "percent": pct,
+                                        "current_step": step,
+                                        "current_step_label": label,
+                                    })
+
+                            # Terminal-status early exit — only trusted
+                            # after we've seen a genuine pipeline start.
+                            if saw_pipeline_start and s.get("status") in ("complete", "failed"):
                                 return
+
                             # Cancel propagation — poll PB every 2s.
+                            # This branch runs REGARDLESS of pipeline
+                            # start state, because we want to honour a
+                            # cancel even during the awkward split-second
+                            # window between claim and run_state.start().
                             _tnow = time.time()
                             if _tnow - last_status_poll > STATUS_POLL_INTERVAL:
                                 last_status_poll = _tnow
@@ -335,7 +345,10 @@ def handle(job: dict) -> None:
                                         log.warning(f"request_cancel failed: {_rce}")
                                     return
                         except Exception as _bre:
-                            log.debug(f"progress bridge tick failed: {_bre}")
+                            # Elevated from log.debug to log.warning: silent
+                            # exceptions here were the reason the last cancel
+                            # bug went undetected for a full render.
+                            log.warning(f"progress bridge tick failed: {_bre}")
                         _stop.wait(0.4)
 
                 _bridge_thread = _threading.Thread(target=_bridge, daemon=True)
@@ -400,15 +413,25 @@ def handle(job: dict) -> None:
                     from modules import run_state as _run_state_pkg
                     from backend import housekeeping
                     _final = _run_state_pkg.read() or {}
-                    _work_dir = f"output/videos/{_final.get('run_id') or job.get('run_id') or ''}"
-                    _pub_yt = ((_final.get("published") or {}).get("youtube_url") or "").strip()
+                    # `res` is the summary dict returned by main.run_pipeline.
+                    # summary["published"]["youtube_url"] is where the
+                    # uploader stashes the publish URL — run_state never
+                    # gets that key, so the earlier lookup of _final.published
+                    # was ALWAYS None, which is why housekeeping never
+                    # ran on Oracle even after a successful publish.
+                    _summary = res if isinstance(res, dict) else {}
+                    _work_dir = f"output/videos/{_final.get('run_id') or _summary.get('run_id') or job.get('run_id') or ''}"
+                    _pub_yt = (
+                        ((_summary.get("published") or {}).get("youtube_url") or "").strip()
+                        or ((_final.get("published") or {}).get("youtube_url") or "").strip()
+                    )
                     _hk = housekeeping.finalize_run(
                         _work_dir,
-                        str(_final.get("run_id") or job.get("run_id") or ""),
+                        str(_final.get("run_id") or _summary.get("run_id") or job.get("run_id") or ""),
                         published=bool(_pub_yt),
                         dry_run=bool(job.get("dry_run", False)),
-                        local_video_path=str(_final.get("video_path") or ""),
-                        current_public_url=str(_final.get("video_url") or ""),
+                        local_video_path=str(_summary.get("final_video") or _final.get("video_path") or ""),
+                        current_public_url=str(_summary.get("video_url") or _final.get("video_url") or ""),
                     )
                     if _hk.get("cleaned"):
                         log.info(f"housekeeping: freed ~{_hk.get('freed_mb', 0)} MB")
