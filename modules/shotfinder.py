@@ -1333,6 +1333,10 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror"):
     query = shot.get("search_query") or ""
     ai_prompt = shot.get("ai_prompt") or visual
     premise = shot.get("narration_excerpt") or ""
+    # Per-shot era anchor (backfilled from story_period in storyboard.py
+    # if the model forgot). Empty string is fine — the prompt template
+    # skips the period line when missing.
+    period = str(shot.get("period") or "").strip()
 
     # Very defensive clamp — only if the query is absurdly long. The
     # LLM's own query is left alone otherwise; the earlier 6-word cap
@@ -1549,6 +1553,7 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror"):
                 channel=channel,
                 # Offset per provider so each gets a distinct seed pool.
                 attempt=trial + (slot * 100),
+                period=period,
             )
             prompt_to_use = crafted or ai_prompt
             log.info(f"    {provider_name} prompt (try {trial+1}): {(crafted or ai_prompt)[:90]}...")

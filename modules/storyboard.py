@@ -40,13 +40,27 @@ not verbatim — expand into concrete per-shot subjects that MATCH the
 specific sentence being narrated):
   {keyword_examples}
 
+FIRST: pick ONE `story_period` describing the SETTING TIME + PLACE that all
+shots share, e.g. "present-day suburban USA", "Victorian London 1888",
+"medieval Scottish highlands", "1970s American diner", "near-future
+Tokyo". Every shot's props, costumes, and technology must be internally
+consistent with this period — this is CRITICAL to prevent the image
+model from mashing eras together (rotary phone glued to a smartphone,
+medieval knight with a wristwatch, etc.).
+
 For EACH shot return:
   - narration_excerpt: the exact substring of the narration this shot covers.
     Concatenated in order, the excerpts must reconstruct the full narration
     (you may collapse whitespace, but otherwise verbatim).
+  - period: SAME time-period phrase as story_period (or a tighter refinement
+    for that specific shot, e.g. "1888 gaslit street"). Never introduce a
+    period different from story_period.
   - visual_description: 1-2 sentences describing what we see on screen during
     these words. Concrete subject, lighting, composition. Grounded in what
     the sentence is literally about — not decorative genre atmosphere.
+    Name specific real objects (e.g. "rotary telephone", "Model T Ford",
+    "iPhone 15", "medieval broadsword") — never bare category nouns
+    ("phone", "car", "sword") that let the image model guess wrong.
   - search_query: 3 to 5 GENERIC words that a stock library like Shutterstock
     or Pexels will ACTUALLY have matches for. Do NOT include specific
     names, dates, institutions, unique research findings, or technical
@@ -73,9 +87,11 @@ RULES:
 
 Respond with ONLY a JSON object in this shape:
 {{
+  "story_period": "...",
   "shots": [
     {{
       "narration_excerpt": "...",
+      "period": "...",
       "visual_description": "...",
       "search_query": "...",
       "ai_prompt": "..."
@@ -301,15 +317,32 @@ def plan_shots(narration, num_shots, channel: str = "horror", max_attempts=2):
             log.warning(f"Storyboard attempt {attempt}: no shots array")
             continue
 
+        # Top-level story_period anchors every shot to a single era so
+        # the image model can't mash a Model T + iPhone into one frame.
+        story_period = ""
+        if isinstance(data, dict):
+            story_period = str(data.get("story_period") or "").strip()
+
         # Filter to well-formed shots. Empty trailing shots from token
         # truncation are dropped silently here.
-        good = [sh for sh in raw_shots if _well_formed(sh)]
+        good = []
+        for sh in raw_shots:
+            if not _well_formed(sh):
+                continue
+            # Backfill missing period on a shot from the story-level
+            # anchor. Nemotron occasionally forgets the per-shot period
+            # but always fills story_period when we ask.
+            if isinstance(sh, dict) and not str(sh.get("period") or "").strip() and story_period:
+                sh["period"] = story_period
+            good.append(sh)
         dropped = len(raw_shots) - len(good)
         if dropped:
             log.info(f"Storyboard attempt {attempt}: kept {len(good)} of {len(raw_shots)} shots (dropped {dropped} malformed)")
 
         if len(good) >= max(3, num_shots - 2):
             # Close enough to the target — accept.
+            if story_period:
+                log.info(f"Storyboard: story_period='{story_period}' — {len(good)} shots anchored to this era")
             return good
 
         # Otherwise keep the best partial in case all attempts come up short.
