@@ -1186,11 +1186,11 @@ function ChannelForm({
         )}
       </div>
 
-      {/* ── Cloudflare Workers AI (Flux 2 dev) per-channel ─── */}
+      {/* ── Cloudflare Workers AI (Flux 2 klein-9b) per-channel ─── */}
       <div className="space-y-3 rounded-lg border border-line bg-bg-2 p-3">
         <div className="flex items-center gap-2">
           <KeyRound className="h-4 w-4 text-accent" />
-          <div className="font-medium text-sm">Cloudflare image gen (Flux 2 dev)</div>
+          <div className="font-medium text-sm">Cloudflare image gen (Flux 2 klein-9b)</div>
           {cfSource === "own" && hasCfOwnCreds && (
             <span className="pill text-[9px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">own creds set</span>
           )}
@@ -1199,12 +1199,13 @@ function ChannelForm({
           )}
         </div>
         <p className="text-[10px] text-neutral-500 -mt-1">
-          Each Cloudflare account has its own 150 image/day soft-cap. If
-          multiple channels share ONE key, they burn through the quota
-          together. Give each high-volume channel its OWN key (free
-          Cloudflare account) to isolate limits. The operator-only global
-          key can be selected here too but requires the operator unlock
-          password to prevent quota theft.
+          Each Cloudflare account has its own ~60 klein-9b images/day free
+          tier (10k neurons at step=6). If multiple channels share ONE key,
+          they burn through it together. Give each high-volume channel its
+          OWN key — or add multiple accounts to the pool below for
+          effectively unlimited free image gen via rotation. The
+          operator-only global key can be selected too but requires the
+          operator unlock password to prevent quota theft.
         </p>
         <div className="flex flex-wrap gap-1.5">
           {(["off", "own", "global"] as const).map((v) => (
