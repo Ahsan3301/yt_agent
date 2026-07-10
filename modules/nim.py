@@ -117,6 +117,46 @@ _WINDOW = 60.0
 _request_log = []
 _rate_lock = threading.Lock()
 
+# ── Groq-primary switch ──────────────────────────────────────
+# NIM's llama-3.3-70b times out on ~every call in the current free-tier
+# state, forcing a 20s wait before Nemotron picks up — 30-60s wasted per
+# LLM step, 20+ steps per render = 10-20 min per render lost.
+# Groq's llama-3.3-70b-versatile is the same model behind a fast
+# Azure/Groq backend (~1-2s response). Env flag lets us flip back if
+# Groq's daily quota is ever bitten.
+GROQ_PRIMARY_FIRST = os.getenv("NIM_GROQ_PRIMARY", "true").lower() != "false"
+
+# ── NIM primary-model circuit breaker ────────────────────────
+# When llama-3.3 starts consistently timing out, skip it entirely for
+# a cooldown window instead of eating a 10-20s failure every call.
+# In-process, non-persistent — resets on worker restart.
+_NIM_PRIMARY_CONSECUTIVE_FAILS = 0
+_NIM_PRIMARY_OPEN_UNTIL = 0.0
+_NIM_PRIMARY_FAILS_TO_TRIP = 3
+_NIM_PRIMARY_COOLDOWN_SEC = 600   # 10 min — matches how long free-tier
+                                  # queue congestion tends to last.
+
+
+def _nim_primary_open() -> bool:
+    return time.time() < _NIM_PRIMARY_OPEN_UNTIL
+
+
+def _nim_primary_record(success: bool) -> None:
+    global _NIM_PRIMARY_CONSECUTIVE_FAILS, _NIM_PRIMARY_OPEN_UNTIL
+    if success:
+        if _NIM_PRIMARY_CONSECUTIVE_FAILS:
+            log.info("NIM primary llama-3.3: breaker reset after successful call")
+        _NIM_PRIMARY_CONSECUTIVE_FAILS = 0
+        return
+    _NIM_PRIMARY_CONSECUTIVE_FAILS += 1
+    if _NIM_PRIMARY_CONSECUTIVE_FAILS >= _NIM_PRIMARY_FAILS_TO_TRIP:
+        _NIM_PRIMARY_OPEN_UNTIL = time.time() + _NIM_PRIMARY_COOLDOWN_SEC
+        log.warning(
+            f"NIM primary llama-3.3: breaker OPEN — {_NIM_PRIMARY_CONSECUTIVE_FAILS} "
+            f"consecutive failures; skipping for {_NIM_PRIMARY_COOLDOWN_SEC}s. "
+            f"Going straight to Nemotron on subsequent calls."
+        )
+
 
 def _wait_for_slot():
     """Block until we have room under the RPM ceiling."""
@@ -262,12 +302,46 @@ def chat(messages, model=None, max_tokens=2048, temperature=0.7,
     tool_calls from the response. Passing tools= directly here also
     works but you get the raw string and must parse yourself.
     """
+    # Groq-first priority. Skip only when:
+    #   • caller pinned a specific NIM model (respect their intent)
+    #   • GROQ_PRIMARY_FIRST env is false
+    #   • GROQ_API_KEY isn't set
+    # Same content contract as the NIM path — return content string on
+    # success, fall through to NIM on any failure so no render dies
+    # because Groq's daily cap bit.
+    last_err: Exception | None = None
+    if not model and GROQ_PRIMARY_FIRST and os.getenv("GROQ_API_KEY", "").strip():
+        try:
+            groq_content = _groq_chat_fallback(
+                messages, max_tokens=max_tokens, temperature=temperature,
+                response_format=response_format, timeout=30,
+            )
+            if groq_content and groq_content.strip():
+                # Only log the tier one when it succeeded on the FIRST call
+                # of the render — otherwise noisy. Track via module-level flag.
+                global _GROQ_LOGGED_PRIMARY
+                try:
+                    if not _GROQ_LOGGED_PRIMARY:
+                        log.info("NIM chat: Groq primary (llama-3.3-70b-versatile) responded — subsequent calls suppressed from log")
+                        _GROQ_LOGGED_PRIMARY = True
+                except NameError:
+                    _GROQ_LOGGED_PRIMARY = True
+                return groq_content
+            log.warning("NIM chat: Groq primary returned empty; falling to NIM chain")
+        except Exception as e:
+            last_err = e
+            log.warning(f"NIM chat: Groq primary failed ({e}); falling to NIM chain")
+
     # Model fallback chain — caller-supplied model wins alone; otherwise
     # walk the configured primary + fallbacks so a transient outage on
     # any one model doesn't kill the whole render.
     model_chain = [model] if model else [TEXT_MODEL_PRIMARY, *TEXT_MODEL_FALLBACKS]
 
-    last_err: Exception | None = None
+    # If the llama-3.3 breaker is open, skip it entirely — go straight
+    # to Nemotron etc. Only applies to the default chain, not caller-pinned.
+    if not model and _nim_primary_open():
+        model_chain = [m for m in model_chain if m != TEXT_MODEL_PRIMARY]
+
     for m_name in model_chain:
         payload = {
             "model": m_name,
@@ -293,13 +367,19 @@ def chat(messages, model=None, max_tokens=2048, temperature=0.7,
         else:
             use_stream = stream
 
+        # Tighter timeout on the flaky primary — 10s beats 20s when
+        # llama-3.3 is dead anyway; Nemotron picks up faster.
+        _is_primary = (m_name == TEXT_MODEL_PRIMARY)
+        _per_call_timeout = 10 if _is_primary else timeout
+        _per_read_timeout = 10 if _is_primary else 20
         try:
             if use_stream:
                 content, reasoning = _post_chat_streamed_pair(
-                    payload, read_timeout=20, total_timeout=max(60, timeout * 3)
+                    payload, read_timeout=_per_read_timeout,
+                    total_timeout=max(30, _per_call_timeout * 3)
                 )
             else:
-                data = _post_chat(payload, timeout=timeout, attempts=attempts)
+                data = _post_chat(payload, timeout=_per_call_timeout, attempts=attempts)
                 # Defensive unpacking — NIM occasionally returns a
                 # malformed body with no choices array (was crashing
                 # with 'list index out of range' and killing the
@@ -312,10 +392,14 @@ def chat(messages, model=None, max_tokens=2048, temperature=0.7,
                 reasoning = msg.get("reasoning_content") or ""
         except Exception as e:
             log.warning(f"NIM chat {m_name} failed: {e}; trying next model in chain")
+            if _is_primary:
+                _nim_primary_record(success=False)
             last_err = e
             continue
 
         if content.strip():
+            if _is_primary:
+                _nim_primary_record(success=True)
             if m_name != model_chain[0]:
                 log.info(f"NIM chat: succeeded on fallback model {m_name}")
             return content
