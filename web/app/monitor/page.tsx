@@ -46,6 +46,13 @@ export default function MonitorPage() {
   const [entries, setEntries] = useState<RegistryEntry[]>([]);
   const [backends, setBackends] = useState<Record<string, BackendState>>({});
   const [registryError, setRegistryError] = useState<string | null>(null);
+  // Refs to fresh state so the stats-poll useEffect (which only re-runs
+  // when the SET of instance_ids changes) sees updated last_seen
+  // timestamps. Without this, `entries` inside the poll closure is
+  // frozen at first-mount and `entry.last_seen` never advances — after
+  // ~5 min the client-side heartbeatAlive check trips DOWN even though
+  // the worker is still heartbeating.
+  const entriesRef = useRef<RegistryEntry[]>([]);
 
   // Persist history across renders so we don't lose the sparkline when
   // React rerenders for other reasons.
@@ -90,6 +97,7 @@ export default function MonitorPage() {
                 gpu_name:    (d.gpu_name as string) ?? null,
               });
             });
+            entriesRef.current = list;
             setEntries(list);
             setRegistryError(null);
           },
@@ -105,6 +113,7 @@ export default function MonitorPage() {
       try {
         const list = await fetchLiveBackends();
         if (!cancelled) {
+          entriesRef.current = list;
           setEntries(list);
           setRegistryError(null);
         }
@@ -128,8 +137,14 @@ export default function MonitorPage() {
     const poll = async () => {
       if (cancelled) return;
       try {
+        // Read fresh entries from the ref every tick — the closure's
+        // `entries` is stale (this effect only re-runs when the SET of
+        // instance_ids changes). Without this, last_seen is frozen at
+        // first-mount and the client-side heartbeat check inevitably
+        // trips DOWN after ~5 minutes.
+        const currentEntries = entriesRef.current;
         const results = await Promise.all(
-          entries.map(async (e) => {
+          currentEntries.map(async (e) => {
             const id = e.instance_id || e.url;
             // For outbound-poll workers (no URL) use the stats from
             // the registry entry itself — the worker pushed them in
