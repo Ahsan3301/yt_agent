@@ -258,10 +258,10 @@ def _cloudflare_generate(prompt, output_dir, trial, negative_prompt=""):
         # _provider_ready should have caught this — belt-and-braces.
         return None, seed
 
-    # Same Flux-friendly prompt shape Pollinations uses — short comma
-    # tag list. Flux 2 dev honours negative_prompt weakly but we still
-    # pass it when supplied by the caller.
-    final_prompt = _distill_prompt_for_flux(prompt)[:400]
+    # Flux 2 klein wants natural language (Qwen encoder), NOT tag lists.
+    # _distill_prompt_for_flux keeps the sentence structure intact and
+    # caps at ~600 chars (~120 words) — BFL's sweet spot for klein.
+    final_prompt = _distill_prompt_for_flux(prompt)[:700]
 
     # flux-2-klein-9b is the distilled Flux 2 variant. Empirically
     # (2026-07-10) it responds in ~3s from Oracle, vs flux-2-dev which
@@ -407,31 +407,36 @@ _FLUX_DISTILLER_NIM_BROKEN = False
 
 
 def _regex_distill(text: str) -> str:
-    """Deterministic prompt shortener — no LLM. Strips filler, keeps
-    concrete nouns, comma-splits into tag style, hard-caps at 200 chars.
-    Not as elegant as an LLM rewrite but fast (< 1 ms) and never
-    times out. Used as fallback when NIM is slow, AND for every
-    subsequent shot after the first NIM failure."""
+    """Light natural-language cleanup — no LLM, no tag-splitting.
+
+    Rewritten 2026-07-10 after the Flux-2 klein migration + a research
+    pass against BFL's official prompt guide: klein uses a Qwen text
+    encoder that wants NATURAL LANGUAGE. Comma-splitting sentences into
+    tag style + appending "photorealistic, cinematic, sharp focus"
+    quality-booster tags (what this function used to do) actively
+    degrades klein output.
+
+    So this function now only:
+      - collapses whitespace runs
+      - trims obvious filler phrases (still helps signal density)
+      - hard-caps at ~600 chars (~120 words) which BFL calls the sweet
+        spot for klein
+    It preserves sentence punctuation so the model sees a paragraph, not
+    a tag list.
+    """
     import re
     t = (text or "").strip()
     # Kill filler phrases the LLM loves that add nothing for Flux.
     for junk in [
-        "wide establishing shot of", "wide shot of", "low-angle shot of",
-        "close-up of", "extreme close-up of", "overhead shot of",
-        "wide angle view of", "camera focuses on", "we see",
-        "the frame captures", "in the foreground", "in the background",
-        "the composition", "the shot", "the scene", "the image",
+        "camera focuses on", "we see", "the frame captures",
+        "the composition ", "the shot ", "the scene ", "the image ",
         "cinematic depth of field", "with a shallow depth of field",
     ]:
         t = re.sub(re.escape(junk), "", t, flags=re.IGNORECASE)
-    # Collapse whitespace + break long sentences into comma tags.
-    t = re.sub(r"[;.]\s*", ", ", t)
-    t = re.sub(r"\s+", " ", t).strip(" ,.")
-    # Hard cap 200 chars for Flux's 77-token limit + append style tags.
-    t = t[:200].rstrip(" ,.")
-    if not t.lower().endswith(("photorealistic", "cinematic", "sharp focus")):
-        t += ", photorealistic, cinematic, sharp focus"
-    return t
+    # Whitespace cleanup only — preserve periods + commas as sentence
+    # structure klein's encoder actually parses.
+    t = re.sub(r"\s+", " ", t).strip()
+    return t[:600].rstrip()
 
 
 def _distill_prompt_for_flux(visual_description: str, channel: str = "") -> str:
