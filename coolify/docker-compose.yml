@@ -250,6 +250,21 @@ services:
       - dashboard
       - pocketbase
     networks: [yt_agent_net]
+    # Resource caps — the Oracle A1 VPS is shared with another site
+    # (Playwright job scraper). Cap the render worker so a heavy render
+    # never starves the other tenant.
+    #   cpus=1.6      → 80% of the 2 vCPUs (leaves 0.4 for the neighbour)
+    #   mem=6g        → half of the 12 GiB RAM
+    #   cpu-shares=512 → half the default 1024, so kernel gives the
+    #                    other site's containers priority under contention
+    #   pids-limit=512 → contains a runaway subprocess fork bomb
+    deploy:
+      resources:
+        limits:
+          cpus: "1.6"
+          memory: 6g
+    cpu_shares: 512
+    pids_limit: 512
 
 networks:
   yt_agent_net:
