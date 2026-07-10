@@ -149,14 +149,14 @@ def _cf_breaker_record(success: bool, http_status: int | None = None):
     global _CF_CONSECUTIVE_FAILS, _CF_OPEN_UNTIL
     if success:
         if _CF_CONSECUTIVE_FAILS:
-            log.info("Cloudflare Flux 2 [dev]: breaker reset after successful call")
+            log.info("Cloudflare Flux 2 [klein-9b]: breaker reset after successful call")
         _CF_CONSECUTIVE_FAILS = 0
         return
     # 401 / 403 are auth issues — trip immediately (no point retrying).
     if http_status in (401, 403):
         _CF_OPEN_UNTIL = time.time() + _CF_OPEN_FOR_SECONDS
         log.warning(
-            f"Cloudflare Flux 2 [dev]: breaker OPEN — HTTP {http_status} (bad token / scope). "
+            f"Cloudflare Flux 2 [klein-9b]: breaker OPEN — HTTP {http_status} (bad token / scope). "
             f"Skipping for {_CF_OPEN_FOR_SECONDS}s. Fix creds via /keys."
         )
         return
@@ -164,7 +164,7 @@ def _cf_breaker_record(success: bool, http_status: int | None = None):
     if _CF_CONSECUTIVE_FAILS >= _CF_BACKOFF_FAILS:
         _CF_OPEN_UNTIL = time.time() + _CF_OPEN_FOR_SECONDS
         log.warning(
-            f"Cloudflare Flux 2 [dev]: breaker OPEN — {_CF_CONSECUTIVE_FAILS} consecutive failures; "
+            f"Cloudflare Flux 2 [klein-9b]: breaker OPEN — {_CF_CONSECUTIVE_FAILS} consecutive failures; "
             f"skipping for {_CF_OPEN_FOR_SECONDS}s"
         )
 
@@ -249,7 +249,7 @@ def _cloudflare_generate(prompt, output_dir, trial, negative_prompt=""):
 
     if _cf_breaker_skip():
         wait = int(_CF_OPEN_UNTIL - time.time())
-        log.info(f"Cloudflare Flux 2 [dev]: breaker OPEN (skipping; reopens in {wait}s)")
+        log.info(f"Cloudflare Flux 2 [klein-9b]: breaker OPEN (skipping; reopens in {wait}s)")
         return None, seed
 
     account = os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip()
@@ -263,9 +263,14 @@ def _cloudflare_generate(prompt, output_dir, trial, negative_prompt=""):
     # pass it when supplied by the caller.
     final_prompt = _distill_prompt_for_flux(prompt)[:400]
 
+    # flux-2-klein-9b is the distilled Flux 2 variant. Empirically
+    # (2026-07-10) it responds in ~3s from Oracle, vs flux-2-dev which
+    # silently times out after 60-120s. Quality is a real step up over
+    # Pollinations' flux-1-schnell — better composition + prompt adherence.
+    # Response is JSON with base64 image (handled below).
     url = (
         f"https://api.cloudflare.com/client/v4/accounts/{account}"
-        f"/ai/run/@cf/black-forest-labs/flux-2-dev"
+        f"/ai/run/@cf/black-forest-labs/flux-2-klein-9b"
     )
     # Multipart fields. requests will pick a boundary and set
     # Content-Type: multipart/form-data itself when we pass `files`.
@@ -273,7 +278,7 @@ def _cloudflare_generate(prompt, output_dir, trial, negative_prompt=""):
     # sometimes works but is spec-fragile. Tuple form: (filename, value, mime).
     fields: dict = {
         "prompt":   (None, final_prompt),
-        "steps":    (None, "28"),
+        "steps":    (None, "20"),   # klein is distilled — 20 steps is the sweet spot
         "guidance": (None, "3.5"),
         "seed":     (None, str(seed)),
     }
@@ -281,34 +286,34 @@ def _cloudflare_generate(prompt, output_dir, trial, negative_prompt=""):
         fields["negative_prompt"] = (None, negative_prompt[:200])
 
     dest = os.path.join(output_dir, f"cloudflare_{seed:08x}.jpg")
-    log.debug(f"Cloudflare Flux 2 [dev]: attempt {trial+1} seed={seed:08x}")
+    log.debug(f"Cloudflare Flux 2 [klein-9b]: attempt {trial+1} seed={seed:08x}")
 
     try:
         r = requests.post(
             url,
             headers={"Authorization": f"Bearer {token}"},
             files=fields,
-            timeout=90,
+            timeout=45,   # klein-9b completes in ~3s; 45s covers cold-start latency spikes
         )
     except Exception as e:
         _cf_breaker_record(success=False)
-        log.warning(f"Cloudflare Flux 2 [dev] network error: {e}")
+        log.warning(f"Cloudflare Flux 2 [klein-9b] network error: {e}")
         return None, seed
 
     if r.status_code in (401, 403):
         _cf_breaker_record(success=False, http_status=r.status_code)
-        log.warning(f"Cloudflare Flux 2 [dev]: HTTP {r.status_code} — auth failure")
+        log.warning(f"Cloudflare Flux 2 [klein-9b]: HTTP {r.status_code} — auth failure")
         return None, seed
     if r.status_code == 429:
         # Real 429 shouldn't happen under our soft-cap, but if we ever
         # blow through it (concurrent workers) treat as breaker trip.
         _cf_breaker_record(success=False, http_status=429)
-        log.warning("Cloudflare Flux 2 [dev]: HTTP 429 — quota exhausted")
+        log.warning("Cloudflare Flux 2 [klein-9b]: HTTP 429 — quota exhausted")
         return None, seed
 
     if not r.ok:
         _cf_breaker_record(success=False)
-        log.warning(f"Cloudflare Flux 2 [dev]: HTTP {r.status_code} — {r.text[:200]}")
+        log.warning(f"Cloudflare Flux 2 [klein-9b]: HTTP {r.status_code} — {r.text[:200]}")
         return None, seed
 
     # Two response shapes are documented — some CF Flux endpoints stream
@@ -322,7 +327,7 @@ def _cloudflare_generate(prompt, output_dir, trial, negative_prompt=""):
             data = r.json()
             if not (data or {}).get("success", True):
                 _cf_breaker_record(success=False)
-                log.warning(f"Cloudflare Flux 2 [dev]: API error {data.get('errors')}")
+                log.warning(f"Cloudflare Flux 2 [klein-9b]: API error {data.get('errors')}")
                 return None, seed
             b64 = ((data.get("result") or {}).get("image") or "").strip()
             if b64:
@@ -330,12 +335,12 @@ def _cloudflare_generate(prompt, output_dir, trial, negative_prompt=""):
                 img_bytes = _b64.b64decode(b64)
     except Exception as e:
         _cf_breaker_record(success=False)
-        log.warning(f"Cloudflare Flux 2 [dev]: response parse failed: {e}")
+        log.warning(f"Cloudflare Flux 2 [klein-9b]: response parse failed: {e}")
         return None, seed
 
     if not img_bytes or len(img_bytes) < 4096:
         _cf_breaker_record(success=False)
-        log.warning("Cloudflare Flux 2 [dev]: response empty / too small")
+        log.warning("Cloudflare Flux 2 [klein-9b]: response empty / too small")
         return None, seed
 
     try:
@@ -343,7 +348,7 @@ def _cloudflare_generate(prompt, output_dir, trial, negative_prompt=""):
             f.write(img_bytes)
     except Exception as e:
         _cf_breaker_record(success=False)
-        log.warning(f"Cloudflare Flux 2 [dev]: write failed: {e}")
+        log.warning(f"Cloudflare Flux 2 [klein-9b]: write failed: {e}")
         return None, seed
 
     _cf_breaker_record(success=True)
