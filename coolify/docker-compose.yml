@@ -114,6 +114,13 @@ services:
       RENDER_TRIGGER_KEY: ${RENDER_TRIGGER_KEY}
       # ── Storage provider credential encryption ──
       STORAGE_PROVIDERS_ENC_KEY: ${STORAGE_PROVIDERS_ENC_KEY}
+      # ── Oracle unlock — the operator-only secret that bootstraps
+      # /reports cleanup password and gates the Oracle side-worker.
+      # Same value as the side-worker service. Env-only, never stored
+      # in PB; the dashboard reads it to authorise cleanup-password
+      # set/replace/clear so no random dashboard viewer can hijack the
+      # cleanup gate before the operator sets a password.
+      ORACLE_UNLOCK_PASSWORD: ${ORACLE_UNLOCK_PASSWORD:-}
       # ── External launch URLs ──
       NEXT_PUBLIC_COLAB_URL: ${NEXT_PUBLIC_COLAB_URL:-}
       NEXT_PUBLIC_HF_SPACE_URL: ${NEXT_PUBLIC_HF_SPACE_URL:-}

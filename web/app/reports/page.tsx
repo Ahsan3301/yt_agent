@@ -240,18 +240,21 @@ function CleanupPanel({ onDone, recent }: {
 }) {
   const toast = useToast();
   const [hasPwd, setHasPwd] = useState(false);
+  const [oracleConfigured, setOracleConfigured] = useState(false);
   const [password, setPassword] = useState("");
   const [days, setDays] = useState(1);
   const [running, setRunning] = useState(false);
   const [mode, setMode] = useState<"run" | "set-password" | "clear-password">("run");
   const [newPwd, setNewPwd] = useState("");
   const [curPwd, setCurPwd] = useState("");
+  const [oraclePwd, setOraclePwd] = useState("");
 
   const refreshHasPwd = async () => {
     try {
       const r = await fetch("/api/maintenance/cleanup-now", { cache: "no-store" });
       const j = await r.json();
       setHasPwd(!!j.has_password);
+      setOracleConfigured(!!j.oracle_unlock_configured);
     } catch { /* ignore */ }
   };
   useEffect(() => { refreshHasPwd(); }, []);
@@ -291,11 +294,20 @@ function CleanupPanel({ onDone, recent }: {
       toast.error("Password must be at least 4 characters");
       return;
     }
+    if (!hasPwd && !oraclePwd.trim()) {
+      toast.error("Oracle unlock password is required for the first-time setup");
+      return;
+    }
     try {
       const r = await fetch("/api/maintenance/cleanup-now", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "set", password: newPwd, current_password: curPwd }),
+        body: JSON.stringify({
+          action: "set",
+          password: newPwd,
+          current_password: curPwd || undefined,
+          oracle_password: oraclePwd || undefined,
+        }),
       });
       const j = await r.json();
       if (!r.ok) {
@@ -304,6 +316,7 @@ function CleanupPanel({ onDone, recent }: {
         toast.success(hasPwd ? "Password replaced" : "Password set");
         setNewPwd("");
         setCurPwd("");
+        setOraclePwd("");
         setMode("run");
         refreshHasPwd();
       }
@@ -313,8 +326,8 @@ function CleanupPanel({ onDone, recent }: {
   };
 
   const clearPasswordAction = async () => {
-    if (!curPwd.trim()) {
-      toast.error("Enter current password to clear");
+    if (!curPwd.trim() && !oraclePwd.trim()) {
+      toast.error("Enter the current cleanup password OR the Oracle unlock password to clear");
       return;
     }
     if (!confirm("Clear the cleanup password? Nobody will be able to run cleanup until a new one is set.")) return;
@@ -322,7 +335,11 @@ function CleanupPanel({ onDone, recent }: {
       const r = await fetch("/api/maintenance/cleanup-now", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "clear", current_password: curPwd }),
+        body: JSON.stringify({
+          action: "clear",
+          current_password: curPwd || undefined,
+          oracle_password: oraclePwd || undefined,
+        }),
       });
       const j = await r.json();
       if (!r.ok) {
@@ -330,6 +347,7 @@ function CleanupPanel({ onDone, recent }: {
       } else {
         toast.info("Password cleared");
         setCurPwd("");
+        setOraclePwd("");
         setMode("run");
         refreshHasPwd();
       }
@@ -417,29 +435,56 @@ function CleanupPanel({ onDone, recent }: {
           <p className="text-[11px] text-neutral-500">
             <Lock className="h-3 w-3 inline mr-1" />
             The password is hashed (scrypt) and never returned to the client.
-            Once set, use "Clear password" to remove it if forgotten.
+            <br />
+            {hasPwd ? (
+              <>To replace, either enter the current cleanup password or the
+                <b> Oracle unlock password</b> (the shared env-only secret).</>
+            ) : (
+              <>First-time setup requires the <b>Oracle unlock password</b>
+                {" "}(env variable <code>ORACLE_UNLOCK_PASSWORD</code>). This
+                prevents anyone with dashboard access from claiming the
+                cleanup gate before you do.</>
+            )}
           </p>
+          {!oracleConfigured && !hasPwd && (
+            <div className="text-[11px] text-amber-300 rounded-md border border-amber-500/30 bg-amber-500/5 px-2 py-1.5">
+              <ShieldAlert className="h-3 w-3 inline mr-1" />
+              ORACLE_UNLOCK_PASSWORD is not set on this dashboard container.
+              Set it via Coolify env (same value you use for channel Oracle
+              unlock) and redeploy before configuring cleanup.
+            </div>
+          )}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {hasPwd && (
               <div>
-                <label className="label">Current password</label>
+                <label className="label">Current cleanup password</label>
                 <input type="password" className="input w-full"
                        value={curPwd} onChange={(e) => setCurPwd(e.target.value)}
-                       placeholder="Required to replace" />
+                       placeholder="One of the two auth fields" />
               </div>
             )}
             <div>
-              <label className="label">{hasPwd ? "New" : "New"} password</label>
+              <label className="label">
+                Oracle unlock password
+                {!hasPwd && <span className="text-red-300 ml-1">*</span>}
+              </label>
+              <input type="password" className="input w-full"
+                     value={oraclePwd} onChange={(e) => setOraclePwd(e.target.value)}
+                     placeholder={hasPwd ? "One of the two auth fields" : "Required for bootstrap"} />
+            </div>
+            <div className="md:col-span-2">
+              <label className="label">New cleanup password</label>
               <input type="password" autoComplete="new-password" className="input w-full"
                      value={newPwd} onChange={(e) => setNewPwd(e.target.value)}
                      placeholder="At least 4 characters" />
             </div>
           </div>
           <div className="flex items-center gap-1.5">
-            <button onClick={setPasswordAction} className="btn btn-primary h-8 text-xs">
+            <button onClick={setPasswordAction} className="btn btn-primary h-8 text-xs"
+                    disabled={!oracleConfigured && !hasPwd}>
               <KeyRound className="h-3 w-3" /> Save password
             </button>
-            <button onClick={() => { setMode("run"); setNewPwd(""); setCurPwd(""); }}
+            <button onClick={() => { setMode("run"); setNewPwd(""); setCurPwd(""); setOraclePwd(""); }}
                     className="btn btn-ghost h-8 text-xs">Cancel</button>
           </div>
         </div>
@@ -449,19 +494,28 @@ function CleanupPanel({ onDone, recent }: {
         <div className="space-y-3">
           <p className="text-[11px] text-red-300">
             Clearing the password disables the Run cleanup button until a new
-            one is set.
+            one is set. Bring either the current cleanup password OR the
+            Oracle unlock password to authorise this action.
           </p>
-          <div>
-            <label className="label">Current password</label>
-            <input type="password" className="input w-full"
-                   value={curPwd} onChange={(e) => setCurPwd(e.target.value)}
-                   placeholder="Required to clear" />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label className="label">Current cleanup password</label>
+              <input type="password" className="input w-full"
+                     value={curPwd} onChange={(e) => setCurPwd(e.target.value)}
+                     placeholder="One of the two auth fields" />
+            </div>
+            <div>
+              <label className="label">Oracle unlock password</label>
+              <input type="password" className="input w-full"
+                     value={oraclePwd} onChange={(e) => setOraclePwd(e.target.value)}
+                     placeholder="One of the two auth fields" />
+            </div>
           </div>
           <div className="flex items-center gap-1.5">
             <button onClick={clearPasswordAction} className="btn h-8 text-xs bg-red-500/20 text-red-200 border border-red-500/30 hover:bg-red-500/30">
               Clear password
             </button>
-            <button onClick={() => { setMode("run"); setCurPwd(""); }}
+            <button onClick={() => { setMode("run"); setCurPwd(""); setOraclePwd(""); }}
                     className="btn btn-ghost h-8 text-xs">Cancel</button>
           </div>
         </div>

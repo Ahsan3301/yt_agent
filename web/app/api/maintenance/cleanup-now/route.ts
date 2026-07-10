@@ -294,26 +294,46 @@ export async function POST(req: NextRequest) {
 }
 
 // ── Password management sibling handlers ──────────────────────
-// Kept in the same file to avoid a separate route just for a hash write.
-// POST { action:"set", password:"..." } / { action:"clear" }
-// with X-API-Key auth OR the current password.
+// Auth chain for set / replace / clear:
+//   1) If a cleanup password already exists, submit it via
+//      `current_password` (unlocks routine rotation without needing
+//      the Oracle secret).
+//   2) OR submit ORACLE_UNLOCK_PASSWORD via `oracle_password`
+//      (bootstraps the FIRST password, recovers from a lost one,
+//      and hardens the flow — env-only secret, never returned).
+//   3) OR present the platform X-API-Key header (server-to-server).
+//
+// Without one of those, the endpoint refuses — so a fresh dashboard
+// with no cleanup password set does NOT let a random logged-in user
+// hijack the cleanup gate by simply setting one. They must know
+// either the operator's Oracle unlock password or the API key.
 export async function PUT(req: NextRequest) {
   const body = await req.json().catch(() => ({})) as {
     action?: "set" | "clear";
     password?: string;
     current_password?: string;
+    oracle_password?: string;
   };
   const action = body.action;
   if (!action) return NextResponse.json({ error: "action required" }, { status: 400 });
 
+  const oracleEnv = (process.env.ORACLE_UNLOCK_PASSWORD || "").trim();
+  const oracleSubmitted = String(body.oracle_password || "").trim();
+  const oracleOk = !!oracleEnv && !!oracleSubmitted && oracleEnv === oracleSubmitted;
+  const apiKeyOk = req.headers.get("x-api-key") === (process.env.RENDER_TRIGGER_KEY || "__no_key__");
+
   const storedHash = await _getCleanupPasswordHash();
-  // If a hash exists, require current_password OR platform key.
-  if (storedHash) {
-    const cur = String(body.current_password || "");
-    const okAuth =
-      (cur && verifyOraclePassword(cur, storedHash)) ||
-      req.headers.get("x-api-key") === (process.env.RENDER_TRIGGER_KEY || "__no_key__");
-    if (!okAuth) return NextResponse.json({ error: "authentication required" }, { status: 401 });
+  const currentOk =
+    !!storedHash &&
+    !!body.current_password &&
+    verifyOraclePassword(String(body.current_password), storedHash);
+
+  if (!currentOk && !oracleOk && !apiKeyOk) {
+    return NextResponse.json({
+      error: storedHash
+        ? "provide current_password OR oracle_password"
+        : "no cleanup password set — provide oracle_password (ORACLE_UNLOCK_PASSWORD env) to bootstrap",
+    }, { status: 401 });
   }
 
   if (action === "clear") {
@@ -325,7 +345,6 @@ export async function PUT(req: NextRequest) {
     }
   }
 
-  // set
   const newP = String(body.password || "").trim();
   if (newP.length < 4) {
     return NextResponse.json({ error: "password must be at least 4 characters" }, { status: 400 });
@@ -341,10 +360,16 @@ export async function PUT(req: NextRequest) {
   }
 }
 
-// GET returns only has_password (never the hash).
+// GET returns { has_password, oracle_unlock_configured } — the second
+// bool lets the UI tell the operator whether bootstrap is even possible
+// (ORACLE_UNLOCK_PASSWORD must be set on the dashboard container).
 export async function GET() {
   const hash = await _getCleanupPasswordHash();
-  return NextResponse.json({ has_password: !!hash });
+  const oracleConfigured = !!(process.env.ORACLE_UNLOCK_PASSWORD || "").trim();
+  return NextResponse.json({
+    has_password: !!hash,
+    oracle_unlock_configured: oracleConfigured,
+  });
 }
 
 function _toEpoch(v: unknown): number | null {
