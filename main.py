@@ -800,24 +800,52 @@ def run_pipeline(
             music = get_music(music_q, clips_dir)
             footage = {"sources": sources, "music": music}
         else:
-            # Storyboard failed. This is a DEGRADED mode — the keyword
-            # pool produces generic shots that aren't tied to specific
-            # lines of narration. We log loudly and record it in the
-            # summary so the GUI can flag it.
+            # Storyboard failed. Synthesize a minimal storyboard from
+            # the script by splitting the narration into num_shots
+            # roughly-equal chunks. This is a DEGRADED mode but keeps
+            # the AI-image path alive (CF + Pollinations still fire on
+            # per-chunk prompts), which is way better than the old
+            # keyword-pool path that only hit stock APIs.
             log.warning("=" * 70)
-            log.warning("  STORYBOARD UNAVAILABLE — falling back to keyword-pool footage.")
-            log.warning("  Clips will be on-genre but NOT aligned to specific narration lines.")
-            log.warning("  Causes: NIM key missing, NIM timeout, or all shots malformed.")
+            log.warning("  STORYBOARD PARSE FAILED — synthesizing stub from script narration.")
+            log.warning("  Each shot's visual_description = its narration chunk. Not ideal, but")
+            log.warning("  AI image providers (Cloudflare + Pollinations) will still fire.")
             log.warning("=" * 70)
             summary["storyboard_fallback"] = True
-            story_keywords = script.get("search_keywords") or []
-            sources_needed = num_shots
-            footage = _step(summary, "footage", lambda: get_footage(
-                channel_type, clips_dir,
-                sources_needed=sources_needed,
-                extra_keywords=story_keywords,
-                premise=content.get("raw_title") or "",
+            import re as _re
+            _narr = (script.get("narration") or "").strip()
+            # Split on sentence boundaries; regroup into num_shots buckets.
+            _sents = [s.strip() for s in _re.split(r"(?<=[.!?])\s+", _narr) if s.strip()]
+            _n = max(1, min(num_shots, len(_sents)))
+            _stride = max(1, len(_sents) // _n)
+            _synth_shots = []
+            for _i in range(_n):
+                _lo = _i * _stride
+                _hi = len(_sents) if _i == _n - 1 else (_i + 1) * _stride
+                _chunk = " ".join(_sents[_lo:_hi]).strip() or _narr[:200]
+                _synth_shots.append({
+                    "narration_excerpt": _chunk[:240],
+                    "visual_description": _chunk[:240],
+                    "search_query": _chunk[:80],
+                    "ai_prompt": _chunk[:400],
+                })
+            from modules.storyboard import assign_timing as _assign_t
+            shots = _assign_t(_synth_shots, voice_duration)
+            log.info(f"synth storyboard: {len(shots)} shots from {len(_sents)} sentences")
+
+            if _sdxl_warm_thread is not None and _sdxl_warm_thread.is_alive():
+                log.info("waiting for bg SDXL warm to finish before shot dispatch...")
+                _sdxl_warm_thread.join(timeout=300)
+            sources = _step(summary, "footage", lambda: fetch_shots(
+                shots, clips_dir, channel=channel_type,
+                preset_sources=[],
             ), run_id=run_id)
+            from modules.footage import get_music, MUSIC_KEYWORDS
+            from modules.config import load_settings as _ls
+            music_q = (_ls().get("music_keywords") or {}).get(channel_type) \
+                       or MUSIC_KEYWORDS.get(channel_type, "background music")
+            music = get_music(music_q, clips_dir)
+            footage = {"sources": sources, "music": music}
 
         if not footage["sources"]:
             log.error("No footage downloaded. Check API keys. Aborting.")

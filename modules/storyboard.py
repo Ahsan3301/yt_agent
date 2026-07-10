@@ -147,6 +147,73 @@ def _strip_fences(text):
     return m.group(1).strip() if m else t
 
 
+def _salvage_partial_json(text: str):
+    """When Nemotron truncates mid-string on shot N, recover shots 1..N-1.
+
+    Strategy: find each top-level '{...}' inside the shots array by
+    tracking brace depth + escape-aware string state. Keep only the
+    ones that parse individually, then wrap in a valid envelope.
+    Cheap + brittle enough that it only kicks in when json.loads
+    already failed.
+    """
+    try:
+        # Trim to the shots array boundary.
+        arr_start = text.find("\"shots\"")
+        if arr_start < 0:
+            return None
+        arr_start = text.find("[", arr_start)
+        if arr_start < 0:
+            return None
+        i = arr_start + 1
+        objects: list[dict] = []
+        n = len(text)
+        while i < n:
+            # Skip whitespace + commas.
+            while i < n and text[i] in ", \t\n\r":
+                i += 1
+            if i >= n or text[i] != "{":
+                break
+            # Walk one object with brace depth + string awareness.
+            depth = 0
+            in_str = False
+            esc = False
+            j = i
+            while j < n:
+                ch = text[j]
+                if in_str:
+                    if esc:
+                        esc = False
+                    elif ch == "\\":
+                        esc = True
+                    elif ch == "\"":
+                        in_str = False
+                elif ch == "\"":
+                    in_str = True
+                elif ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        j += 1
+                        break
+                j += 1
+            if depth != 0 or j > n:
+                break  # ran off the end mid-object → truncated shot, stop
+            chunk = text[i:j]
+            try:
+                obj = json.loads(chunk)
+            except Exception:
+                break
+            if isinstance(obj, dict):
+                objects.append(obj)
+            i = j
+        if not objects:
+            return None
+        return {"shots": objects}
+    except Exception:
+        return None
+
+
 REQUIRED_KEYS = ("narration_excerpt", "visual_description", "search_query", "ai_prompt")
 
 
@@ -201,9 +268,9 @@ def plan_shots(narration, num_shots, channel: str = "horror", max_attempts=2):
                         "is literally about, not generic channel atmosphere."},
                     {"role": "user", "content": prompt},
                 ],
-                # 4096 is plenty for ~15 detailed shots now that thinking
-                # is suppressed at the NIM layer (chat_template_kwargs).
-                max_tokens=4096,
+                # Bumped 4096 → 8192 after Nemotron kept truncating
+                # long detailed shot arrays mid-string at ~char 4640.
+                max_tokens=8192,
                 temperature=0.6,
                 response_format={"type": "json_object"},
                 # chat() auto-streams when max_tokens > 1024 — this is the
@@ -218,8 +285,16 @@ def plan_shots(narration, num_shots, channel: str = "horror", max_attempts=2):
         try:
             data = json.loads(_strip_fences(raw))
         except json.JSONDecodeError as e:
-            log.warning(f"Storyboard JSON parse failed (attempt {attempt}): {e}")
-            continue
+            # Salvage a truncated response — the model ran out of tokens
+            # mid-shot. Find the last complete shot object and rebuild
+            # a valid JSON envelope around it.
+            salvaged = _salvage_partial_json(_strip_fences(raw))
+            if salvaged is not None:
+                log.warning(f"Storyboard JSON parse failed (attempt {attempt}): {e} — salvaging partial")
+                data = salvaged
+            else:
+                log.warning(f"Storyboard JSON parse failed (attempt {attempt}): {e}")
+                continue
 
         raw_shots = data.get("shots") if isinstance(data, dict) else None
         if not isinstance(raw_shots, list) or not raw_shots:
