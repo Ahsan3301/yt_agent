@@ -126,6 +126,39 @@ _rate_lock = threading.Lock()
 # Groq's daily quota is ever bitten.
 GROQ_PRIMARY_FIRST = os.getenv("NIM_GROQ_PRIMARY", "true").lower() != "false"
 
+# ── Groq per-worker circuit breaker ──────────────────────────
+# Groq's free tier has a strict per-minute rate limit; hitting 429 on
+# every single call for a whole render (one call per shot × 2 threads
+# × 5 providers = ~50 Groq round-trips) burned ~300ms each = ~15s
+# wasted per render on a provider we already knew was throttling.
+# Trip after 3 consecutive 429s, cool down for 3 min then retry.
+_GROQ_CONSECUTIVE_FAILS = 0
+_GROQ_OPEN_UNTIL = 0.0
+_GROQ_FAILS_TO_TRIP = 3
+_GROQ_COOLDOWN_SEC = 180
+
+
+def _groq_open() -> bool:
+    return time.time() < _GROQ_OPEN_UNTIL
+
+
+def _groq_record(success: bool) -> None:
+    global _GROQ_CONSECUTIVE_FAILS, _GROQ_OPEN_UNTIL
+    if success:
+        if _GROQ_CONSECUTIVE_FAILS:
+            log.info("Groq: breaker reset after successful call")
+        _GROQ_CONSECUTIVE_FAILS = 0
+        _GROQ_OPEN_UNTIL = 0.0
+        return
+    _GROQ_CONSECUTIVE_FAILS += 1
+    if _GROQ_CONSECUTIVE_FAILS >= _GROQ_FAILS_TO_TRIP:
+        _GROQ_OPEN_UNTIL = time.time() + _GROQ_COOLDOWN_SEC
+        log.warning(
+            f"Groq: breaker OPEN — {_GROQ_CONSECUTIVE_FAILS} consecutive 429/errors; "
+            f"skipping for {_GROQ_COOLDOWN_SEC}s. Going straight to NIM chain."
+        )
+
+
 # ── NIM primary-model circuit breaker ────────────────────────
 # When llama-3.3 starts consistently timing out, skip it entirely for
 # a cooldown window instead of eating a 10-20s failure every call.
@@ -310,13 +343,16 @@ def chat(messages, model=None, max_tokens=2048, temperature=0.7,
     # success, fall through to NIM on any failure so no render dies
     # because Groq's daily cap bit.
     last_err: Exception | None = None
-    if not model and GROQ_PRIMARY_FIRST and os.getenv("GROQ_API_KEY", "").strip():
+    if (not model and GROQ_PRIMARY_FIRST
+            and os.getenv("GROQ_API_KEY", "").strip()
+            and not _groq_open()):
         try:
             groq_content = _groq_chat_fallback(
                 messages, max_tokens=max_tokens, temperature=temperature,
                 response_format=response_format, timeout=30,
             )
             if groq_content and groq_content.strip():
+                _groq_record(True)
                 # Only log the tier one when it succeeded on the FIRST call
                 # of the render — otherwise noisy. Track via module-level flag.
                 global _GROQ_LOGGED_PRIMARY
@@ -327,9 +363,11 @@ def chat(messages, model=None, max_tokens=2048, temperature=0.7,
                 except NameError:
                     _GROQ_LOGGED_PRIMARY = True
                 return groq_content
+            _groq_record(False)
             log.warning("NIM chat: Groq primary returned empty; falling to NIM chain")
         except Exception as e:
             last_err = e
+            _groq_record(False)
             log.warning(f"NIM chat: Groq primary failed ({e}); falling to NIM chain")
 
     # Model fallback chain — caller-supplied model wins alone; otherwise

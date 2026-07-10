@@ -441,6 +441,20 @@ def _distill_prompt_for_flux(visual_description: str, channel: str = "") -> str:
     NIM_DISTILLER=1 env var if their NIM tier is genuinely fast.
     """
     key = (visual_description or "").strip()
+    # Strip Nemotron's tokenization garbage — the model occasionally
+    # returns unknown tokens as literal "<unk>" strings inside JSON,
+    # which then reaches the image provider verbatim and causes 400s
+    # (or with CF, an outright quota-burning gen of noise). Also drop
+    # any JSON-wrapper the model added around the actual prompt.
+    if "<unk>" in key:
+        key = key.replace("<unk>", "").strip()
+    if key.startswith("{") and '"prompt"' in key:
+        try:
+            _j = json.loads(key)
+            if isinstance(_j, dict) and isinstance(_j.get("prompt"), str):
+                key = _j["prompt"].strip()
+        except Exception:
+            pass
     if not key:
         return ""
     if key in _FLUX_DISTILL_CACHE:
@@ -1463,6 +1477,14 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror"):
             _used = _cf_quota_read()
             if _used >= _CF_DAILY_CAP:
                 return False, f"daily soft-cap reached ({_used}/{_CF_DAILY_CAP})"
+            # If the CF breaker tripped earlier in this render, skip
+            # the WHOLE tier rather than paying 5× the "craft prompt →
+            # POST → 429" round-trip. Was burning ~10s per shot
+            # generating prompts for a provider we already knew was
+            # dead.
+            if _cf_breaker_skip():
+                wait = int(_CF_OPEN_UNTIL - time.time())
+                return False, f"breaker open ({wait}s remaining)"
         if name == "local_sdxl":
             if _LOCAL_SDXL_BROKEN:
                 return False, f"local pipeline broken ({_LOCAL_SDXL_BROKEN_REASON})"
@@ -1476,6 +1498,17 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror"):
                 ):
                     return False, "every GPU marked broken during load/gen"
             except Exception:
+                pass
+        if name == "pollinations":
+            if _pollinations_breaker_skip():
+                wait = int(_POLL_OPEN_UNTIL - time.time())
+                return False, f"breaker open ({wait}s remaining)"
+        if name == "huggingface":
+            try:
+                if _huggingface_breaker_skip():
+                    wait = int(_HF_OPEN_UNTIL - time.time())
+                    return False, f"breaker open ({wait}s remaining)"
+            except NameError:
                 pass
         # 'horde' + 'together' have no required key (horde works anon).
         return True, ""
