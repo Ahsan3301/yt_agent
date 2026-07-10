@@ -227,6 +227,16 @@ def handle(job: dict) -> None:
 
                 def _bridge():
                     last = {"percent": -1, "step": None, "run_id": None}
+                    # `saw_new_run` gates the terminal-status short-circuit.
+                    # Without it the bridge's first tick would read the
+                    # PREVIOUS render's terminal state (status=complete,
+                    # pct=100, step=upload) and return before this run's
+                    # pipeline had a chance to reset run_state via
+                    # run_state.start() — leaving the PB job frozen on
+                    # the old run's final values. Now we only accept a
+                    # terminal status after we've seen a run_id change
+                    # OR a pct/step change vs the initial snapshot.
+                    saw_new_run = False
                     while not _stop.is_set():
                         try:
                             s = run_state.read() or {}
@@ -243,6 +253,11 @@ def handle(job: dict) -> None:
                             step = s.get("current_step") or ""
                             label = s.get("current_step_label") or ""
                             if pct != last["percent"] or step != last["step"]:
+                                # The current pipeline has advanced state
+                                # past whatever we inherited — safe to
+                                # honour a terminal signal from here on.
+                                if last["percent"] != -1:
+                                    saw_new_run = True
                                 last["percent"] = pct
                                 last["step"] = step
                                 _update_job(job_id, {
@@ -250,7 +265,12 @@ def handle(job: dict) -> None:
                                     "current_step": step,
                                     "current_step_label": label,
                                 })
-                            if s.get("status") in ("complete", "failed"):
+                            # Also treat a run_id change as proof the new
+                            # run is active — run_state.start() sets
+                            # status=running BEFORE it writes the run_id.
+                            if new_run_id and last["run_id"] == new_run_id:
+                                saw_new_run = True
+                            if saw_new_run and s.get("status") in ("complete", "failed"):
                                 return
                         except Exception as _bre:
                             log.debug(f"progress bridge tick failed: {_bre}")
@@ -297,9 +317,15 @@ def handle(job: dict) -> None:
                 # R2 then rmtree the local work_dir. Only fires on a
                 # successful non-dry-run render that actually published
                 # to YouTube (finalize_run guards on both flags).
+                # NOTE: run_state lives at modules/run_state.py, not
+                # backend/ — the earlier `from backend import run_state`
+                # tripped ImportError silently for every render, so
+                # this cleanup never actually ran on Oracle and assets
+                # accumulated on the VPS.
                 try:
-                    from backend import run_state, housekeeping
-                    _final = run_state.read() or {}
+                    from modules import run_state as _run_state_pkg
+                    from backend import housekeeping
+                    _final = _run_state_pkg.read() or {}
                     _work_dir = f"output/videos/{_final.get('run_id') or job.get('run_id') or ''}"
                     _pub_yt = ((_final.get("published") or {}).get("youtube_url") or "").strip()
                     _hk = housekeeping.finalize_run(
