@@ -207,6 +207,8 @@ def handle(job: dict) -> None:
             # to the next allowed worker.
             try:
                 import main as _main
+                from modules import run_state
+                from backend import logbuf as _logbuf
             except ImportError as e:
                 ok, msg = False, (
                     f"Oracle side-worker missing render deps ({e}). "
@@ -215,6 +217,55 @@ def handle(job: dict) -> None:
                 )
                 log.error(msg)
             else:
+                # ── Progress bridge ────────────────────────────────
+                # Mirror run_state.read() → PB jobs record every ~400ms
+                # so the /queue/[id] Pipeline Progress bar + Monitor
+                # step-label advance in real time. Same pattern as
+                # backend/jobs.py::_run_pipeline_job::progress_bridge.
+                import threading as _threading
+                _stop = _threading.Event()
+
+                def _bridge():
+                    last = {"percent": -1, "step": None, "run_id": None}
+                    while not _stop.is_set():
+                        try:
+                            s = run_state.read() or {}
+                            new_run_id = s.get("run_id") or ""
+                            if new_run_id and new_run_id != last["run_id"]:
+                                last["run_id"] = new_run_id
+                                _update_job(job_id, {"run_id": new_run_id})
+                                # Bind logbuf to this run_id so log lines
+                                # stream into runs_index/<run_id>/logs
+                                # which the LogsPanel subscribes to.
+                                try: _logbuf.attach_run(new_run_id)
+                                except Exception: pass
+                            pct = int(s.get("percent") or 0)
+                            step = s.get("current_step") or ""
+                            label = s.get("current_step_label") or ""
+                            if pct != last["percent"] or step != last["step"]:
+                                last["percent"] = pct
+                                last["step"] = step
+                                _update_job(job_id, {
+                                    "percent": pct,
+                                    "current_step": step,
+                                    "current_step_label": label,
+                                })
+                            if s.get("status") in ("complete", "failed"):
+                                return
+                        except Exception as _bre:
+                            log.debug(f"progress bridge tick failed: {_bre}")
+                        _stop.wait(0.4)
+
+                _bridge_thread = _threading.Thread(target=_bridge, daemon=True)
+                _bridge_thread.start()
+
+                # req_id tag on every log emit so /queue/[id] filters
+                # match the correct run's logs.
+                try:
+                    _logbuf.set_req_id(str(job.get("req_id") or job_id)[:12])
+                except Exception:
+                    pass
+
                 # Kwarg names mirror backend/jobs.py::_run_pipeline_job.
                 res = _main.run_pipeline(
                     channel_type=str(job.get("channel") or "").strip(),
@@ -235,6 +286,12 @@ def handle(job: dict) -> None:
                 )
                 ok = bool(res) if isinstance(res, bool) else bool((res or {}).get("ok"))
                 msg = "render complete" if ok else "render failed"
+
+                # Stop the progress bridge — pipeline has terminated so
+                # no more updates will arrive from run_state.
+                _stop.set()
+                try: _bridge_thread.join(timeout=2)
+                except Exception: pass
 
                 # Post-publish housekeeping — mirror final_video.mp4 to
                 # R2 then rmtree the local work_dir. Only fires on a
