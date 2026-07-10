@@ -400,6 +400,71 @@ def handle(job: dict) -> None:
                 try: _bridge_thread.join(timeout=2)
                 except Exception: pass
 
+                # ── Storage upload + runs_index write ─────────────
+                # Oracle path used to skip both of these because the
+                # backend/jobs.py post-render block only runs on the
+                # Kaggle/Colab worker. That's why every Oracle render
+                # was invisible in /library AND its video died with
+                # the container. Now we mirror the same shape here.
+                public_url = ""
+                upload_err = ""
+                if ok:
+                    try:
+                        _summary_early = res if isinstance(res, dict) else {}
+                        _rid = str(_summary_early.get("run_id") or job.get("run_id") or "")
+                        _final_video = str(_summary_early.get("final_video") or "")
+                        if _final_video and os.path.exists(_final_video) and _rid:
+                            from backend.storage import facade as _st_facade
+                            if _st_facade.is_configured():
+                                public_url = _st_facade.upload_video(_final_video, _rid)
+                                if public_url:
+                                    log.info(f"storage: uploaded {_final_video} → {public_url}")
+                            else:
+                                log.info("storage: no primary provider configured — video stays local only")
+                    except Exception as _stex:
+                        upload_err = str(_stex)
+                        log.warning(f"storage upload failed: {upload_err}")
+
+                    # Write runs_index so the Library actually shows
+                    # this render. This is what backend/jobs.py does
+                    # for Kaggle/Colab — Oracle path was silently
+                    # skipping it, making every Oracle render invisible.
+                    try:
+                        from backend import runs_db as _runs_db
+                        _summary = res if isinstance(res, dict) else {}
+                        _rid = str(_summary.get("run_id") or job.get("run_id") or "")
+                        if _rid:
+                            _summary["run_id"] = _rid
+                            _summary["video_url"] = public_url or _summary.get("video_url") or ""
+                            _summary["finished_at"] = time.time()
+                            _summary["channel"] = job.get("channel")
+                            _summary["dry_run"] = job.get("dry_run", False)
+                            _summary["ok"] = True
+                            _summary["upload_error"] = upload_err
+                            _pub_yt_early = ((_summary.get("published") or {}).get("youtube_url") or "").strip()
+                            _runs_db.write_run(
+                                _rid,
+                                summary=_summary,
+                                index_entry={
+                                    "channel":       _summary.get("channel"),
+                                    "dry_run":       _summary.get("dry_run", False),
+                                    "ok":            True,
+                                    "finished_at":   _summary["finished_at"],
+                                    "video_url":     public_url or _summary.get("video_url") or "",
+                                    "has_video":     bool(public_url) or bool(_pub_yt_early),
+                                    "video_storage": "primary" if public_url else "local",
+                                    "upload_error":  upload_err[:400] if upload_err else "",
+                                    "title":         (_summary.get("youtube_title") or _summary.get("title") or "").strip()[:100],
+                                    "youtube_title": (_summary.get("youtube_title") or "").strip()[:100],
+                                    "description":   (_summary.get("description") or "")[:500],
+                                    "tags":          _summary.get("tags") or [],
+                                    "youtube_url":   _pub_yt_early,
+                                },
+                            )
+                            log.info(f"runs_index: wrote {_rid} (has_video={bool(public_url) or bool(_pub_yt_early)})")
+                    except Exception as _rdex:
+                        log.warning(f"runs_db.write_run failed: {_rdex}")
+
                 # Post-publish housekeeping — mirror final_video.mp4 to
                 # R2 then rmtree the local work_dir. Only fires on a
                 # successful non-dry-run render that actually published
