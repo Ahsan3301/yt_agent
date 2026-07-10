@@ -707,15 +707,20 @@ def _run_side_job(job: dict[str, Any], kind: str):
         job["finished_at"] = time.time()
         _persist(job)
 
-    # Discord alert for side-jobs, same as render jobs.
+    # Discord alert for side-jobs (publish/copy). Route to the
+    # channel's own webhook via channel_niche so failures don't all
+    # land on the operator's global DISCORD_WEBHOOK_URL.
     try:
         from backend import notifier
+        _side_niche = str(job.get("channel") or "").strip() or None
         if ok:
-            notifier.info(f"✅ {kind} complete", body=msg)
+            notifier.info(f"✅ {kind} complete", body=msg,
+                          channel_niche=_side_niche)
         else:
             notifier.report_error(err=msg, title=f"❌ {kind} failed",
                                   run_id=job.get("run_id") or job_id,
-                                  req_id=req_id)
+                                  req_id=req_id,
+                                  channel_niche=_side_niche)
     except Exception:
         pass
 

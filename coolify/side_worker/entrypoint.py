@@ -467,13 +467,20 @@ def handle(job: dict) -> None:
     # purpose, no need to spam the channel or write to errors/.
     try:
         from backend import notifier
+        # Route the alert to the CHANNEL'S webhook, not the global one.
+        # Without channel_niche, per-channel webhook lookup is skipped
+        # and failures land on the operator's default DISCORD_WEBHOOK_URL
+        # regardless of which channel actually failed.
+        _ch_niche = str(job.get("channel") or "").strip() or None
         if ok:
-            notifier.info(f"✅ {kind} complete (Oracle)", body=msg)
+            notifier.info(f"✅ {kind} complete (Oracle)", body=msg,
+                          channel_niche=_ch_niche)
         elif _final_status == "cancelled":
             pass  # silence — user cancelled deliberately
         else:
             notifier.report_error(err=msg, title=f"❌ {kind} failed (Oracle)",
-                                  run_id=job.get("run_id"), req_id=job.get("req_id"))
+                                  run_id=job.get("run_id"), req_id=job.get("req_id"),
+                                  channel_niche=_ch_niche)
     except Exception:
         pass
 
