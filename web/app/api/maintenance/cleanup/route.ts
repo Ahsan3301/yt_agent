@@ -81,9 +81,24 @@ export async function POST(req: NextRequest) {
       .collection("jobs")
       .where("status", "in", ["complete", "failed", "cancelled"])
       .get();
+    // Safety: never delete a terminal-status job whose id is still
+    // held by a live backend's active_job_id — the worker's Python
+    // process may still be handle()-ing it and would go zombie.
+    const activeIds = new Set<string>();
+    try {
+      const backSnap = await adminDb().collection("backends").limit(20).get();
+      const seenCutoff = now - 300;
+      backSnap.forEach((doc) => {
+        const d = doc.data() as { active_job_id?: string; last_seen_at?: number };
+        if (d.active_job_id && Number(d.last_seen_at || 0) > seenCutoff) {
+          activeIds.add(String(d.active_job_id));
+        }
+      });
+    } catch { /* soft-fail */ }
     const batch = adminDb().batch();
     let n = 0;
     snap.forEach((doc) => {
+      if (activeIds.has(doc.id)) return;
       const d = doc.data() as Record<string, unknown>;
       const fin = _toEpoch(d.finished_at) ?? _toEpoch(d.queued_at);
       if (fin != null && fin < cutoff) {

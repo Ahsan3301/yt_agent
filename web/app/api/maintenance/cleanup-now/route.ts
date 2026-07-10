@@ -170,8 +170,28 @@ export async function POST(req: NextRequest) {
   }
 
   // ── jobs (terminal) ────────────────────────────────────────
+  // Safety: never delete a job whose id is CURRENTLY held by a live
+  // backend's active_job_id — even if it's already in a terminal
+  // status. Otherwise the side-worker's Python process keeps running
+  // a ghost render whose PB row is gone, blocking its main loop from
+  // claiming the next queued job. Confirmed live 2026-07-10.
+  const activeJobIds = new Set<string>();
+  try {
+    const backSnap = await adminDb().collection("backends").limit(20).get();
+    backSnap.forEach((doc) => {
+      const d = doc.data() as { active_job_id?: string; last_seen_at?: number };
+      const seen = Number(d.last_seen_at || 0);
+      // Only trust "live" backends (heartbeat within 5 min) — a stale
+      // active_job_id from a long-dead worker shouldn't block cleanup.
+      if (d.active_job_id && seen > now - 300) {
+        activeJobIds.add(String(d.active_job_id));
+      }
+    });
+  } catch { /* soft-fail; worst case we're overly permissive */ }
+
   try {
     let total = 0;
+    let skippedActive = 0;
     for (const st of ["complete", "failed", "cancelled"] as const) {
       const snap = await adminDb().collection("jobs")
         .where("status", "==", st)
@@ -180,12 +200,14 @@ export async function POST(req: NextRequest) {
         .limit(500)
         .get();
       for (const doc of snap.docs) {
+        if (activeJobIds.has(doc.id)) { skippedActive += 1; continue; }
         try { await doc.ref.delete(); total += 1; }
         catch (_de) { summary.errors.push(`job delete ${doc.id}: ${String(_de)}`); }
       }
     }
     summary.jobs_deleted = total;
     if (total > 0) summary.detail.push(`Deleted ${total} terminal jobs older than ${days}d`);
+    if (skippedActive > 0) summary.detail.push(`Skipped ${skippedActive} jobs still held by a live backend's active_job_id`);
   } catch (e) {
     summary.errors.push(`jobs cleanup: ${String(e)}`);
   }
