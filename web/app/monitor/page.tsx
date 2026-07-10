@@ -156,7 +156,14 @@ export default function MonitorPage() {
               h.vram = appendTrim(h.vram, stats.gpu?.mem_percent ?? 0);
             }
             historyRef.current[id] = h;
-            const heartbeatAlive = Date.now() / 1000 - (entry.last_seen || 0) < 180;
+            // Heartbeat window widened from 180s → 300s. The Oracle
+            // side-worker heartbeats every 20s but the Coolify VPS
+            // sees occasional JS-side clock skew relative to server
+            // time — the tight 180s window flipped the card to DOWN
+            // whenever the drift + poll gap exceeded ~150s. 5 min
+            // covers realistic skew without hiding a truly dead worker
+            // (server drops rows silent >30min anyway, so 5min is safe).
+            const heartbeatAlive = Date.now() / 1000 - (entry.last_seen || 0) < 300;
             const outboundPoll = !entry.url;
             next[id] = {
               entry,
@@ -416,7 +423,9 @@ function BackendCard({ bs }: { bs: BackendState }) {
         </div>
       ) : !reachable ? (
         <div className="text-xs text-red-400">
-          Last seen in registry but /api/stats unreachable — instance may have crashed or the tunnel closed.
+          {entry.url
+            ? "Last seen in registry but /api/stats unreachable — instance may have crashed or the tunnel closed."
+            : "Heartbeat gone stale — outbound-poll worker stopped reporting. The container may have crashed or been terminated."}
         </div>
       ) : !entry.url ? (
         // Outbound-poll worker: alive per heartbeat, no stats to show.
