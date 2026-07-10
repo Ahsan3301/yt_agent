@@ -124,14 +124,16 @@ def _pexels_download_full(image_id, full_url, output_dir):
     return F.download_file(full_url, dest)
 
 
-# ── Cloudflare Workers AI (Flux 2 dev) — breaker + daily quota ──
-# Free tier: 10k neurons/day. Flux 2 dev = 56 neurons/image → ~178
-# images/day. We soft-cap at 150 to leave headroom + fall through to
-# Pollinations without ever hitting a real Cloudflare 429.
+# ── Cloudflare Workers AI (Flux 2 [dev]) — breaker + daily quota ──
+# Model: black-forest-labs/flux-2-dev — Black Forest Labs' current
+# flagship. Requires multipart/form-data (CF returned HTTP 400 for
+# JSON: 'required properties at / are multipart'). We send the
+# prompt + optional negative_prompt + steps + guidance + seed as
+# form fields; response is raw image bytes.
 #
-# Quota lives in PB settings/image_gen_quota (data JSON blob), keyed by
-# UTC date so it auto-resets at 00:00 UTC. Worker restarts + multiple
-# workers all see the same counter.
+# Free tier: 10k neurons/day, Flux 2 dev = 56 neurons/image → ~178
+# images/day. Soft-cap at 150 leaves headroom for the pipeline to
+# fall through to Pollinations before hitting a real Cloudflare 429.
 _CF_DAILY_CAP = 150
 _CF_CONSECUTIVE_FAILS = 0
 _CF_OPEN_UNTIL = 0.0
@@ -147,14 +149,14 @@ def _cf_breaker_record(success: bool, http_status: int | None = None):
     global _CF_CONSECUTIVE_FAILS, _CF_OPEN_UNTIL
     if success:
         if _CF_CONSECUTIVE_FAILS:
-            log.info("Cloudflare Flux 2: breaker reset after successful call")
+            log.info("Cloudflare Flux 2 [dev]: breaker reset after successful call")
         _CF_CONSECUTIVE_FAILS = 0
         return
     # 401 / 403 are auth issues — trip immediately (no point retrying).
     if http_status in (401, 403):
         _CF_OPEN_UNTIL = time.time() + _CF_OPEN_FOR_SECONDS
         log.warning(
-            f"Cloudflare Flux 2: breaker OPEN — HTTP {http_status} (bad token / scope). "
+            f"Cloudflare Flux 2 [dev]: breaker OPEN — HTTP {http_status} (bad token / scope). "
             f"Skipping for {_CF_OPEN_FOR_SECONDS}s. Fix creds via /keys."
         )
         return
@@ -162,7 +164,7 @@ def _cf_breaker_record(success: bool, http_status: int | None = None):
     if _CF_CONSECUTIVE_FAILS >= _CF_BACKOFF_FAILS:
         _CF_OPEN_UNTIL = time.time() + _CF_OPEN_FOR_SECONDS
         log.warning(
-            f"Cloudflare Flux 2: breaker OPEN — {_CF_CONSECUTIVE_FAILS} consecutive failures; "
+            f"Cloudflare Flux 2 [dev]: breaker OPEN — {_CF_CONSECUTIVE_FAILS} consecutive failures; "
             f"skipping for {_CF_OPEN_FOR_SECONDS}s"
         )
 
@@ -230,23 +232,24 @@ def _cf_quota_inc(by: int = 1) -> None:
 
 
 def _cloudflare_generate(prompt, output_dir, trial, negative_prompt=""):
-    """Generate one image via Cloudflare Workers AI (Flux 2 dev).
+    """Generate one image via Cloudflare Workers AI (Flux 2 [dev]).
     Returns (path, seed) on success, (None, seed) on any failure.
 
     Requires CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN in env
-    (populated by keys_sync on worker boot). Soft-caps at
-    _CF_DAILY_CAP images/day via PB counter — beyond that
+    (populated by keys_sync on worker boot OR by channel_cf per-render).
+    Soft-caps at _CF_DAILY_CAP images/day via PB counter — beyond that
     _provider_ready returns False and the chain falls through to
     Pollinations.
 
-    Flux 2 dev via CF returns a base64 blob under
-    {"result": {"image": "<b64>"}}. We decode and write to
-    output_dir/cloudflare_<seed>.jpg."""
+    Flux 2 [dev] REQUIRES multipart/form-data (JSON body returns
+    HTTP 400: 'required properties at / are multipart'). We send
+    fields via requests.post(files=...) which auto-encodes as
+    multipart with boundary. Response body is raw image bytes."""
     seed = int(hashlib.md5(f"{prompt}|{trial}|cf".encode()).hexdigest()[:8], 16)
 
     if _cf_breaker_skip():
         wait = int(_CF_OPEN_UNTIL - time.time())
-        log.info(f"Cloudflare Flux 2: breaker OPEN (skipping; reopens in {wait}s)")
+        log.info(f"Cloudflare Flux 2 [dev]: breaker OPEN (skipping; reopens in {wait}s)")
         return None, seed
 
     account = os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip()
@@ -256,47 +259,56 @@ def _cloudflare_generate(prompt, output_dir, trial, negative_prompt=""):
         return None, seed
 
     # Same Flux-friendly prompt shape Pollinations uses — short comma
-    # tag list, no negative prompt (Flux 2 dev honours it weakly).
+    # tag list. Flux 2 dev honours negative_prompt weakly but we still
+    # pass it when supplied by the caller.
     final_prompt = _distill_prompt_for_flux(prompt)[:400]
 
     url = (
         f"https://api.cloudflare.com/client/v4/accounts/{account}"
         f"/ai/run/@cf/black-forest-labs/flux-2-dev"
     )
-    body: dict = {"prompt": final_prompt, "seed": seed}
+    # Multipart fields. requests will pick a boundary and set
+    # Content-Type: multipart/form-data itself when we pass `files`.
+    # Every value must be a str/bytes tuple; passing plain strings
+    # sometimes works but is spec-fragile. Tuple form: (filename, value, mime).
+    fields: dict = {
+        "prompt":   (None, final_prompt),
+        "steps":    (None, "28"),
+        "guidance": (None, "3.5"),
+        "seed":     (None, str(seed)),
+    }
     if negative_prompt:
-        body["negative_prompt"] = negative_prompt[:200]
+        fields["negative_prompt"] = (None, negative_prompt[:200])
 
     dest = os.path.join(output_dir, f"cloudflare_{seed:08x}.jpg")
-    log.debug(f"Cloudflare Flux 2: attempt {trial+1} seed={seed:08x}")
+    log.debug(f"Cloudflare Flux 2 [dev]: attempt {trial+1} seed={seed:08x}")
 
     try:
         r = requests.post(
             url,
-            headers={"Authorization": f"Bearer {token}",
-                     "Content-Type": "application/json"},
-            json=body,
+            headers={"Authorization": f"Bearer {token}"},
+            files=fields,
             timeout=90,
         )
     except Exception as e:
         _cf_breaker_record(success=False)
-        log.warning(f"Cloudflare Flux 2 network error: {e}")
+        log.warning(f"Cloudflare Flux 2 [dev] network error: {e}")
         return None, seed
 
     if r.status_code in (401, 403):
         _cf_breaker_record(success=False, http_status=r.status_code)
-        log.warning(f"Cloudflare Flux 2: HTTP {r.status_code} — auth failure")
+        log.warning(f"Cloudflare Flux 2 [dev]: HTTP {r.status_code} — auth failure")
         return None, seed
     if r.status_code == 429:
         # Real 429 shouldn't happen under our soft-cap, but if we ever
         # blow through it (concurrent workers) treat as breaker trip.
         _cf_breaker_record(success=False, http_status=429)
-        log.warning("Cloudflare Flux 2: HTTP 429 — quota exhausted")
+        log.warning("Cloudflare Flux 2 [dev]: HTTP 429 — quota exhausted")
         return None, seed
 
     if not r.ok:
         _cf_breaker_record(success=False)
-        log.warning(f"Cloudflare Flux 2: HTTP {r.status_code} — {r.text[:200]}")
+        log.warning(f"Cloudflare Flux 2 [dev]: HTTP {r.status_code} — {r.text[:200]}")
         return None, seed
 
     # Two response shapes are documented — some CF Flux endpoints stream
@@ -310,7 +322,7 @@ def _cloudflare_generate(prompt, output_dir, trial, negative_prompt=""):
             data = r.json()
             if not (data or {}).get("success", True):
                 _cf_breaker_record(success=False)
-                log.warning(f"Cloudflare Flux 2: API error {data.get('errors')}")
+                log.warning(f"Cloudflare Flux 2 [dev]: API error {data.get('errors')}")
                 return None, seed
             b64 = ((data.get("result") or {}).get("image") or "").strip()
             if b64:
@@ -318,12 +330,12 @@ def _cloudflare_generate(prompt, output_dir, trial, negative_prompt=""):
                 img_bytes = _b64.b64decode(b64)
     except Exception as e:
         _cf_breaker_record(success=False)
-        log.warning(f"Cloudflare Flux 2: response parse failed: {e}")
+        log.warning(f"Cloudflare Flux 2 [dev]: response parse failed: {e}")
         return None, seed
 
     if not img_bytes or len(img_bytes) < 4096:
         _cf_breaker_record(success=False)
-        log.warning("Cloudflare Flux 2: response empty / too small")
+        log.warning("Cloudflare Flux 2 [dev]: response empty / too small")
         return None, seed
 
     try:
@@ -331,7 +343,7 @@ def _cloudflare_generate(prompt, output_dir, trial, negative_prompt=""):
             f.write(img_bytes)
     except Exception as e:
         _cf_breaker_record(success=False)
-        log.warning(f"Cloudflare Flux 2: write failed: {e}")
+        log.warning(f"Cloudflare Flux 2 [dev]: write failed: {e}")
         return None, seed
 
     _cf_breaker_record(success=True)
