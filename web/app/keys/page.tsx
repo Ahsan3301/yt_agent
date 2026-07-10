@@ -93,6 +93,15 @@ const SECTIONS: Array<{
         importance: "recommended",
       },
       {
+        name: "CLOUDFLARE_ACCOUNTS_JSON",
+        label: "Cloudflare Account Pool (multi-account rotation, JSON)",
+        description:
+          "OPTIONAL. Paste a JSON array of Cloudflare accounts as a single line — the pipeline will rotate through them when one hits its daily 10k-neuron quota. Each free account = ~60 klein-9b images/day. Format: [{\"label\":\"primary\",\"account_id\":\"aaa...\",\"api_token\":\"cfut_...\"},{\"label\":\"channel-2\",\"account_id\":\"bbb...\",\"api_token\":\"cfut_...\"}]. When set, this WINS over CLOUDFLARE_ACCOUNT_ID/_API_TOKEN above. Sign up for extra free CF accounts using different email aliases.",
+        get_url: "https://dash.cloudflare.com/sign-up",
+        docs_url: "https://developers.cloudflare.com/workers-ai/",
+        importance: "optional",
+      },
+      {
         name: "OPENROUTER_API_KEY",
         label: "OpenRouter API Key (LLM 2nd-layer)",
         description:

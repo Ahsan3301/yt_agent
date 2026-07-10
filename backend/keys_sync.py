@@ -42,8 +42,11 @@ MANAGED_KEYS = [
     "PIXABAY_API_KEY",
     "COVERR_API_KEY",
     "HF_TOKEN",                  # HuggingFace Inference API — free SDXL fallback
-    "CLOUDFLARE_ACCOUNT_ID",     # Workers AI — Flux 2 dev, ~150/day free tier
+    "CLOUDFLARE_ACCOUNT_ID",     # Workers AI — legacy single-account (still works)
     "CLOUDFLARE_API_TOKEN",      # Workers AI Read scope only, no other perms needed
+    "CLOUDFLARE_ACCOUNTS_JSON",  # Multi-account pool for klein-9b rotation:
+                                 #   [{"label":..,"account_id":..,"api_token":..}, ...]
+                                 # ~60 imgs/day free per account; rotates on 429-quota.
     "OPENROUTER_API_KEY",        # Second-layer LLM fallback (llama-3.3 free tier)
     "OPENROUTER_MODEL",          # Optional model override (default llama-3.3-70b-instruct:free)
     "DISCORD_WEBHOOK_URL",       # alerting channel for renders + cleanup

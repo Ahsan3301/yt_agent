@@ -13,6 +13,7 @@ import time
 import logging
 import base64
 import hashlib
+import json
 import urllib.parse
 
 import requests
@@ -175,6 +176,87 @@ def _cf_today_key() -> str:
     return _dt.datetime.utcnow().strftime("%Y-%m-%d")
 
 
+# ── Multi-account rotation pool ─────────────────────────────
+# Operator pastes a JSON list at /keys as CLOUDFLARE_ACCOUNTS_JSON:
+#   [{"label":"primary","account_id":"aaa","api_token":"cfut_..."},
+#    {"label":"channel-2","account_id":"bbb","api_token":"cfut_..."}]
+# Each account = ~60 imgs/day free. Rotation happens on 429-quota only.
+_CF_POOL_CACHE: list[dict] | None = None
+_CF_POOL_RAW = ""  # source string for cache invalidation
+# In-process "burned today" set: keyed by account_id, value is the UTC
+# date (YYYY-MM-DD) it was marked. When date rolls over, the entry is
+# effectively expired.
+_CF_BURNED_TODAY: dict[str, str] = {}
+
+
+def _cf_account_pool() -> list[dict]:
+    """Return the parsed CLOUDFLARE_ACCOUNTS_JSON pool. Falls back to a
+    single-item pool built from CLOUDFLARE_ACCOUNT_ID + _API_TOKEN when
+    the JSON is empty/missing (preserves the single-account behaviour
+    the codebase had before this feature).
+
+    Cached across calls — the raw source string is memoised so a live
+    /keys update is picked up on the next call without a worker restart.
+    """
+    global _CF_POOL_CACHE, _CF_POOL_RAW
+    raw = os.getenv("CLOUDFLARE_ACCOUNTS_JSON", "").strip()
+    if raw != _CF_POOL_RAW:
+        # Env changed since last call — reparse.
+        _CF_POOL_RAW = raw
+        _CF_POOL_CACHE = None
+    if _CF_POOL_CACHE is not None:
+        return _CF_POOL_CACHE
+
+    pool: list[dict] = []
+    if raw:
+        try:
+            data = json.loads(raw)
+            if isinstance(data, list):
+                for i, item in enumerate(data):
+                    if not isinstance(item, dict):
+                        continue
+                    acc = str(item.get("account_id") or "").strip()
+                    tok = str(item.get("api_token") or "").strip()
+                    if not acc or not tok:
+                        continue
+                    label = str(item.get("label") or f"acc-{i+1}").strip()
+                    pool.append({"account_id": acc, "api_token": tok, "label": label})
+        except Exception as e:
+            log.warning(
+                f"CLOUDFLARE_ACCOUNTS_JSON malformed ({e}) — "
+                f"falling back to single-account env creds"
+            )
+
+    if not pool:
+        # No pool configured — synthesise a single-item pool from the
+        # legacy single-account env vars so downstream code is
+        # unaware of the pool-vs-single distinction.
+        acc = os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip()
+        tok = os.getenv("CLOUDFLARE_API_TOKEN", "").strip()
+        if acc and tok:
+            pool.append({"account_id": acc, "api_token": tok, "label": "env"})
+
+    _CF_POOL_CACHE = pool
+    return pool
+
+
+def _cf_pick_account() -> dict | None:
+    """Return the first pool account that isn't burned today, or None
+    when every account is burned (chain should fall through to
+    Pollinations)."""
+    today = _cf_today_key()
+    for acc in _cf_account_pool():
+        if _CF_BURNED_TODAY.get(acc["account_id"]) != today:
+            return acc
+    return None
+
+
+def _cf_mark_burned(account_id: str) -> None:
+    """Flag an account as quota-exhausted for today. Auto-clears on
+    date rollover because _cf_pick_account compares against today."""
+    _CF_BURNED_TODAY[account_id] = _cf_today_key()
+
+
 def _cf_account_key() -> str:
     """Stable 12-char key identifying the CURRENT account. Own-mode
     channels each get their own counter automatically because their
@@ -252,9 +334,13 @@ def _cloudflare_generate(prompt, output_dir, trial, negative_prompt=""):
         log.info(f"Cloudflare Flux 2 [klein-9b]: breaker OPEN (skipping; reopens in {wait}s)")
         return None, seed
 
-    account = os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip()
-    token = os.getenv("CLOUDFLARE_API_TOKEN", "").strip()
-    if not account or not token:
+    # Multi-account pool. If CLOUDFLARE_ACCOUNTS_JSON is set at /keys,
+    # _cf_account_pool() returns the parsed list; otherwise a single
+    # entry synthesised from the legacy env creds. Either way we loop
+    # here so a 429-quota on one account rotates to the next
+    # transparently.
+    pool = _cf_account_pool()
+    if not pool:
         # _provider_ready should have caught this — belt-and-braces.
         return None, seed
 
@@ -263,27 +349,9 @@ def _cloudflare_generate(prompt, output_dir, trial, negative_prompt=""):
     # caps at ~600 chars (~120 words) — BFL's sweet spot for klein.
     final_prompt = _distill_prompt_for_flux(prompt)[:700]
 
-    # flux-2-klein-9b is the distilled Flux 2 variant. Empirically
-    # (2026-07-10) it responds in ~3s from Oracle, vs flux-2-dev which
-    # silently times out after 60-120s. Quality is a real step up over
-    # Pollinations' flux-1-schnell — better composition + prompt adherence.
-    # Response is JSON with base64 image (handled below).
-    url = (
-        f"https://api.cloudflare.com/client/v4/accounts/{account}"
-        f"/ai/run/@cf/black-forest-labs/flux-2-klein-9b"
-    )
-    # Multipart fields. requests will pick a boundary and set
-    # Content-Type: multipart/form-data itself when we pass `files`.
-    # Every value must be a str/bytes tuple; passing plain strings
-    # sometimes works but is spec-fragile. Tuple form: (filename, value, mime).
     fields: dict = {
         "prompt":   (None, final_prompt),
-        # Klein is a DISTILLED Flux 2 — it's designed for 4-8 steps.
-        # Bumping to 20 was a copy-paste mistake from the flux-2-dev
-        # config; it wasted ~3× the neurons per image and burned the
-        # 10k/day free quota in ~20 images instead of the ~60 we get
-        # at step=6. Empirically identical quality at 6-8 steps for
-        # the horror-shorts use case.
+        # Klein is a DISTILLED Flux 2 — designed for 4-8 steps.
         "steps":    (None, "6"),
         "guidance": (None, "3.5"),
         "seed":     (None, str(seed)),
@@ -292,74 +360,141 @@ def _cloudflare_generate(prompt, output_dir, trial, negative_prompt=""):
         fields["negative_prompt"] = (None, negative_prompt[:200])
 
     dest = os.path.join(output_dir, f"cloudflare_{seed:08x}.jpg")
-    log.debug(f"Cloudflare Flux 2 [klein-9b]: attempt {trial+1} seed={seed:08x}")
 
+    # Save/restore env so _cf_account_key() (which reads
+    # CLOUDFLARE_ACCOUNT_ID) sees the account that actually made THIS
+    # request when we call _cf_quota_inc / _cf_breaker_record below.
+    # This is cleaner than plumbing an account_id parameter through
+    # every quota helper.
+    _env_acc = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "")
+    _env_tok = os.environ.get("CLOUDFLARE_API_TOKEN", "")
     try:
-        r = requests.post(
-            url,
-            headers={"Authorization": f"Bearer {token}"},
-            files=fields,
-            timeout=45,   # klein-9b completes in ~3s; 45s covers cold-start latency spikes
-        )
-    except Exception as e:
-        _cf_breaker_record(success=False)
-        log.warning(f"Cloudflare Flux 2 [klein-9b] network error: {e}")
-        return None, seed
+        for acc_entry in pool:
+            account_id = acc_entry["account_id"]
+            api_token  = acc_entry["api_token"]
+            label      = acc_entry.get("label") or account_id[:8]
 
-    if r.status_code in (401, 403):
-        _cf_breaker_record(success=False, http_status=r.status_code)
-        log.warning(f"Cloudflare Flux 2 [klein-9b]: HTTP {r.status_code} — auth failure")
-        return None, seed
-    if r.status_code == 429:
-        # Real 429 shouldn't happen under our soft-cap, but if we ever
-        # blow through it (concurrent workers) treat as breaker trip.
-        _cf_breaker_record(success=False, http_status=429)
-        log.warning("Cloudflare Flux 2 [klein-9b]: HTTP 429 — quota exhausted")
-        return None, seed
+            if _CF_BURNED_TODAY.get(account_id) == _cf_today_key():
+                # Marked burned earlier this UTC day — skip immediately.
+                continue
 
-    if not r.ok:
-        _cf_breaker_record(success=False)
-        log.warning(f"Cloudflare Flux 2 [klein-9b]: HTTP {r.status_code} — {r.text[:200]}")
-        return None, seed
+            os.environ["CLOUDFLARE_ACCOUNT_ID"] = account_id
+            os.environ["CLOUDFLARE_API_TOKEN"] = api_token
 
-    # Two response shapes are documented — some CF Flux endpoints stream
-    # raw bytes, others return {"result": {"image": "<b64>"}}. Handle both.
-    ctype = (r.headers.get("Content-Type") or "").lower()
-    img_bytes: bytes | None = None
-    try:
-        if "image/" in ctype:
-            img_bytes = r.content
-        else:
-            data = r.json()
-            if not (data or {}).get("success", True):
+            url = (
+                f"https://api.cloudflare.com/client/v4/accounts/{account_id}"
+                f"/ai/run/@cf/black-forest-labs/flux-2-klein-9b"
+            )
+            log.debug(f"Cloudflare Flux 2 [klein-9b]: attempt {trial+1} account={label} seed={seed:08x}")
+
+            try:
+                r = requests.post(
+                    url,
+                    headers={"Authorization": f"Bearer {api_token}"},
+                    files=fields,
+                    timeout=45,
+                )
+            except Exception as e:
                 _cf_breaker_record(success=False)
-                log.warning(f"Cloudflare Flux 2 [klein-9b]: API error {data.get('errors')}")
+                log.warning(f"Cloudflare Flux 2 [klein-9b] ({label}) network error: {e}")
                 return None, seed
-            b64 = ((data.get("result") or {}).get("image") or "").strip()
-            if b64:
-                import base64 as _b64
-                img_bytes = _b64.b64decode(b64)
-    except Exception as e:
-        _cf_breaker_record(success=False)
-        log.warning(f"Cloudflare Flux 2 [klein-9b]: response parse failed: {e}")
-        return None, seed
 
-    if not img_bytes or len(img_bytes) < 4096:
-        _cf_breaker_record(success=False)
-        log.warning("Cloudflare Flux 2 [klein-9b]: response empty / too small")
-        return None, seed
+            if r.status_code in (401, 403):
+                _cf_breaker_record(success=False, http_status=r.status_code)
+                log.warning(
+                    f"Cloudflare Flux 2 [klein-9b] ({label}): HTTP {r.status_code} — "
+                    f"auth failure (check the token in CLOUDFLARE_ACCOUNTS_JSON)"
+                )
+                return None, seed
 
-    try:
-        with open(dest, "wb") as f:
-            f.write(img_bytes)
-    except Exception as e:
-        _cf_breaker_record(success=False)
-        log.warning(f"Cloudflare Flux 2 [klein-9b]: write failed: {e}")
-        return None, seed
+            if r.status_code == 429:
+                # CF's 429 on Workers AI means one of:
+                #   (a) the daily free 10k-neuron bucket is exhausted, OR
+                #   (b) a short-lived per-minute rate ceiling.
+                # The response body carries the distinction — "used up
+                # your daily free allocation" → mark burned + rotate;
+                # anything else → treat as a real rate-limit + trip
+                # the breaker as before.
+                body = r.text[:400]
+                if "used up your daily free allocation" in body.lower():
+                    _cf_mark_burned(account_id)
+                    log.warning(
+                        f"Cloudflare account '{label}' burned for today "
+                        f"({len([1 for a in pool if _CF_BURNED_TODAY.get(a['account_id']) != _cf_today_key()])}"
+                        f" of {len(pool)} accounts still viable) — rotating"
+                    )
+                    # Try the next viable account in the pool.
+                    continue
+                # Non-quota 429 (per-minute rate-limit) — trip breaker.
+                _cf_breaker_record(success=False, http_status=429)
+                log.warning(f"Cloudflare Flux 2 [klein-9b] ({label}): HTTP 429 (rate limit) — {body[:120]}")
+                return None, seed
 
-    _cf_breaker_record(success=True)
-    _cf_quota_inc(1)
-    return dest, seed
+            if not r.ok:
+                _cf_breaker_record(success=False)
+                log.warning(f"Cloudflare Flux 2 [klein-9b] ({label}): HTTP {r.status_code} — {r.text[:200]}")
+                return None, seed
+
+            # Success. Parse the response body.
+            ctype = (r.headers.get("Content-Type") or "").lower()
+            img_bytes: bytes | None = None
+            try:
+                if "image/" in ctype:
+                    img_bytes = r.content
+                else:
+                    data = r.json()
+                    if not (data or {}).get("success", True):
+                        _cf_breaker_record(success=False)
+                        log.warning(f"Cloudflare Flux 2 [klein-9b] ({label}): API error {data.get('errors')}")
+                        return None, seed
+                    b64 = ((data.get("result") or {}).get("image") or "").strip()
+                    if b64:
+                        import base64 as _b64
+                        img_bytes = _b64.b64decode(b64)
+            except Exception as e:
+                _cf_breaker_record(success=False)
+                log.warning(f"Cloudflare Flux 2 [klein-9b] ({label}): response parse failed: {e}")
+                return None, seed
+
+            if not img_bytes or len(img_bytes) < 4096:
+                _cf_breaker_record(success=False)
+                log.warning(f"Cloudflare Flux 2 [klein-9b] ({label}): response empty / too small")
+                return None, seed
+
+            try:
+                with open(dest, "wb") as f:
+                    f.write(img_bytes)
+            except Exception as e:
+                _cf_breaker_record(success=False)
+                log.warning(f"Cloudflare Flux 2 [klein-9b] ({label}): write failed: {e}")
+                return None, seed
+
+            _cf_breaker_record(success=True)
+            # _cf_quota_inc reads CLOUDFLARE_ACCOUNT_ID from env — which
+            # we set just above — so per-account daily counters stay
+            # correct without any parameter plumbing.
+            _cf_quota_inc(1)
+            if len(pool) > 1:
+                log.info(f"Cloudflare Flux 2 [klein-9b] ({label}): image generated (seed {seed:08x})")
+            return dest, seed
+
+        # Fell out of the loop — every account in the pool is burned.
+        log.warning(
+            f"Cloudflare Flux 2 [klein-9b]: all {len(pool)} pool account(s) exhausted for today — "
+            f"chain falls through to next provider"
+        )
+        return None, seed
+    finally:
+        # Restore the pre-call env so nothing outside this function
+        # observes the pool's internal account swapping.
+        if _env_acc:
+            os.environ["CLOUDFLARE_ACCOUNT_ID"] = _env_acc
+        else:
+            os.environ.pop("CLOUDFLARE_ACCOUNT_ID", None)
+        if _env_tok:
+            os.environ["CLOUDFLARE_API_TOKEN"] = _env_tok
+        else:
+            os.environ.pop("CLOUDFLARE_API_TOKEN", None)
 
 
 # ── Pollinations circuit breaker ──────────────────────────────
@@ -1489,19 +1624,32 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror"):
             if not os.getenv("HF_TOKEN", "").strip():
                 return False, "no HF_TOKEN"
         if name == "cloudflare":
-            if not (os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip()
-                    and os.getenv("CLOUDFLARE_API_TOKEN", "").strip()):
-                return False, "no CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN"
-            # Daily soft-cap. When today's counter would exceed the cap
-            # if we did another gen, fall through to the next provider.
+            # New: pool-aware readiness. The pool synthesises a single
+            # entry from CLOUDFLARE_ACCOUNT_ID/_API_TOKEN when
+            # CLOUDFLARE_ACCOUNTS_JSON is empty, so this check still
+            # catches the "no CF creds at all" case + covers the new
+            # multi-account path.
+            _pool = _cf_account_pool()
+            if not _pool:
+                return False, "no CLOUDFLARE_ACCOUNTS_JSON / CLOUDFLARE_ACCOUNT_ID+TOKEN"
+            # Every account in the pool marked burned for today? Skip
+            # the tier — there's no point crafting prompts we can't
+            # send. Auto-clears at 00:00 UTC.
+            _today = _cf_today_key()
+            _viable = [a for a in _pool if _CF_BURNED_TODAY.get(a["account_id"]) != _today]
+            if not _viable:
+                return False, f"all {len(_pool)} pool accounts exhausted for today"
+            # Daily soft-cap on the CURRENT single-account counter is
+            # kept for backwards compat with single-account setups. In
+            # multi-account mode the per-account counter only tracks
+            # the first-picked account until it burns and we rotate,
+            # so this check is more of a guardrail than a hard cap.
             _used = _cf_quota_read()
-            if _used >= _CF_DAILY_CAP:
+            if _used >= _CF_DAILY_CAP and len(_viable) == 1:
                 return False, f"daily soft-cap reached ({_used}/{_CF_DAILY_CAP})"
             # If the CF breaker tripped earlier in this render, skip
             # the WHOLE tier rather than paying 5× the "craft prompt →
-            # POST → 429" round-trip. Was burning ~10s per shot
-            # generating prompts for a provider we already knew was
-            # dead.
+            # POST → 429" round-trip.
             if _cf_breaker_skip():
                 wait = int(_CF_OPEN_UNTIL - time.time())
                 return False, f"breaker open ({wait}s remaining)"
