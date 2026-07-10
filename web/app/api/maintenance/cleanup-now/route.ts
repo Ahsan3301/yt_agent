@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb, FieldValue } from "@/lib/firebase-admin";
-import { newRequestId, logRoute, pickWorkers } from "@/app/api/_lib/orchestrator";
+import { newRequestId, logRoute } from "@/app/api/_lib/orchestrator";
 import { verifyOraclePassword, hashOraclePassword } from "@/lib/oracle_password";
+import { deleteVideosByRunIds } from "@/lib/storage-delete";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -130,13 +131,18 @@ export async function POST(req: NextRequest) {
     ts: now,
   };
 
-  // ── runs_index + run_summaries ─────────────────────────────
+  // ── runs_index + run_summaries + capture video ids for storage delete ─
   // Server-side filter (same pattern as errors cleanup below which
   // reliably works). Earlier version used .get() with client-side
   // filter but PB batch delete never actually fired the row deletions
   // in that path — the emulated batch commits individually via
   // fetch() and something in the pagination silently dropped rows.
   // Filtering server-side keeps the request small + explicit.
+  //
+  // The set of run_ids whose videos need deleting from S3 is captured
+  // HERE, before the row is dropped from PB — otherwise the later
+  // storage-delete pass finds nothing to work on.
+  const videoRunIdsToDelete: string[] = [];
   try {
     const snap = await adminDb().collection("runs_index")
       .where("finished_at", "<", cutoff)
@@ -145,6 +151,8 @@ export async function POST(req: NextRequest) {
       .get();
     let n = 0;
     for (const doc of snap.docs) {
+      const d = doc.data() as Record<string, unknown>;
+      if (d.has_video) videoRunIdsToDelete.push(doc.id);
       try {
         await doc.ref.delete();
         // run_summaries mirrors runs_index by id — delete both.
@@ -265,31 +273,25 @@ export async function POST(req: NextRequest) {
     summary.errors.push(`idempotency: ${String(e)}`);
   }
 
-  // ── R2 videos via live worker (fire-and-forget) ────────────
+  // ── Videos (server-side S3 delete — no worker required) ────
+  // Previously fanned out DELETE requests to a live GPU worker's
+  // /api/runs/<id> which was the only place holding S3 creds. The
+  // dashboard container also has them (S3_ENDPOINT_INTERNAL +
+  // S3_ACCESS_KEY_ID etc.), so we call the bucket directly and skip
+  // the worker entirely. Works even when Kaggle + Colab are both
+  // offline. Uses the list captured during the runs_index deletion
+  // pass above (rows are already gone by now).
   try {
-    const workers = await pickWorkers();
-    if (workers.length === 0) {
-      summary.detail.push(`R2 video cleanup skipped — no worker alive`);
-    } else {
-      const snap = await adminDb().collection("runs_index").get();
-      const toDelete: string[] = [];
-      snap.forEach((doc) => {
-        const d = doc.data() as Record<string, unknown>;
-        const fin = _toEpoch(d.finished_at);
-        if (fin != null && fin < cutoff && d.has_video) toDelete.push(doc.id);
-      });
-      summary.videos_requested = toDelete.length;
-      if (toDelete.length > 0) {
-        const w = workers[0];
-        for (const id of toDelete) {
-          fetch(`${w.url.replace(/\/$/, "")}/api/runs/${id}`, {
-            method: "DELETE",
-            headers: { "X-Request-Id": reqId, "X-Vercel-Gateway": "1" },
-          }).catch(() => {});
-        }
-        // Estimate ~15MB per shorts video
-        summary.freed_estimate_mb = toDelete.length * 15;
-        summary.detail.push(`Requested ${toDelete.length} R2 video deletions via worker`);
+    summary.videos_requested = videoRunIdsToDelete.length;
+    if (videoRunIdsToDelete.length > 0) {
+      const res = await deleteVideosByRunIds(videoRunIdsToDelete);
+      summary.freed_estimate_mb = res.freed_mb_estimate;
+      summary.detail.push(
+        `Deleted ${res.deleted} videos from storage (~${res.freed_mb_estimate} MB freed)`
+        + (res.failed > 0 ? `; ${res.failed} delete calls failed` : "")
+      );
+      if (res.errors.length) {
+        summary.errors.push(`video deletes: ${res.errors.join(" | ")}`);
       }
     }
   } catch (e) {

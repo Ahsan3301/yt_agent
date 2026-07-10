@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase-admin";
-import { newRequestId, logRoute, pickWorkers } from "@/app/api/_lib/orchestrator";
+import { newRequestId, logRoute } from "@/app/api/_lib/orchestrator";
 import { requireMaintenanceKey } from "@/app/api/_lib/auth";
+import { deleteVideosByRunIds } from "@/lib/storage-delete";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -167,31 +168,24 @@ export async function POST(req: NextRequest) {
     summary.errors.push(`idempotency cleanup: ${String(e)}`);
   }
 
-  // ── R2 videos (requires a live worker since R2 credentials are
-  //    worker-side). Fan out delete requests; the worker's
-  //    /api/runs/<id> DELETE drops the R2 object too.
+  // ── R2 videos: server-side S3 delete (no worker needed) ────
+  // The dashboard container already has the S3 creds via env, so we
+  // hit the bucket directly instead of asking a live worker to do it.
+  // Works even when Kaggle + Colab are both offline.
   try {
     const cutoff = now - RETENTION_DAYS.videos * 86400;
-    const workers = await pickWorkers();
-    if (workers.length === 0) {
-      summary.errors.push("no worker available for R2 cleanup; will retry tomorrow");
-    } else {
-      const snap = await adminDb().collection("runs_index").get();
-      const toDelete: string[] = [];
-      snap.forEach((doc) => {
-        const d = doc.data() as Record<string, unknown>;
-        const fin = _toEpoch(d.finished_at);
-        if (fin != null && fin < cutoff && d.has_video) toDelete.push(doc.id);
-      });
-      summary.videos_requested = toDelete.length;
-      // Fire-and-forget — don't block the cleanup response.
-      const w = workers[0];
-      for (const id of toDelete) {
-        fetch(`${w.url.replace(/\/$/, "")}/api/runs/${id}`, {
-          method: "DELETE",
-          headers: { "X-Request-Id": reqId, "X-Vercel-Gateway": "1" },
-        }).catch(() => {});
-      }
+    const snap = await adminDb().collection("runs_index").get();
+    const toDelete: string[] = [];
+    snap.forEach((doc) => {
+      const d = doc.data() as Record<string, unknown>;
+      const fin = _toEpoch(d.finished_at);
+      if (fin != null && fin < cutoff && d.has_video) toDelete.push(doc.id);
+    });
+    summary.videos_requested = toDelete.length;
+    if (toDelete.length > 0) {
+      const res = await deleteVideosByRunIds(toDelete);
+      logRoute(reqId, "cleanup: server-side video delete",
+        { deleted: res.deleted, failed: res.failed });
     }
   } catch (e) {
     summary.errors.push(`videos cleanup: ${String(e)}`);
