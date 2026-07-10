@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
-  BarChart3, Trash2, Lock, KeyRound, Youtube, Sparkles, Wand2,
+  BarChart3, Trash2, Lock, KeyRound, Video, Sparkles,
   AlertTriangle, CheckCircle2, XCircle, RefreshCw, Filter,
   Calendar, Layers, ExternalLink, Loader2, ShieldAlert,
 } from "lucide-react";
@@ -118,7 +118,7 @@ export default function ReportsPage() {
           <StatTile label="Total jobs"      value={data.totals.jobs}            icon={BarChart3}    accent="text-accent" />
           <StatTile label="Completed"       value={data.totals.complete}        icon={CheckCircle2} accent="text-emerald-400" />
           <StatTile label="Failed"          value={data.totals.failed}          icon={XCircle}      accent="text-red-400" />
-          <StatTile label="Videos published"value={data.totals.videos}          icon={Youtube}      accent="text-red-300" />
+          <StatTile label="Videos published"value={data.totals.videos}          icon={Video}      accent="text-red-300" />
           <StatTile label="Errors (24 h)"   value={data.totals.errors_last_24h} icon={ShieldAlert}  accent="text-amber-300" />
         </div>
       )}
@@ -167,7 +167,7 @@ export default function ReportsPage() {
         <div className="card space-y-3">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-sm font-medium">
-              <Youtube className="h-4 w-4 text-red-400" /> Published videos
+              <Video className="h-4 w-4 text-red-400" /> Published videos
               <span className="text-xs text-neutral-500">({data.videos.length})</span>
             </div>
           </div>
@@ -189,7 +189,7 @@ export default function ReportsPage() {
                   {v.youtube_url && (
                     <a href={v.youtube_url} target="_blank" rel="noreferrer"
                        className="btn btn-ghost h-6 text-[10px]" title="Open on YouTube">
-                      <Youtube className="h-3 w-3 text-red-400" /> YouTube
+                      <Video className="h-3 w-3 text-red-400" /> YouTube
                     </a>
                   )}
                   {v.video_url && v.video_url !== v.youtube_url && (
