@@ -417,6 +417,22 @@ def handle(job: dict) -> None:
         ok, msg = False, f"dispatch crashed: {e}"
         log.exception(msg)
 
+    # Belt-and-suspenders disk cleanup — finalize_run() above REFUSES
+    # to delete on !published, which means every cancelled / failed /
+    # crashed render leaked its work_dir forever (SDXL frames, TTS
+    # wavs, per-shot mp4s, final_video.mp4 all accumulating). Force
+    # it here regardless of terminal state; if finalize_run already
+    # ran cleanly on the happy path, this is a no-op.
+    if not ok:
+        try:
+            from modules import run_state as _rs2
+            from backend import housekeeping as _hk2
+            _rid = (_rs2.read() or {}).get("run_id") or job.get("run_id") or ""
+            if _rid:
+                _hk2.force_cleanup(f"output/videos/{_rid}", reason="run failed/cancelled")
+        except Exception as _e2:
+            log.warning(f"force_cleanup failed: {_e2}")
+
     _update_job(job_id, {
         "status": "complete" if ok else "failed",
         "error": "" if ok else msg,

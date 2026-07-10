@@ -145,3 +145,36 @@ def finalize_run(
         log.warning(f"housekeeping: rmtree({work_dir}) failed: {e}")
 
     return result
+
+
+def force_cleanup(work_dir: str, *, reason: str = "cancelled") -> dict:
+    """Unconditionally rmtree the work_dir. No R2 mirror, no guards.
+
+    Used on cancelled / failed / crashed runs where the video is
+    worthless and we just want the disk back. The disk-safety guards
+    in finalize_run() explicitly refuse to delete on !published, so
+    those runs used to leak forever — this is the escape hatch.
+    """
+    out = {"cleaned": False, "freed_mb": 0.0, "reason": reason}
+    if not work_dir or not os.path.isdir(work_dir):
+        out["skipped_reason"] = f"work_dir missing: {work_dir!r}"
+        return out
+    freed = 0
+    try:
+        for root, _dirs, files in os.walk(work_dir):
+            for f in files:
+                try: freed += os.path.getsize(os.path.join(root, f))
+                except OSError: pass
+    except OSError:
+        pass
+    out["freed_mb"] = round(freed / (1024 * 1024), 1)
+    try:
+        shutil.rmtree(work_dir, ignore_errors=True)
+        if not os.path.isdir(work_dir):
+            out["cleaned"] = True
+            log.info(f"housekeeping: force-cleaned {work_dir} (~{out['freed_mb']} MB freed) — {reason}")
+        else:
+            log.warning(f"housekeeping: force rmtree({work_dir}) left the dir behind")
+    except Exception as e:
+        log.warning(f"housekeeping: force rmtree({work_dir}) failed: {e}")
+    return out

@@ -208,7 +208,26 @@ def run_ffmpeg(args, desc="ffmpeg", cwd=None):
     with _active_lock:
         _active_proc = proc
     try:
-        stdout, stderr = proc.communicate()
+        # Poll for cancel every 1s while ffmpeg runs. Without this
+        # loop, communicate() blocks until the encode finishes —
+        # meaning a Cancel from the dashboard is invisible to the
+        # subprocess and it keeps burning CPU for minutes.
+        import time as _t
+        while True:
+            try:
+                stdout, stderr = proc.communicate(timeout=1.0)
+                break
+            except subprocess.TimeoutExpired:
+                if run_state.cancellation_requested():
+                    log.info(f"ffmpeg [{desc}] cancel requested — terminating pid={proc.pid}")
+                    try: proc.terminate()
+                    except Exception: pass
+                    try: proc.wait(timeout=3)
+                    except Exception:
+                        try: proc.kill()
+                        except Exception: pass
+                    stdout, stderr = "", ""
+                    break
     finally:
         with _active_lock:
             if _active_proc is proc:
