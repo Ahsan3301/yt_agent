@@ -69,9 +69,44 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "invalid password" }, { status: 401 });
   }
 
+  // days=N means "delete anything finished more than N days ago" —
+  // i.e. "N days AND OLDER", not "exactly N days old". A row that
+  // finished 24h+ ago is deleted when days=1.
   const days = Math.max(0, Math.min(365, Number(body.days) || 1));
   const now = Date.now() / 1000;
   const cutoff = now - days * 86400;
+
+  // Snapshot the pre-cleanup totals so /reports can display historical
+  // numbers even after the source rows are gone. Belt-and-braces: this
+  // gets stashed into the cleanup_runs record at the end so it survives
+  // every future cleanup (cleanup_runs itself is never auto-deleted —
+  // see the top-of-file docstring + the deliberate absence from every
+  // delete loop below).
+  let preSnapshot = {
+    jobs_total: 0,
+    jobs_complete: 0,
+    jobs_failed: 0,
+    videos_total: 0,
+    errors_total: 0,
+  };
+  try {
+    const [jobsSnap, runsSnap, errorsSnap] = await Promise.all([
+      adminDb().collection("jobs").get(),
+      adminDb().collection("runs_index").get(),
+      adminDb().collection("errors").get(),
+    ]);
+    preSnapshot.jobs_total = jobsSnap.size;
+    jobsSnap.forEach((doc) => {
+      const st = String((doc.data() as { status?: string }).status || "");
+      if (st === "complete") preSnapshot.jobs_complete += 1;
+      else if (st === "failed") preSnapshot.jobs_failed += 1;
+    });
+    runsSnap.forEach((doc) => {
+      const d = doc.data() as { has_video?: boolean };
+      if (d.has_video) preSnapshot.videos_total += 1;
+    });
+    preSnapshot.errors_total = errorsSnap.size;
+  } catch { /* soft-fail; snapshot is best-effort */ }
 
   const summary: CleanupSummary = {
     req_id: reqId,
@@ -226,7 +261,11 @@ export async function POST(req: NextRequest) {
     summary.errors.push(`videos: ${String(e)}`);
   }
 
-  // ── Persist the cleanup summary for /reports history ───────
+  // ── Persist the cleanup summary + pre-cleanup snapshot ─────
+  // cleanup_runs is retained FOREVER — deliberately excluded from
+  // every delete loop above so the operator can audit what happened
+  // months / years later. `pre_snapshot` lets /reports show the
+  // historical picture even after the source rows are pruned.
   try {
     await adminDb().collection("cleanup_runs").add({
       ts: now,
@@ -243,6 +282,7 @@ export async function POST(req: NextRequest) {
       freed_estimate_mb: summary.freed_estimate_mb,
       detail: summary.detail,
       errors: summary.errors,
+      pre_snapshot: preSnapshot,
       created_at: FieldValue.serverTimestamp(),
     });
   } catch (e) {

@@ -152,6 +152,7 @@ export async function GET(req: NextRequest) {
         freed_estimate_mb: Number(d.freed_estimate_mb ?? 0),
         detail: Array.isArray(d.detail) ? d.detail : [],
         errors: Array.isArray(d.errors) ? d.errors : [],
+        pre_snapshot: typeof d.pre_snapshot === "object" ? d.pre_snapshot : null,
       });
     });
   } catch { /* soft-fail */ }

@@ -43,6 +43,10 @@ migrate((app) => {
       { name: "freed_estimate_mb",     type: "number" },
       { name: "detail",                type: "json",   maxSize: 20000 },
       { name: "errors",                type: "json",   maxSize: 20000 },
+      // Snapshot of jobs/videos/errors totals BEFORE this cleanup ran.
+      // Kept forever alongside the run so /reports can show historical
+      // aggregates even after the source rows were pruned.
+      { name: "pre_snapshot",          type: "json",   maxSize: 4000 },
       { name: "created_at",            type: "autodate", onCreate: true },
     ],
     indexes: ["CREATE INDEX idx_cleanup_runs_ts ON cleanup_runs (ts)"],

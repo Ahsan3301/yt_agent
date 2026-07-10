@@ -16,7 +16,7 @@ type ReportData = {
   top_channels: Array<{ channel: string; count: number; published: number; failed: number }>;
   videos: Array<{ id: string; run_id: string; channel: string; video_url: string | null; youtube_url: string | null; title: string; ok: boolean; finished_at: number; video_storage: string }>;
   errors_recent: Array<{ id: string; ts: number; kind: string; message: string; run_id: string; worker: string }>;
-  cleanup_runs: Array<{ id: string; ts: number; triggered_by: string; days: number; jobs_deleted: number; runs_deleted: number; videos_requested: number; errors_deleted: number; orphan_queued_failed: number; idempotency_deleted: number; freed_estimate_mb: number; detail: string[]; errors: string[] }>;
+  cleanup_runs: Array<{ id: string; ts: number; triggered_by: string; days: number; jobs_deleted: number; runs_deleted: number; videos_requested: number; errors_deleted: number; orphan_queued_failed: number; idempotency_deleted: number; freed_estimate_mb: number; detail: string[]; errors: string[]; pre_snapshot: { jobs_total?: number; jobs_complete?: number; jobs_failed?: number; videos_total?: number; errors_total?: number } | null }>;
 };
 
 const STATUS_OPTIONS = ["", "complete", "failed", "cancelled", "running", "queued"];
@@ -366,10 +366,15 @@ function CleanupPanel({ onDone, recent }: {
       {mode === "run" && (
         <div className="space-y-3">
           <p className="text-[11px] text-neutral-500">
-            Deletes failed/complete jobs, runs, error-log entries, and requests
-            R2 video deletion for anything older than the threshold. Orphan
-            queued jobs (&gt;2 h with no worker) are always failed regardless
-            of the day setting.
+            Deletes failed / complete jobs, runs, error-log entries, and
+            requests R2 video deletion for anything <b>finished more than
+            N days ago</b> (i.e. the age slider is inclusive: 1 = "1 day
+            and older"). Orphan queued jobs (&gt;2 h with no worker) are
+            always failed regardless of the day setting.
+            <br />
+            <b>Cleanup history is never deleted</b> — every past run and its
+            pre-cleanup snapshot are kept forever so this page can still
+            show historical numbers even after the underlying rows are gone.
           </p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
@@ -482,6 +487,14 @@ function CleanupPanel({ onDone, recent }: {
                   {" "}{c.videos_requested} videos · ~{c.freed_estimate_mb} MB freed
                   {c.orphan_queued_failed > 0 && ` · ${c.orphan_queued_failed} orphan-queued`}
                 </div>
+                {c.pre_snapshot && (
+                  <div className="text-[10px] text-neutral-500 mt-0.5">
+                    Pre-cleanup snapshot: {c.pre_snapshot.jobs_total ?? 0} jobs
+                    {" "}({c.pre_snapshot.jobs_complete ?? 0} complete, {c.pre_snapshot.jobs_failed ?? 0} failed)
+                    {" · "}{c.pre_snapshot.videos_total ?? 0} videos
+                    {" · "}{c.pre_snapshot.errors_total ?? 0} errors
+                  </div>
+                )}
                 {(c.errors || []).length > 0 && (
                   <div className="text-[10px] text-red-300 mt-0.5">
                     Errors: {(c.errors || []).join("; ")}
