@@ -46,8 +46,13 @@ async function _getCleanupPasswordHash(): Promise<string | null> {
   try {
     const doc = await adminDb().collection("settings").doc("cleanup_password").get();
     if (!doc.exists) return null;
-    const d = doc.data() as { hash?: string } | undefined;
-    return d?.hash || null;
+    // PB settings schema is {id, data (json), updated_at} — the hash
+    // lives inside `data` since PB drops any top-level fields not in
+    // the collection schema. Firestore path (if ever used) would still
+    // work because it accepts arbitrary top-level fields, but we
+    // normalise on `.data.hash` everywhere.
+    const d = doc.data() as { data?: { hash?: string }; hash?: string } | undefined;
+    return d?.data?.hash || d?.hash || null;
   } catch { return null; }
 }
 
@@ -350,8 +355,11 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: "password must be at least 4 characters" }, { status: 400 });
   }
   try {
+    // Nest inside `data` so it lands in the existing PB JSON column
+    // (see _getCleanupPasswordHash — top-level fields not in the
+    // schema get silently dropped by PB).
     await adminDb().collection("settings").doc("cleanup_password").set({
-      hash: hashOraclePassword(newP),
+      data: { hash: hashOraclePassword(newP) },
       updated_at: FieldValue.serverTimestamp(),
     });
     return NextResponse.json({ ok: true, has_password: true });
