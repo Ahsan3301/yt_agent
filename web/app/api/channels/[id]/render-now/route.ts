@@ -94,6 +94,12 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         youtube_account_id: yt,
         unbound: !yt,
         source_channel_name: String(c.name || id),
+        allowed_workers: Array.isArray(c.allowed_workers)
+          ? (c.allowed_workers as unknown[]).filter((x): x is string => typeof x === "string")
+          : [],
+        oracle_password_hash: (typeof c.oracle_password_hash === "string" && c.oracle_password_hash)
+          ? String(c.oracle_password_hash)
+          : null,
         updated_at: FieldValue.serverTimestamp(),
       };
       await adminDb().collection("jobs").doc(jobId).set(job);

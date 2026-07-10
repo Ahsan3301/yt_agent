@@ -365,11 +365,28 @@ def _claim_outbound() -> dict | None:
         return None
     import requests
     try:
+        # Canonical label for per-channel worker allowlisting on the
+        # dashboard side. Kept as the free-form INSTANCE_LABEL too so
+        # older UI keeps working; the claim endpoint infers "kaggle"
+        # / "colab" / "oracle" from either.
+        _il = (os.getenv("INSTANCE_LABEL") or "").lower()
+        if "kaggle" in _il:      _canon = "kaggle"
+        elif "colab" in _il:     _canon = "colab"
+        elif "oracle" in _il:    _canon = "oracle"
+        elif INSTANCE_TIER == "dashboard": _canon = "oracle"
+        else: _canon = ""
+        # Shared Oracle unlock password — only sent by the Oracle side-
+        # worker. Kaggle/Colab never see it, so a compromise there can't
+        # leak the unlock. Compared against each channel's stored hash
+        # server-side.
+        _oracle_pw = os.getenv("ORACLE_UNLOCK_PASSWORD", "") if _canon == "oracle" else ""
         r = requests.post(
             f"{COOLIFY_BASE_URL}/api/jobs/claim",
             json={
                 "instance_id": INSTANCE_ID,
+                "instance_label": _canon,
                 "tier": INSTANCE_TIER,
+                "oracle_password": _oracle_pw,
             },
             headers={"X-API-Key": RENDER_TRIGGER_KEY},
             timeout=10,

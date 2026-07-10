@@ -6,6 +6,7 @@ import clsx from "clsx";
 import {
   Layers, Plus, Trash2, Globe, Loader2, Save, X as XIcon,
   PauseCircle, PlayCircle, Edit3, Wand2, Tv, Link2, AlertTriangle,
+  ArrowUp, ArrowDown, Server, Cpu, Cloud, Lock, KeyRound,
 } from "lucide-react";
 import { PRESET_CHANNELS } from "@/lib/channels";
 import { useToast } from "@/components/Toast";
@@ -44,6 +45,20 @@ type Channel = {
   privacy?: "public" | "unlisted" | "private" | null;
   // Per-channel Discord webhook. Null → use global DISCORD_WEBHOOK_URL.
   discord_webhook?: string | null;
+  // Ordered priority list of workers this channel is allowed to use.
+  // e.g. ["kaggle","colab","oracle"] = try Kaggle first, then Colab,
+  // then Oracle. Empty/missing = server default (kaggle+colab, no Oracle).
+  allowed_workers?: string[];
+  // Server-projected boolean. The hash itself is NEVER sent to the client
+  // (write-only field). UI shows "set / clear / replace" based on this.
+  has_oracle_password?: boolean;
+};
+
+type WorkerKey = "kaggle" | "colab" | "oracle";
+const WORKER_META: Record<WorkerKey, { label: string; icon: typeof Server; note: string }> = {
+  kaggle: { label: "Kaggle (T4×2 GPU)",  icon: Server, note: "30 GPU-hr/week limit" },
+  colab:  { label: "Colab (T4 GPU)",     icon: Cloud,  note: "~12hr/day limit" },
+  oracle: { label: "Oracle (CPU only)",  icon: Cpu,    note: "always on · no GPU · password-gated" },
 };
 
 const TONE_OPTIONS = [
@@ -518,9 +533,63 @@ function ChannelForm({
   );
   const [discordWebhook, setDiscordWebhook] = useState<string>(initial?.discord_webhook || "");
 
+  // Worker priority — ordered list of enabled workers. UI: chips w/ up/down
+  // + toggle. Absent = disabled. Empty (all off) is legal but useless.
+  const _initialWorkers = (): WorkerKey[] => {
+    const raw = initial?.allowed_workers;
+    if (!Array.isArray(raw) || raw.length === 0) {
+      // Default: kaggle → colab, Oracle OFF (needs password).
+      return ["kaggle", "colab"];
+    }
+    return raw.filter((w): w is WorkerKey =>
+      w === "kaggle" || w === "colab" || w === "oracle"
+    );
+  };
+  const [workers, setWorkers] = useState<WorkerKey[]>(_initialWorkers());
+
+  const hasOraclePassword = !!initial?.has_oracle_password;
+  // "keep" = don't touch existing hash (default when editing).
+  // "set" = replace/create with `oraclePasswordInput`.
+  // "clear" = delete the hash server-side.
+  const [oraclePasswordAction, setOraclePasswordAction] = useState<"keep" | "set" | "clear">("keep");
+  const [oraclePasswordInput, setOraclePasswordInput] = useState<string>("");
+
+  const _toggleWorker = (w: WorkerKey) => {
+    setWorkers((prev) =>
+      prev.includes(w)
+        ? prev.filter((x) => x !== w)
+        : [...prev, w]
+    );
+  };
+  const _moveWorker = (w: WorkerKey, dir: -1 | 1) => {
+    setWorkers((prev) => {
+      const i = prev.indexOf(w);
+      if (i < 0) return prev;
+      const j = i + dir;
+      if (j < 0 || j >= prev.length) return prev;
+      const next = [...prev];
+      [next[i], next[j]] = [next[j], next[i]];
+      return next;
+    });
+  };
+
+  const oracleEnabled = workers.includes("oracle");
+
   const submit = () => {
     if (!name.trim()) return;
-    onSave({
+    // Oracle guardrail: if Oracle is in the priority list AND there's
+    // no existing password AND the user isn't setting one now, block
+    // the save with a toast. Otherwise the channel would silently be
+    // unable to claim on Oracle.
+    if (oracleEnabled && !hasOraclePassword && oraclePasswordAction !== "set") {
+      // Nudge via alert — Toast is scoped to the parent; simpler here.
+      alert(
+        "Oracle worker requires a password. " +
+        "Set an Oracle unlock password below (or remove Oracle from the priority list)."
+      );
+      return;
+    }
+    const payload: Channel & { oracle_password?: string; oracle_password_action?: "set" | "clear" } = {
       id: initial?.id || "",
       name: name.trim(),
       niche: niche.trim() || "horror",
@@ -540,7 +609,15 @@ function ChannelForm({
       tone: tone.trim() || null,
       privacy: privacy || null,
       discord_webhook: discordWebhook.trim() || null,
-    });
+      allowed_workers: workers,
+    };
+    if (oraclePasswordAction === "set" && oraclePasswordInput.trim().length >= 4) {
+      payload.oracle_password_action = "set";
+      payload.oracle_password = oraclePasswordInput.trim();
+    } else if (oraclePasswordAction === "clear") {
+      payload.oracle_password_action = "clear";
+    }
+    onSave(payload);
   };
 
   return (
@@ -823,6 +900,153 @@ function ChannelForm({
           Connect as many YouTube accounts as you want — pick a different
           one per channel.
         </div>
+      </div>
+
+      {/* Worker priority + Oracle unlock. Above the enabled toggle so it's
+          impossible to save with Oracle-in-priority and no password. */}
+      <div className="space-y-3 rounded-lg border border-line bg-bg-2 p-3">
+        <div className="flex items-center gap-2">
+          <Server className="h-4 w-4 text-accent" />
+          <div className="font-medium text-sm">Render workers · priority</div>
+        </div>
+        <p className="text-[10px] text-neutral-500 -mt-1">
+          The pipeline tries workers top-to-bottom until one accepts the job.
+          Toggle a worker off to forbid it entirely. Oracle needs a password
+          per channel and skips GPU-only steps (SDXL local).
+        </p>
+        <div className="space-y-1.5">
+          {/* Enabled ones (in priority order) then disabled ones. */}
+          {(() => {
+            const enabledOrdered = workers;
+            const disabled = (["kaggle","colab","oracle"] as WorkerKey[])
+              .filter((w) => !enabledOrdered.includes(w));
+            return [...enabledOrdered, ...disabled].map((w) => {
+              const meta = WORKER_META[w];
+              const isEnabled = enabledOrdered.includes(w);
+              const rank = enabledOrdered.indexOf(w);
+              const Icon = meta.icon;
+              return (
+                <div
+                  key={w}
+                  className={clsx(
+                    "flex items-center gap-2 rounded-md border px-2.5 py-1.5",
+                    isEnabled ? "border-accent/30 bg-accent/5" : "border-line bg-bg opacity-60"
+                  )}
+                >
+                  <input
+                    type="checkbox"
+                    className="accent-accent"
+                    checked={isEnabled}
+                    onChange={() => _toggleWorker(w)}
+                    title={isEnabled ? "Disable this worker for this channel" : "Enable this worker"}
+                  />
+                  <Icon className="h-3.5 w-3.5 text-neutral-400" />
+                  <div className="text-xs font-medium">{meta.label}</div>
+                  <div className="text-[10px] text-neutral-500 ml-1">· {meta.note}</div>
+                  <div className="flex-1" />
+                  {isEnabled && (
+                    <>
+                      <span className="text-[10px] text-neutral-500">
+                        priority #{rank + 1}
+                      </span>
+                      <button
+                        type="button"
+                        className="btn btn-ghost h-6 text-[10px] px-1.5"
+                        disabled={rank <= 0}
+                        onClick={() => _moveWorker(w, -1)}
+                        title="Higher priority"
+                      >
+                        <ArrowUp className="h-3 w-3" />
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-ghost h-6 text-[10px] px-1.5"
+                        disabled={rank < 0 || rank >= enabledOrdered.length - 1}
+                        onClick={() => _moveWorker(w, 1)}
+                        title="Lower priority"
+                      >
+                        <ArrowDown className="h-3 w-3" />
+                      </button>
+                    </>
+                  )}
+                </div>
+              );
+            });
+          })()}
+        </div>
+
+        {oracleEnabled && (
+          <div className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-2.5 space-y-2">
+            <div className="flex items-center gap-1.5 text-xs font-medium text-amber-200">
+              <Lock className="h-3.5 w-3.5" />
+              Oracle unlock password
+              {hasOraclePassword && oraclePasswordAction !== "clear" && (
+                <span className="pill text-[9px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 ml-1">
+                  set
+                </span>
+              )}
+              {oraclePasswordAction === "clear" && (
+                <span className="pill text-[9px] bg-red-500/20 text-red-300 border border-red-500/40 ml-1">
+                  will be cleared
+                </span>
+              )}
+            </div>
+            <p className="text-[10px] text-neutral-500">
+              The Oracle worker only claims a job when the channel&apos;s stored
+              password hash verifies against the shared Oracle unlock password.
+              The password is <b>never displayed</b> once set — you can only
+              replace or clear it.
+            </p>
+            {oraclePasswordAction === "keep" ? (
+              <div className="flex flex-wrap gap-1.5">
+                <button
+                  type="button"
+                  className="btn btn-primary h-7 text-xs"
+                  onClick={() => { setOraclePasswordAction("set"); setOraclePasswordInput(""); }}
+                >
+                  <KeyRound className="h-3 w-3" /> {hasOraclePassword ? "Replace password" : "Set password"}
+                </button>
+                {hasOraclePassword && (
+                  <button
+                    type="button"
+                    className="btn btn-ghost h-7 text-xs text-red-300 hover:text-red-200"
+                    onClick={() => setOraclePasswordAction("clear")}
+                  >
+                    <XIcon className="h-3 w-3" /> Clear password
+                  </button>
+                )}
+              </div>
+            ) : oraclePasswordAction === "set" ? (
+              <div className="flex flex-wrap gap-1.5 items-center">
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  className="input flex-1 min-w-[180px]"
+                  placeholder="Enter Oracle unlock password (4+ chars)"
+                  value={oraclePasswordInput}
+                  onChange={(e) => setOraclePasswordInput(e.target.value)}
+                />
+                <button
+                  type="button"
+                  className="btn btn-ghost h-7 text-xs"
+                  onClick={() => { setOraclePasswordAction("keep"); setOraclePasswordInput(""); }}
+                >
+                  <XIcon className="h-3 w-3" /> Cancel
+                </button>
+              </div>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                <button
+                  type="button"
+                  className="btn btn-ghost h-7 text-xs"
+                  onClick={() => setOraclePasswordAction("keep")}
+                >
+                  <XIcon className="h-3 w-3" /> Cancel clear
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <label className="flex items-center gap-2 text-sm cursor-pointer">

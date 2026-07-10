@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb, FieldValue } from "@/lib/firebase-admin";
+import { hashOraclePassword } from "@/lib/oracle_password";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -10,19 +11,15 @@ export const runtime = "nodejs";
  * One Firestore doc per channel:
  *   channels/<channel_id> {
  *     id, name, niche, daily_count, enabled, created_at, updated_at,
- *     description, web_research, last_run_at, last_run_status
+ *     description, web_research, last_run_at, last_run_status,
+ *     allowed_workers[], oracle_password_hash
  *   }
- *
- * niche = one of modules/channels.py preset slugs OR a free-form
- *         custom name (the worker synthesises a preset on the fly).
- *
- * daily_count = how many videos this channel publishes per day when
- *               the scheduler tick fires. 0 = paused.
- *
- * The scheduled-render workflow iterates this collection instead of
- * the old schedules/default doc — each channel queues its own jobs
- * with its niche + daily_count.
  */
+
+// Canonical worker labels. UI + claim filter agree on these three.
+// Priority = the order in allowed_workers[]. Absence = disabled.
+export const WORKER_LABELS = ["kaggle", "colab", "oracle"] as const;
+export type WorkerLabel = (typeof WORKER_LABELS)[number];
 
 type ChannelDoc = {
   id?: string;
@@ -33,30 +30,49 @@ type ChannelDoc = {
   enabled: boolean;
   description?: string;
   web_research?: boolean | null;
-  // Real-events research mode (per-channel default). Same tri-state
-  // as web_research — null = use niche default (currently always false).
   real_events?: boolean | null;
-  // ISO-2 script language. Default "en".
   language?: string;
-  // Voice override — empty / null = niche default for that language.
   voice?: string | null;
-  // The YouTube channel id this dashboard channel uploads to. Null /
-  // unset = use whichever YouTube account is the legacy default.
   youtube_account_id?: string | null;
-  // Per-channel tone override. Overrides the niche preset's tone JUST
-  // for this channel — otherwise the global settings tone bleeds
-  // across every niche.
   tone?: string | null;
-  // Per-channel YouTube privacy override — public/unlisted/private.
-  // Null = use settings.upload.privacy (global default).
   privacy?: "public" | "unlisted" | "private" | null;
-  // Per-channel Discord webhook — overrides the global one so each
-  // dashboard channel can post to a different Discord server/channel.
-  // Null = use the global DISCORD_WEBHOOK_URL.
   discord_webhook?: string | null;
+  // Ordered priority list of workers this channel is allowed to use.
+  // e.g. ["kaggle","colab","oracle"] = try Kaggle first, then Colab,
+  // then Oracle. [] or missing = default (kaggle+colab, no Oracle).
+  allowed_workers?: string[];
+  // Write-only Oracle unlock. Body may send:
+  //   { oracle_password_action: "set", oracle_password: "<plain>" }  → hash + store
+  //   { oracle_password_action: "clear" }                            → delete hash
+  //   (neither)                                                       → leave existing hash alone
+  oracle_password_action?: "set" | "clear";
+  oracle_password?: string;
 };
 
-/** GET /api/channels — list all channels. */
+// Strip sensitive fields before returning to the client. Also
+// projects a `has_oracle_password` boolean so the UI can render
+// "Password set — clear/replace" without ever seeing the hash.
+function _publicView(d: Record<string, unknown>): Record<string, unknown> {
+  const { oracle_password_hash, ...rest } = d as { oracle_password_hash?: string };
+  return { ...rest, has_oracle_password: Boolean(oracle_password_hash) };
+}
+
+function _sanitizeAllowedWorkers(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of v) {
+    if (typeof item !== "string") continue;
+    const s = item.trim().toLowerCase();
+    if (!(WORKER_LABELS as readonly string[]).includes(s)) continue;
+    if (seen.has(s)) continue;
+    seen.add(s);
+    out.push(s);
+  }
+  return out;
+}
+
+/** GET /api/channels — list all channels. Sensitive fields stripped. */
 export async function GET() {
   try {
     const snap = await adminDb()
@@ -67,7 +83,7 @@ export async function GET() {
     const out: unknown[] = [];
     snap.forEach((doc) => {
       const d = doc.data();
-      out.push({ id: doc.id, ...d });
+      out.push(_publicView({ id: doc.id, ...d }));
     });
     return NextResponse.json(out);
   } catch (e) {
@@ -77,9 +93,7 @@ export async function GET() {
 
 /**
  * POST /api/channels — create OR update (upsert by id).
- *
- * Body: { id?, name, niche, daily_count, enabled, description?, web_research? }
- * If id is missing, generates a slug from name.
+ * Oracle password is write-only and never returned.
  */
 export async function POST(req: NextRequest) {
   try {
@@ -95,6 +109,24 @@ export async function POST(req: NextRequest) {
 
     const ref = adminDb().collection("channels").doc(id);
     const existing = await ref.get();
+
+    // Oracle password action: set / clear / leave-alone. The client
+    // NEVER receives the hash back — that's why the UI supports add
+    // and replace but not view.
+    let passwordPatch: Record<string, unknown> = {};
+    if (body.oracle_password_action === "clear") {
+      passwordPatch = { oracle_password_hash: FieldValue.delete() };
+    } else if (body.oracle_password_action === "set") {
+      const p = (body.oracle_password || "").trim();
+      if (p.length < 4) {
+        return NextResponse.json(
+          { error: "oracle_password must be at least 4 characters" },
+          { status: 400 }
+        );
+      }
+      passwordPatch = { oracle_password_hash: hashOraclePassword(p) };
+    }
+
     const payload = {
       id,
       name:        body.name.trim().slice(0, 80),
@@ -117,35 +149,37 @@ export async function POST(req: NextRequest) {
       youtube_account_id: (typeof body.youtube_account_id === "string" && body.youtube_account_id.trim())
         ? body.youtube_account_id.trim().slice(0, 80)
         : null,
-      // Optional UTC hour (0-23) at which the daily schedule fires for
-      // this channel. null → the legacy default (09:00 UTC). Combined
-      // with an hourly cron the operator gets per-channel timing.
       run_at_hour:
         (typeof body.run_at_hour === "number" && Number.isFinite(body.run_at_hour) &&
          body.run_at_hour >= 0 && body.run_at_hour <= 23)
           ? Math.floor(body.run_at_hour)
           : null,
-      // Per-channel tone override (free-form string; empty/null = niche default).
       tone: (typeof body.tone === "string" && body.tone.trim())
         ? body.tone.trim().slice(0, 40)
         : null,
-      // Per-channel YouTube privacy — must be one of the three
-      // allowed values or null (= use global settings.upload.privacy).
       privacy: (body.privacy === "public" || body.privacy === "unlisted" || body.privacy === "private")
         ? body.privacy
         : null,
-      // Per-channel Discord webhook. Must look like a Discord URL to
-      // save; empty string → null (use global default).
       discord_webhook: (typeof body.discord_webhook === "string" &&
                         body.discord_webhook.trim() &&
                         /^https?:\/\/(discord|canary\.discord|ptb\.discord)\.com\/api\/webhooks\//.test(body.discord_webhook.trim()))
         ? body.discord_webhook.trim().slice(0, 300)
         : null,
+      // Ordered priority list; empty = fall back to defaults at claim time.
+      allowed_workers: _sanitizeAllowedWorkers(body.allowed_workers),
+      ...passwordPatch,
       updated_at: FieldValue.serverTimestamp(),
       ...(existing.exists ? {} : { created_at: FieldValue.serverTimestamp() }),
     };
     await ref.set(payload, { merge: true });
-    return NextResponse.json({ ok: true, ...payload });
+    // Return the sanitized public view so the client sees
+    // has_oracle_password: bool but never the hash itself.
+    const { oracle_password_hash: _drop, ...cleanPayload } = payload as Record<string, unknown>;
+    void _drop;
+    return NextResponse.json({
+      ok: true,
+      ..._publicView(cleanPayload),
+    });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }

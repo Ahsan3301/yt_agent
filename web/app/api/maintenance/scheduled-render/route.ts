@@ -97,6 +97,8 @@ export async function POST(req: NextRequest) {
       privacy: "public" | "unlisted" | "private" | null;
       youtube_account_id: string | null;
       unbound: boolean;
+      allowed_workers: string[];
+      oracle_password_hash: string | null;
     }> = [];
     // Build a niche→binding lookup so the legacy fallback path (below)
     // can inherit a YouTube account from the channels row of the same
@@ -125,6 +127,12 @@ export async function POST(req: NextRequest) {
           ? Math.floor(c.run_at_hour as number)
           : DEFAULT_HOUR;
         if (!forceAll && channelHour !== nowHour) return;
+        const allowedWorkers = Array.isArray(c.allowed_workers)
+          ? (c.allowed_workers as unknown[]).filter((x): x is string => typeof x === "string")
+          : [];
+        const oraclePwHash = (typeof c.oracle_password_hash === "string" && c.oracle_password_hash)
+          ? String(c.oracle_password_hash)
+          : null;
         for (let i = 0; i < count; i++) {
           channelMeta.push({
             niche,
@@ -141,6 +149,8 @@ export async function POST(req: NextRequest) {
             privacy:  (c.privacy === "public" || c.privacy === "unlisted" || c.privacy === "private") ? c.privacy : null,
             youtube_account_id: yt,
             unbound: !yt,
+            allowed_workers: allowedWorkers,
+            oracle_password_hash: oraclePwHash,
           });
         }
         targets[niche] = (targets[niche] || 0) + count;
@@ -167,6 +177,8 @@ export async function POST(req: NextRequest) {
             tone: null, privacy: null,
             youtube_account_id: inherited,
             unbound: !inherited,
+            allowed_workers: [],
+            oracle_password_hash: null,
           });
         }
         if (n > 0) targets[niche] = (targets[niche] || 0) + n;
@@ -264,6 +276,10 @@ export async function POST(req: NextRequest) {
         // Track which dashboard-channel this job belongs to so the
         // /queue page can group jobs by channel later.
         source_channel_name: slot.channel_name,
+        // Per-channel worker priority list + Oracle unlock hash.
+        // Consumed by the /api/jobs/claim gate — see route.ts.
+        allowed_workers: slot.allowed_workers,
+        oracle_password_hash: slot.oracle_password_hash,
         updated_at: FieldValue.serverTimestamp(),
       };
       await adminDb().collection("jobs").doc(jobId).set(job);

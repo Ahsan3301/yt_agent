@@ -101,13 +101,19 @@ def register(active_job_id: str = "") -> None:
 
 
 def claim() -> dict | None:
-    """Poll for a job. Only jobs with target_worker in ('dashboard',
-    INSTANCE_ID, '') will be returned to us (claim route filters)."""
+    """Poll for a job. Sends instance_label='oracle' + oracle_password
+    so the per-channel claim gate can verify this worker is allowed
+    to run a given channel's job."""
     import requests
     try:
         r = requests.post(
             f"{INTERNAL_URL}/api/jobs/claim",
-            json={"instance_id": INSTANCE_ID, "tier": TIER},
+            json={
+                "instance_id": INSTANCE_ID,
+                "instance_label": "oracle",
+                "tier": TIER,
+                "oracle_password": os.getenv("ORACLE_UNLOCK_PASSWORD", ""),
+            },
             headers={"X-API-Key": RENDER_TRIGGER_KEY},
             timeout=10,
         )
@@ -160,11 +166,13 @@ def _update_job(job_id: str, patch: dict) -> None:
 
 
 def handle(job: dict) -> None:
-    """Route a claimed job to backend.side_jobs.dispatch and write
-    the terminal result back to the jobs collection."""
-    from backend import side_jobs, keys_sync
+    """Route a claimed job. Side-jobs go to backend.side_jobs.dispatch;
+    render jobs go to main.run_pipeline (CPU-only path — local_sdxl
+    skips itself gracefully when torch.cuda.is_available() is False,
+    so image gen falls through to pollinations / HF / horde)."""
+    from backend import keys_sync
     job_id = str(job.get("id") or "")
-    kind = str(job.get("kind") or "")
+    kind = str(job.get("kind") or "render")
     log.info(f"handling job {job_id} kind={kind} run_id={job.get('run_id')}")
 
     _update_job(job_id, {
@@ -179,7 +187,44 @@ def handle(job: dict) -> None:
 
     ok, msg = False, "no result"
     try:
-        ok, msg = side_jobs.dispatch(job)
+        if kind in ("publish_youtube", "copy_storage"):
+            from backend import side_jobs
+            ok, msg = side_jobs.dispatch(job)
+        else:
+            # Full render on Oracle (CPU-only fallback). Deps may not
+            # be installed on the side-worker image — catch ImportError
+            # and mark failed with a clear message so the channel drops
+            # to the next allowed worker.
+            try:
+                import main as _main
+            except ImportError as e:
+                ok, msg = False, (
+                    f"Oracle side-worker missing render deps ({e}). "
+                    f"Rebuild coolify/side_worker/Dockerfile with "
+                    f"requirements-cpu.txt to enable CPU renders on Oracle."
+                )
+                log.error(msg)
+            else:
+                # Kwarg names mirror backend/jobs.py::_run_pipeline_job.
+                res = _main.run_pipeline(
+                    channel_type=str(job.get("channel") or "").strip(),
+                    dry_run=bool(job.get("dry_run", False)),
+                    resume_run_id=str(job.get("run_id") or ""),
+                    manual_topic=job.get("manual_topic", ""),
+                    manual_script=job.get("manual_script", ""),
+                    manual_title=job.get("manual_title", ""),
+                    manual_images=job.get("manual_images") or [],
+                    manual_channel_desc=job.get("manual_channel_desc", ""),
+                    web_research=job.get("web_research"),
+                    real_events=job.get("real_events"),
+                    language=job.get("language"),
+                    voice_override=job.get("voice_override"),
+                    tone_override=job.get("tone_override"),
+                    privacy_override=job.get("privacy_override"),
+                    youtube_account_id=job.get("youtube_account_id"),
+                )
+                ok = bool(res) if isinstance(res, bool) else bool((res or {}).get("ok"))
+                msg = "render complete" if ok else "render failed"
     except Exception as e:
         ok, msg = False, f"dispatch crashed: {e}"
         log.exception(msg)
