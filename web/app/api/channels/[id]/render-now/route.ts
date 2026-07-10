@@ -135,9 +135,14 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         else if (label.includes("oracle") || String(b.tier || "") === "dashboard") live.add("oracle");
       });
 
-      // Fire wake ONLY when the primary is Kaggle AND Kaggle isn't
-      // heartbeating. Colab / Oracle can't be auto-woken from here.
+      // NEVER wake a worker the channel excluded. If Kaggle is not
+      // in allowed_workers[], the operator explicitly opted out — even
+      // as a fallback. The queue just waits + escalates via
+      // boot-grace windows.
+      const kaggleAllowed = allowedWorkers.includes("kaggle");
+
       if (primary === "kaggle" && !live.has("kaggle")) {
+        // Primary IS Kaggle → obviously kaggleAllowed=true. Fire wake.
         const base = (process.env.COOLIFY_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || "").replace(/\/$/, "");
         const wakeUrl = base
           ? `${base}/api/backends/wake-kaggle`
@@ -145,10 +150,12 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         fetch(wakeUrl, { method: "POST", headers: { "X-Request-Id": reqId } }).catch(() => {});
         woke = true;
         logRoute(reqId, "run-now waking kaggle (primary, not live)", { wakeUrl, primary });
-      } else if (primary === "colab" && !live.has("colab") && !live.has("kaggle")) {
-        // Colab primary but not live, AND no fallback GPU alive → wake
-        // Kaggle so the boot-grace escalation (15 min for Colab) has a
-        // fallback ready when it expires.
+      } else if (primary === "colab" && !live.has("colab") && !live.has("kaggle") && kaggleAllowed) {
+        // Colab primary + Colab down + Kaggle also down + Kaggle IS
+        // allowed → wake Kaggle so the 15-min Colab grace window has
+        // a fallback ready when it expires. If Kaggle is NOT in the
+        // channel's allowlist, skip this wake — the operator opted
+        // out and we respect that.
         const base = (process.env.COOLIFY_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || "").replace(/\/$/, "");
         const wakeUrl = base
           ? `${base}/api/backends/wake-kaggle`
@@ -160,6 +167,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         logRoute(reqId, "run-now: no wake needed", {
           primary,
           live: Array.from(live),
+          kaggle_allowed: kaggleAllowed,
         });
       }
     } catch { /* wake is best-effort */ }

@@ -211,12 +211,21 @@ export async function POST(req: NextRequest) {
 
         let wakeNeeded = false;
         for (const slot of channelMeta) {
-          const primary = (slot.allowed_workers?.[0]) || "kaggle";
-          if (primary === "kaggle" && !liveLabels.has("kaggle")) { wakeNeeded = true; break; }
-          if (primary === "colab" && !liveLabels.has("colab") && !liveLabels.has("kaggle")) {
+          const allowed = slot.allowed_workers || [];
+          const primary = allowed[0] || "kaggle";
+          // Legacy channels (allowed=[]) inherit Kaggle-as-default,
+          // matching pre-priority behaviour.
+          const kaggleAllowed = allowed.length === 0 || allowed.includes("kaggle");
+          if (primary === "kaggle" && !liveLabels.has("kaggle")) {
             wakeNeeded = true; break;
           }
-          // Oracle primary → always up, no wake needed.
+          if (primary === "colab" && kaggleAllowed &&
+              !liveLabels.has("colab") && !liveLabels.has("kaggle")) {
+            wakeNeeded = true; break;
+          }
+          // Oracle primary → always up, no wake.
+          // Colab primary WITHOUT kaggle in allowed → operator opted
+          // out of Kaggle; wait for grace instead of waking.
         }
 
         if (wakeNeeded) {
