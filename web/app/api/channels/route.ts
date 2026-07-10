@@ -190,6 +190,25 @@ export async function POST(req: NextRequest) {
           { status: 400 }
         );
       }
+      // MUST match the dashboard's ORACLE_UNLOCK_PASSWORD env — the
+      // Oracle side-worker sends that ONE value on every claim, so a
+      // channel storing a hash of ANY OTHER string is a UX trap:
+      // saves succeed, but claims silently reject those jobs and they
+      // pile up in the queue looking abandoned. Same operator-unlock
+      // gate we already enforce below for cloudflare_source=global.
+      const oracleEnv = (process.env.ORACLE_UNLOCK_PASSWORD || "").trim();
+      if (!oracleEnv) {
+        return NextResponse.json(
+          { error: "ORACLE_UNLOCK_PASSWORD not configured on this dashboard — Oracle worker unlock can't be set" },
+          { status: 409 }
+        );
+      }
+      if (p !== oracleEnv) {
+        return NextResponse.json(
+          { error: "oracle_password does not match the operator unlock — enter the same value that's set in the dashboard's ORACLE_UNLOCK_PASSWORD env" },
+          { status: 401 }
+        );
+      }
       passwordPatch = { oracle_password_hash: hashOraclePassword(p) };
     }
 
