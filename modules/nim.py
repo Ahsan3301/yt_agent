@@ -81,17 +81,22 @@ NIM_KEY = _KeyProxy()
 #   images (root of the user's 'clips are irrelevant' report). Falls
 #   back to 11B if 90B is briefly unavailable so scoring never fully
 #   breaks.
-TEXT_MODEL_PRIMARY   = os.getenv("NIM_TEXT_MODEL",   "meta/llama-3.3-70b-instruct")
+# Nemotron 3 Super 120B promoted to PRIMARY (2026-07-10). Live logs
+# showed llama-3.3-70b timing out on nearly every call — the render
+# always ate 20-30s waiting for it before falling to Nemotron. Nemotron
+# has been the actual worker for months. Making it primary drops that
+# wasted wall-clock. Fallback chain keeps llama-3.3 (as legit backup),
+# adds Qwen 2.5 72B (very stable + strong at JSON), and drops the
+# chronically-429ing minimax.
+TEXT_MODEL_PRIMARY   = os.getenv("NIM_TEXT_MODEL",   "nvidia/nemotron-3-super-120b-a12b")
 TEXT_MODEL_FALLBACKS = [
-    # Nemotron 3 Super 120B (MoE, ~12B active/token) — big reasoning
-    # model, second-most-reliable in prod when llama-3.3 times out.
-    # Its reasoning trace was a problem in earlier prompts but current
-    # prompts either strip it or benefit from it (SEO metadata, storyboard).
-    "nvidia/nemotron-3-super-120b-a12b",
-    # Minimax-m3 — was primary but rate-limits heavily (429s constantly
-    # per prod logs) and read-timeouts often. Kept as third fallback so
-    # its throughput still helps under sudden burst load.
-    "minimaxai/minimax-m3",
+    # Qwen 2.5 72B Instruct — very stable on NIM, excellent JSON
+    # adherence (helps storyboard + SEO calls).
+    "qwen/qwen2.5-72b-instruct",
+    # Llama-3.3-70b — was primary; keep as fallback because it does
+    # respond during off-peak hours and has a slightly different
+    # style-fingerprint if Nemotron's is overplayed.
+    "meta/llama-3.3-70b-instruct",
     # Llama-3.1-70b — last-resort classic dense fallback.
     "meta/llama-3.1-70b-instruct",
 ]
@@ -175,15 +180,17 @@ def _try_provider(name: str, messages, max_tokens, temperature,
     if name == "openrouter":
         if not os.getenv("OPENROUTER_API_KEY", "").strip():
             return None
+        _or_model = os.getenv("OPENROUTER_MODEL", "").strip() or "meta-llama/llama-3.3-70b-instruct:free"
         try:
             c = _openrouter_chat_fallback(messages, max_tokens=max_tokens,
                                           temperature=temperature,
                                           response_format=response_format,
                                           timeout=30)
         except Exception as e:
-            log.warning(f"LLM: OpenRouter failed ({e}); falling to next provider")
+            log.warning(f"LLM: OpenRouter ({_or_model}) failed ({e}); falling to next provider")
             raise
         if c and c.strip():
+            log.debug(f"LLM: OpenRouter ({_or_model}) responded")
             return c
         return None
     return None
@@ -591,8 +598,21 @@ def _openrouter_chat_fallback(messages, max_tokens=2048, temperature=0.7,
     _k = os.getenv("OPENROUTER_API_KEY", "") or ""
     if not _k:
         raise RuntimeError("OPENROUTER_API_KEY not set (add via /keys)")
+    _model = os.getenv("OPENROUTER_MODEL", "").strip() or "meta-llama/llama-3.3-70b-instruct:free"
+    # Sanity-check the model string. OpenRouter IDs always have a
+    # provider/name shape (e.g. meta-llama/llama-3.3-70b-instruct:free,
+    # google/gemma-2-9b-it:free). Values like "openrouter/free" or a
+    # bare "free" won't resolve on OpenRouter's side — warn loudly.
+    if "/" not in _model or _model.count("/") > 2:
+        log.warning(
+            f"OpenRouter model {_model!r} looks malformed — expected "
+            f"'<vendor>/<name>[:variant]'. Common examples: "
+            f"'meta-llama/llama-3.3-70b-instruct:free', "
+            f"'google/gemma-2-9b-it:free'. Set OPENROUTER_MODEL on /keys "
+            f"to a valid id from https://openrouter.ai/models."
+        )
     payload = {
-        "model": os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct:free"),
+        "model": _model,
         "messages": messages,
         "max_tokens": max_tokens,
         "temperature": temperature,
