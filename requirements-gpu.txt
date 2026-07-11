@@ -24,19 +24,17 @@ av==12.3.0
 kokoro>=0.9.4
 misaki>=0.9.4
 soundfile>=0.12
-# Local SDXL image generation via diffusers. Provider is opt-in via
-# the /settings "AI image generation" card and no-ops on CPU-only
-# workers (checks torch.cuda.is_available() at load time).
-#
-# NOTE (2026-07-11): tried bumping to diffusers>=0.36 + transformers>=4.51
-# for the klein-4B provider — broke Kaggle boot (see commit ea90851 +
-# revert). Kokoro's transformers<4.50 pin is the blocker. Klein-4B code
-# stays in shotfinder.py but auto-disables at runtime via ImportError.
-# When we retry, need a proper Kaggle web-UI log to diagnose the exact
-# resolver conflict.
-diffusers>=0.30
-transformers>=4.40
+# Local SDXL + klein-4B image generation via diffusers.
+#   diffusers>=0.36 ships Flux2KleinPipeline (klein-4B).
+#   transformers>=4.51 needed for Qwen3ForCausalLM (klein-4B's text
+#     encoder). Kaggle notebook cell 2 upgrades kokoro to >=1.0 in the
+#     same batch so its AlbertModel path doesn't break.
+#   sentencepiece is required by Qwen3's tokenizer fallback in some
+#     diffusers builds.
+diffusers>=0.36
+transformers>=4.51
 accelerate>=0.30
+sentencepiece>=0.2
 # Kokoro 0.9+ pulls `misaki` for phoneme handling. misaki calls
 # EspeakWrapper.set_data_path(...) which only exists in phonemizer-fork
 # (vanilla `phonemizer` on PyPI stopped receiving updates in 2023).
