@@ -42,6 +42,9 @@ MANAGED_KEYS = [
     "PIXABAY_API_KEY",
     "COVERR_API_KEY",
     "HF_TOKEN",                  # HuggingFace Inference API — free SDXL fallback
+    "STABLEHORDE_API_KEY",       # Stable Horde priority key — free registered users
+                                 # get faster queue than the '0000000000' anon key.
+                                 # Sign up: https://stablehorde.net/register
     "CLOUDFLARE_ACCOUNT_ID",     # Workers AI — legacy single-account (still works)
     "CLOUDFLARE_API_TOKEN",      # Workers AI Read scope only, no other perms needed
     "CLOUDFLARE_ACCOUNTS_JSON",  # Multi-account pool for klein-9b rotation:

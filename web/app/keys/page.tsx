@@ -119,6 +119,15 @@ const SECTIONS: Array<{
         docs_url: "https://openrouter.ai/docs",
         importance: "optional",
       },
+      {
+        name: "STABLEHORDE_API_KEY",
+        label: "Stable Horde API Key (priority queue)",
+        description:
+          "Free community-crowdsourced SDXL fallback. Sign up gets you a priority key vs the anonymous '0000000000' — cuts queue wait from 5+ min to ~18s. Kudos accumulate as you use it, unlocking higher priority over time.",
+        get_url: "https://stablehorde.net/register",
+        docs_url: "https://stablehorde.net/api/",
+        importance: "recommended",
+      },
     ],
   },
   {
