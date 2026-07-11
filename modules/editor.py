@@ -587,6 +587,46 @@ def create_caption_file(narration_text, audio_duration, output_path, audio_path:
     else:
         events = plan_word_events(narration_text, audio_duration)
         log.info("captions: using character-count heuristic (no TTS word-timing sidecar)")
+
+    # Drift check — if the last caption event ends noticeably before
+    # audio_duration, subtitles will look "early" over the last 1-2
+    # seconds. Log so future runs surface this issue in the log stream
+    # instead of the user only noticing it on the finished YouTube video.
+    if events:
+        try:
+            last_end = max(float(e.get("end", 0.0)) for e in events)
+            gap = float(audio_duration) - last_end
+            if gap > 1.5:
+                log.warning(
+                    f"captions: DRIFT — last event ends at {last_end:.2f}s but "
+                    f"audio is {audio_duration:.2f}s (gap={gap:.2f}s). Stretching "
+                    f"last {min(len(events), 6)} events to close the gap."
+                )
+                # Stretch the tail events proportionally so the gap closes.
+                # Only touch the last N events so earlier alignment stays intact.
+                N = min(len(events), 6)
+                tail_start = float(events[-N].get("start", last_end))
+                old_span = max(1e-3, last_end - tail_start)
+                new_span = float(audio_duration) - tail_start
+                scale = new_span / old_span
+                for e in events[-N:]:
+                    s = float(e.get("start", 0.0))
+                    en = float(e.get("end", 0.0))
+                    e["start"] = tail_start + (s - tail_start) * scale
+                    e["end"]   = tail_start + (en - tail_start) * scale
+            elif gap < -0.3:
+                log.warning(
+                    f"captions: OVERRUN — last event ends at {last_end:.2f}s "
+                    f"but audio is only {audio_duration:.2f}s (over by {-gap:.2f}s). "
+                    f"Clamping tail so subtitles don't outlive the voiceover."
+                )
+                for e in events:
+                    if float(e.get("end", 0.0)) > audio_duration:
+                        e["end"] = audio_duration
+                        if float(e.get("start", 0.0)) > audio_duration:
+                            e["start"] = audio_duration
+        except Exception as _dex:
+            log.debug(f"caption drift check skipped: {_dex}")
     if not events:
         # Degenerate input — still emit a single placeholder so ffmpeg's
         # ass filter doesn't choke on an empty events block.

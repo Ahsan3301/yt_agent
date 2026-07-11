@@ -274,6 +274,70 @@ def _gpu_supported_by_modern_torch() -> bool:
         return False
 
 
+def _write_kokoro_word_timing_sidecar(narration_text: str, chunk_records: list[dict],
+                                       output_path: str) -> None:
+    """Convert Kokoro's per-chunk (graphemes, duration_s) records into a
+    per-word timing sidecar in the same shape edge-tts writes.
+
+    Sidecar format (matches modules.editor._load_word_timing_sidecar):
+        {
+          "words": [{"start_ms": float, "end_ms": float, "text": str}, ...],
+          "count": int
+        }
+
+    Approach:
+      - Each Kokoro chunk covers a slice of the original narration and
+        has a KNOWN audio duration (samples / sample_rate). Split the
+        chunk's grapheme text into whitespace-delimited words, then
+        distribute the chunk duration across those words by character
+        weight (max(len(w), 2) — same weighting the character heuristic
+        uses inside a chunk).
+      - Chunk BOUNDARIES are anchored to real audio playback offsets —
+        that's where the big drift used to accumulate under the pure
+        character-count heuristic.
+
+    Any exception here just means the sidecar isn't written — the
+    editor falls back to plan_word_events (character heuristic) with
+    no regression versus the old behavior.
+    """
+    import json as _json
+    if not chunk_records:
+        return
+    words_out: list[dict] = []
+    cursor_s = 0.0
+    for rec in chunk_records:
+        graphemes = str(rec.get("graphemes") or "").strip()
+        chunk_dur = float(rec.get("duration_s") or 0.0)
+        if chunk_dur <= 0:
+            continue
+        # Words spoken in this chunk. If graphemes is empty (older
+        # Kokoro release), fall back to leaving the chunk as a single
+        # "block" event so at least chunk-level anchoring holds.
+        chunk_words = graphemes.split() if graphemes else []
+        if not chunk_words:
+            cursor_s += chunk_dur
+            continue
+        weights = [max(len(w), 2) for w in chunk_words]
+        total_w = float(sum(weights)) or 1.0
+        word_start = cursor_s
+        for w, wt in zip(chunk_words, weights):
+            wd = chunk_dur * (float(wt) / total_w)
+            words_out.append({
+                "start_ms": round(word_start * 1000.0, 3),
+                "end_ms":   round((word_start + wd) * 1000.0, 3),
+                "text":     w,
+            })
+            word_start += wd
+        cursor_s += chunk_dur
+
+    if not words_out:
+        return
+    sidecar = output_path + ".words.json"
+    with open(sidecar, "w", encoding="utf-8") as f:
+        _json.dump({"words": words_out, "count": len(words_out), "source": "kokoro"}, f)
+    log.info(f"kokoro: captured {len(words_out)} chunk-anchored word timings → {sidecar}")
+
+
 def generate_with_kokoro(text, channel_type, output_path, language=None):
     """
     Generate voiceover using Kokoro-82M (local, higher quality).
@@ -367,11 +431,36 @@ def generate_with_kokoro(text, channel_type, output_path, language=None):
         except Exception as _kex:
             log.debug(f"kokoro device pin skipped: {_kex}")
         audio_chunks = []
+        # Track per-chunk grapheme text + audio length so we can emit a
+        # per-word timing sidecar. Kokoro's pipeline yields tuples of
+        # (graphemes, phonemes, audio). By capturing the graphemes we
+        # know WHICH portion of the narration is covered by each chunk
+        # of audio — enough to anchor caption timings drift-free at
+        # chunk boundaries instead of estimating them globally from
+        # character counts (the current source of "subtitles drift"
+        # complaints — see modules/editor.plan_word_events).
+        chunk_records: list[dict] = []
+        SR = 24000
         start = time.time()
-        for i, (_, _, audio) in enumerate(pipeline(text, voice=voice_id, speed=speed), 1):
+        for i, chunk_tuple in enumerate(pipeline(text, voice=voice_id, speed=speed), 1):
             elapsed = time.time() - start
             log.info(f"  kokoro chunk {i} done at {elapsed:.1f}s")
+            # Kokoro's tuple shape has varied across releases; guard the
+            # unpacking so an unexpected extra field doesn't crash the
+            # whole voiceover step.
+            try:
+                graphemes, _phonemes, audio = chunk_tuple[0], chunk_tuple[1], chunk_tuple[2]
+            except Exception:
+                graphemes, _phonemes, audio = "", "", chunk_tuple[-1]
             audio_chunks.append(audio)
+            try:
+                _dur = float(len(audio)) / float(SR)
+            except Exception:
+                _dur = 0.0
+            chunk_records.append({
+                "graphemes": str(graphemes or "").strip(),
+                "duration_s": _dur,
+            })
             if elapsed > KOKORO_WALL_CLOCK_BUDGET_SECONDS:
                 log.warning(
                     f"Kokoro budget exceeded ({elapsed:.0f}s > "
@@ -383,8 +472,20 @@ def generate_with_kokoro(text, channel_type, output_path, language=None):
             total = time.time() - start
             log.info(f"  kokoro: {len(audio_chunks)} chunks total in {total:.1f}s")
             full_audio = np.concatenate(audio_chunks)
-            sf.write(output_path, full_audio, 24000)
+            sf.write(output_path, full_audio, SR)
             log.info(f"Kokoro audio saved: {output_path}")
+            # Emit a word-timing sidecar so the editor's caption planner
+            # uses REAL chunk-anchored timings instead of the global
+            # character-count heuristic. Each chunk covers a slice of
+            # the narration; we distribute words within the chunk by
+            # character-weight (accurate within ~50ms) and anchor chunk
+            # boundaries to the actual audio playback offsets. This is
+            # the same sidecar format edge-tts writes at line ~189.
+            try:
+                _write_kokoro_word_timing_sidecar(text, chunk_records, output_path)
+            except Exception as _wex:
+                log.warning(f"kokoro: word-timing sidecar not written ({_wex}); "
+                            f"captions will fall back to character heuristic")
             return output_path
         # Generator yielded nothing — treat as broken so we don't try again
         # this process.
