@@ -22,11 +22,20 @@ gpu_names: list[str] = []
 supports_multi_gpu: bool = False
 sdxl_ready_devices: list[int] = []
 kokoro_device: int | None = None
+# Flux 2 klein-4B needs the model transformer + Qwen3-4B text encoder + VAE
+# co-resident. Fits Kaggle T4×2 with device_map='balanced' (~13 GB weights
+# split across 2 × 16 GB), but a single T4 (Colab) leaves too little VRAM
+# after Kokoro (~3 GB) claims cuda:1. Detected once at boot so the
+# provider gate in shotfinder.py can skip klein-4B cleanly on 1-GPU hosts
+# without needing a live free-mem probe every render.
+flux2_ready_devices: list[int] = []
+flux2_supported: bool = False
 
 
 def _detect() -> None:
     global device_ids, compute_caps, gpu_names, supports_multi_gpu
     global sdxl_ready_devices, kokoro_device
+    global flux2_ready_devices, flux2_supported
     try:
         import torch
     except Exception as e:
@@ -71,9 +80,18 @@ def _detect() -> None:
         kokoro_device = sdxl_ready_devices[0]
     else:
         kokoro_device = None
+    # Flux 2 klein-4B is much heavier than SDXL: transformer (~7 GB fp16) +
+    # Qwen3-4B text encoder (~8 GB fp16) + VAE. Needs to be split across
+    # BOTH GPUs on T4×2 via device_map='balanced'. On T4×1 (Colab) the
+    # host doesn't have room after Kokoro claims cuda:1 — provider gates
+    # off cleanly. We reuse sdxl_ready_devices (sm_7+ check identical)
+    # but require at least 2 devices.
+    flux2_ready_devices = list(sdxl_ready_devices) if len(sdxl_ready_devices) >= 2 else []
+    flux2_supported = bool(flux2_ready_devices)
     log.info(
         f"gpu_topology: device_count={n}, multi_gpu={supports_multi_gpu}, "
-        f"caps={compute_caps}, kokoro_device={kokoro_device}"
+        f"caps={compute_caps}, kokoro_device={kokoro_device}, "
+        f"flux2_supported={flux2_supported}"
     )
 
 

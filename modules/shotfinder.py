@@ -1461,6 +1461,219 @@ def _local_sdxl_generate(prompt, output_dir, trial, negative_prompt=""):
         return None, seed
 
 
+# ── Local Flux 2 klein-4B (via diffusers) — free GPU-only backup ─────
+# Runs on the Kaggle T4×2 accelerator via device_map='balanced' which
+# splits the ~13 GB model (transformer + Qwen3-4B text encoder + VAE)
+# across both cards. Kicks in when the Cloudflare klein-9b pool has
+# been drained for the day — same Flux 2 quality tier, unlimited, free.
+# Skipped automatically on single-GPU workers (Colab T4×1) and CPU
+# workers (Oracle) because gpu_topology.flux2_supported is False there.
+# Model download (~7.8 GB) happens in a background thread from the
+# Kaggle notebook's cell 4.5, so the first render doesn't pay the cost.
+_LOCAL_FLUX2_PIPES: dict = {}
+_LOCAL_FLUX2_BROKEN = False
+_LOCAL_FLUX2_BROKEN_REASON = ""
+_LOCAL_FLUX2_DEVICE_BROKEN: dict = {}
+# Shared load lock — unlike SDXL (per-device locks because we load ONE
+# pipe per GPU independently), klein-4B uses device_map='balanced' which
+# does its own multi-GPU splitting inside a single from_pretrained call.
+# One lock is enough.
+_LOCAL_FLUX2_LOAD_LOCK = _sdxl_threading.Lock()
+
+
+def _local_flux2_klein_load(device_id: int | None = None):
+    """Lazy-load Flux2KleinPipeline. Returns pipe on success, None on
+    failure. On T4×2 the pipeline is split across BOTH devices via
+    device_map='balanced'; device_id is used to key the cache but the
+    actual placement is decided by accelerate.
+    """
+    global _LOCAL_FLUX2_BROKEN, _LOCAL_FLUX2_BROKEN_REASON
+
+    if _LOCAL_FLUX2_BROKEN:
+        return None
+
+    # Fast path: cached pipe already loaded on this device (or the
+    # "shared" -1 slot when device_map='balanced' spans multiple GPUs).
+    cache_key = -1  # single balanced pipeline serves all shots
+    pipe = _LOCAL_FLUX2_PIPES.get(cache_key)
+    if pipe is not None:
+        return pipe
+
+    with _LOCAL_FLUX2_LOAD_LOCK:
+        # Double-check inside the lock.
+        pipe = _LOCAL_FLUX2_PIPES.get(cache_key)
+        if pipe is not None:
+            return pipe
+        try:
+            import torch
+        except Exception as e:
+            _LOCAL_FLUX2_BROKEN = True
+            _LOCAL_FLUX2_BROKEN_REASON = f"torch not importable: {e}"
+            log.info(f"local_flux2_klein: DISABLED — {_LOCAL_FLUX2_BROKEN_REASON}")
+            return None
+        if not torch.cuda.is_available():
+            _LOCAL_FLUX2_BROKEN = True
+            _LOCAL_FLUX2_BROKEN_REASON = "no CUDA device visible"
+            log.info(f"local_flux2_klein: DISABLED — {_LOCAL_FLUX2_BROKEN_REASON}")
+            return None
+        try:
+            from modules import gpu_topology as _gt
+        except Exception as e:
+            _LOCAL_FLUX2_BROKEN = True
+            _LOCAL_FLUX2_BROKEN_REASON = f"gpu_topology import failed: {e}"
+            log.info(f"local_flux2_klein: DISABLED — {_LOCAL_FLUX2_BROKEN_REASON}")
+            return None
+        if not _gt.flux2_supported:
+            _LOCAL_FLUX2_BROKEN = True
+            _LOCAL_FLUX2_BROKEN_REASON = (
+                f"needs at least 2 sm_7+ GPUs (found {len(_gt.sdxl_ready_devices)})"
+            )
+            log.info(f"local_flux2_klein: DISABLED — {_LOCAL_FLUX2_BROKEN_REASON}")
+            return None
+
+        try:
+            from diffusers import Flux2KleinPipeline
+        except Exception as e:
+            _LOCAL_FLUX2_BROKEN = True
+            _LOCAL_FLUX2_BROKEN_REASON = (
+                f"Flux2KleinPipeline not available in diffusers "
+                f"(need >=0.36): {e}"
+            )
+            log.warning(
+                f"local_flux2_klein: DISABLED — {_LOCAL_FLUX2_BROKEN_REASON}. "
+                f"Kaggle notebook cell 2 must install diffusers>=0.36 + "
+                f"transformers>=4.51."
+            )
+            return None
+
+        model_id = os.getenv("LOCAL_FLUX2_KLEIN_MODEL", "") or ""
+        if not model_id:
+            try:
+                model_id = str(
+                    (load_settings().get("image_gen", {}) or {})
+                    .get("local_flux2_klein_model", "")
+                ).strip() or "black-forest-labs/FLUX.2-klein-4B"
+            except Exception:
+                model_id = "black-forest-labs/FLUX.2-klein-4B"
+
+        # device_map='balanced' spreads transformer + text_encoder + VAE
+        # across all visible GPUs based on parameter size. On T4×2 this
+        # typically lands Qwen3 on one card and transformer+VAE on the
+        # other. max_memory leaves ~2 GB per card as buffer for
+        # activations + concurrent Kokoro co-tenancy.
+        max_mem = {i: "14GB" for i in _gt.flux2_ready_devices}
+        log.info(
+            f"local_flux2_klein: loading {model_id} "
+            f"(device_map=balanced, max_memory={max_mem}, "
+            f"torch_dtype=fp16 for T4 sm_7.5)"
+        )
+        os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "360")
+        try:
+            pipe = Flux2KleinPipeline.from_pretrained(
+                model_id,
+                torch_dtype=torch.float16,
+                device_map="balanced",
+                max_memory=max_mem,
+            )
+        except Exception as e:
+            _LOCAL_FLUX2_BROKEN = True
+            _LOCAL_FLUX2_BROKEN_REASON = f"from_pretrained failed: {e}"
+            log.warning(
+                f"local_flux2_klein: from_pretrained crashed — {e}. "
+                f"Provider DISABLED for this worker's lifetime; "
+                f"chain falls through to next provider."
+            )
+            return None
+
+        # VAE fp32 upcast to prevent the same Turing (T4 sm_7.5) fp16
+        # overflow that makes SDXL produce fully-black images. See the
+        # SDXL VAE handling above for the empirical reference.
+        try:
+            pipe.vae = pipe.vae.to(torch.float32)
+            log.info("local_flux2_klein: VAE upcast to fp32 (Turing fp16-overflow fix)")
+        except Exception as _e:
+            log.debug(f"local_flux2_klein: VAE upcast skipped: {_e}")
+
+        _LOCAL_FLUX2_PIPES[cache_key] = pipe
+        log.info(
+            "local_flux2_klein: pipeline READY (device_map=balanced across "
+            f"{_gt.flux2_ready_devices}; 4 steps CFG 1.0 per BFL guidance)"
+        )
+        return pipe
+
+
+def _local_flux2_klein_generate(prompt, output_dir, trial, negative_prompt=""):
+    """Generate one image via Flux 2 klein-4B on the local GPU pair.
+    Returns (path, seed) on success, (None, seed) on failure.
+
+    Klein is a distilled model — steps=4 + guidance=1.0 is BFL's
+    documented sweet spot. Extra steps HURT quality (per InferenceBench).
+    No negative prompt (Flux family doesn't use them).
+    """
+    seed = int(hashlib.md5(f"{prompt}|{trial}|flux2klein".encode()).hexdigest()[:8], 16)
+    pipe = _local_flux2_klein_load()
+    if pipe is None:
+        return None, seed
+    try:
+        import torch
+        gen = torch.Generator(device="cuda").manual_seed(seed)
+        # 1024×576 = 9:16 portrait, matches klein-9b on CF + editor's
+        # target aspect for YouTube Shorts.
+        kwargs = {
+            "prompt": prompt,
+            "num_inference_steps": 4,
+            "guidance_scale": 1.0,
+            "height": 1024,
+            "width": 576,
+            "generator": gen,
+        }
+        # Klein-4B's Flux 2 lineage does not use negative prompts — the
+        # rectified-flow objective ignores them. We accept the kwarg for
+        # signature parity with other providers but silently drop it.
+        with torch.autocast(device_type="cuda", dtype=torch.float16):
+            image = pipe(**kwargs).images[0]
+
+        # Same degenerate-output check the SDXL provider uses. Turing
+        # fp16 numerical instability can still occasionally slip past
+        # the VAE fp32 cast and produce black/near-uniform images.
+        try:
+            import numpy as _np
+            _arr = _np.asarray(image).astype(_np.float32)
+            _std = float(_arr.std())
+            _mean = float(_arr.mean())
+            if _std < 8 or _mean < 6:
+                log.warning(
+                    f"local_flux2_klein: degenerate image "
+                    f"(std={_std:.1f}, mean={_mean:.1f}) — treating as failure"
+                )
+                return None, seed
+        except Exception:
+            pass
+
+        dest = os.path.join(output_dir, f"flux2klein_{seed:08x}.jpg")
+        image.save(dest, "JPEG", quality=92)
+        return dest, seed
+    except Exception as e:
+        msg = str(e)
+        # Distinguish OOM (per-device kill) vs transient errors.
+        if "out of memory" in msg.lower() or "OutOfMemoryError" in msg:
+            _LOCAL_FLUX2_BROKEN = True
+            _LOCAL_FLUX2_BROKEN_REASON = f"OOM: {msg[:120]}"
+            log.warning(
+                f"local_flux2_klein: OOM during gen — provider DISABLED "
+                f"for this worker's lifetime. Reduce shot_parallelism or "
+                f"upgrade to a GPU tier with more VRAM."
+            )
+            try:
+                import torch as _t
+                _t.cuda.empty_cache()
+            except Exception:
+                pass
+        else:
+            log.warning(f"local_flux2_klein gen failed: {e}")
+        return None, seed
+
+
 def _score_local_image(path, visual, premise):
     """Vision-score a LOCAL image file by passing it as a data URL."""
     try:
@@ -1627,7 +1840,10 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror"):
             f"(threshold=-1) so first successful gen wins the shot"
         )
     ig_cfg = (load_settings().get("image_gen") or {})
-    priority = ig_cfg.get("priority") or ["cloudflare", "pollinations", "local_sdxl", "horde", "huggingface"]
+    priority = ig_cfg.get("priority") or [
+        "cloudflare", "local_flux2_klein", "pollinations",
+        "horde", "local_sdxl", "huggingface",
+    ]
     ig_enabled = ig_cfg.get("enabled") or {}
     negative_prompt = str(ig_cfg.get("negative_prompt") or "").strip()
 
@@ -1686,6 +1902,23 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror"):
                     return False, "every GPU marked broken during load/gen"
             except Exception:
                 pass
+        if name == "local_flux2_klein":
+            if _LOCAL_FLUX2_BROKEN:
+                return False, f"local flux2 pipeline broken ({_LOCAL_FLUX2_BROKEN_REASON})"
+            # Klein-4B needs the T4×2 split (device_map='balanced' can't
+            # do its job on a single GPU that lacks room for both the
+            # transformer and the Qwen3 text encoder). Colab (T4×1) and
+            # Oracle (CPU-only) auto-skip here without even attempting
+            # the model download.
+            try:
+                from modules import gpu_topology as _gt
+                if not _gt.flux2_supported:
+                    return False, (
+                        f"needs >=2 GPUs, have {len(_gt.sdxl_ready_devices)} "
+                        f"(Kaggle T4×2 only — Colab/Oracle skip)"
+                    )
+            except Exception:
+                pass
         if name == "pollinations":
             if _pollinations_breaker_skip():
                 wait = int(_POLL_OPEN_UNTIL - time.time())
@@ -1701,11 +1934,12 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror"):
         return True, ""
 
     _AI_PROVIDERS = {
-        "cloudflare":  _cloudflare_generate,   # Flux 2 dev via Workers AI, ~150/day free
-        "horde":       _horde_generate,        # real SDXL crowdsourced, works anon
-        "huggingface": _huggingface_generate,
-        "local_sdxl":  _local_sdxl_generate,
-        "pollinations": _pollinations_generate,
+        "cloudflare":         _cloudflare_generate,   # Flux 2 dev via Workers AI, ~150/day free
+        "local_flux2_klein":  _local_flux2_klein_generate,  # Kaggle T4×2 only
+        "horde":              _horde_generate,        # real SDXL crowdsourced, works anon
+        "huggingface":        _huggingface_generate,
+        "local_sdxl":         _local_sdxl_generate,
+        "pollinations":       _pollinations_generate,
     }
 
     for slot, provider_name in enumerate(priority):
@@ -1908,14 +2142,27 @@ def fetch_shots(shots, output_dir, channel="horror", preset_sources=None):
     try:
         _priority_head = (
             (load_settings().get("image_gen") or {}).get("priority")
-            or ["huggingface", "local_sdxl", "pollinations"]
+            or ["local_flux2_klein", "huggingface", "local_sdxl", "pollinations"]
         )
         _ig_enabled = (load_settings().get("image_gen") or {}).get("enabled") or {}
-        # Only pre-warm if the user has EXPLICITLY opted in — default is
-        # off now that HF Inference API + Pollinations handle image gen
-        # reliably. Old code defaulted the toggle to True which meant a
-        # 2-hour model-download stall on any Kaggle session where torch
-        # got clobbered by a dep upgrade.
+        # Pre-warm klein-4B on Kaggle T4×2 if enabled — same rationale as
+        # SDXL pre-warm: first-shot load is ~30-60s including model
+        # download, and we don't want any of the parallel shot workers
+        # idle-waiting on the load lock during their attempt budget.
+        # Cheap no-op on Colab/Oracle (flux2_supported=False).
+        if "local_flux2_klein" in _priority_head and _ig_enabled.get("local_flux2_klein", True):
+            try:
+                from modules import gpu_topology as _gt_f
+                if _gt_f.flux2_supported:
+                    log.info(
+                        "shot fetch pre-warm: loading local_flux2_klein "
+                        "via device_map=balanced (blocks pool start)"
+                    )
+                    _local_flux2_klein_load()
+            except Exception as _fe:
+                log.debug(f"local_flux2_klein pre-warm skipped: {_fe}")
+        # Legacy SDXL pre-warm — keep for the fallback path when
+        # klein-4B is disabled or broken.
         if "local_sdxl" in _priority_head and _ig_enabled.get("local_sdxl", False):
             # On T4x2 (multi-GPU), warm BOTH pipelines in parallel so
             # the shot pool starts with the second card already ready

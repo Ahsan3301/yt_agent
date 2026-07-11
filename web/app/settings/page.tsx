@@ -470,35 +470,48 @@ function Toggle({ checked, onChange, label, hint }:
 const IMAGE_GEN_PROVIDERS: { key: string; label: string; hint: string }[] = [
   {
     key: "cloudflare",
-    label: "Cloudflare Flux 2 dev",
-    hint: "Black Forest Labs' current flagship via Workers AI. Best quality of the free tier providers. ~150 images/day free (auto-soft-cap at 150 to preserve headroom, then falls through to Pollinations). Needs CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN from /keys.",
+    label: "Cloudflare Flux 2 klein-9b",
+    hint: "Black Forest Labs' distilled Flux 2 via Workers AI. Best free-tier quality. ~60 images/day per account at step=6 (10k neurons/day). Add multiple accounts via /keys → CLOUDFLARE_ACCOUNTS_JSON for pool rotation. Falls through cleanly when quota drains.",
+  },
+  {
+    key: "local_flux2_klein",
+    label: "Local Flux 2 klein-4B (Kaggle T4×2 only)",
+    hint: "Same Flux 2 quality tier as CF, running LOCALLY on the Kaggle GPU pair via device_map='balanced'. Unlimited, free, Apache 2.0. Auto-skips on Colab (T4×1) and Oracle (CPU). ~10-20s/image on T4. First-boot download ~7.8 GB (backgrounded in cell 4.5).",
   },
   {
     key: "local_sdxl",
-    label: "Local SDXL (worker GPU)",
-    hint: "Highest quality once loaded. Needs GPU sm_7.0+ (T4/A100 OK, P100 fails). First-boot download ~10-15 min; cached for the rest of the Kaggle session.",
+    label: "Local SDXL (worker GPU, legacy)",
+    hint: "Legacy fallback. Needs GPU sm_7.0+ (T4/A100 OK, P100 fails). Kept as safety net if klein-4B fails to load. Recommend disabling once klein-4B is verified working.",
   },
   {
     key: "pollinations",
-    label: "Pollinations Flux",
-    hint: "Cloud API, free, no key. Fast (~10-30s/img). Occasionally rate-limits under load.",
+    label: "Pollinations Flux 1",
+    hint: "Cloud API, free, no key. Fast (~2-10s/img on a good day). Occasionally rate-limits under load. Better prompt adherence than SDXL, slightly less than Flux 2.",
   },
   {
     key: "horde",
     label: "Stable Horde SDXL",
-    hint: "Community-run SDXL via volunteers. Free, no key. Queue-dependent — 30-90s per shot depending on horde load.",
+    hint: "Community-crowdsourced SDXL via volunteers. Free, needs STABLEHORDE_API_KEY from /keys for priority queue (~18s vs 5+ min anonymous). Queue-dependent.",
   },
   {
     key: "huggingface",
     label: "HuggingFace SDXL",
-    hint: "Cloud SDXL via HuggingFace Inference API. Needs HF_TOKEN. Native negative-prompt support.",
+    hint: "Cloud SDXL via HuggingFace Inference API. Needs HF_TOKEN. Native negative-prompt support. NOTE: HF's free serverless API was deprecated in 2025 — only useful if you have paid credits.",
   },
 ];
 
 const IMAGE_GEN_DEFAULT: NonNullable<Settings["image_gen"]> = {
-  priority: ["cloudflare", "pollinations", "local_sdxl", "horde", "huggingface"],
-  enabled: { cloudflare: true, local_sdxl: true, pollinations: true, horde: true, huggingface: true } as Record<string, boolean>,
+  priority: ["cloudflare", "local_flux2_klein", "pollinations", "horde", "local_sdxl", "huggingface"],
+  enabled: {
+    cloudflare: true,
+    local_flux2_klein: true,
+    pollinations: true,
+    horde: true,
+    local_sdxl: false,
+    huggingface: true,
+  } as Record<string, boolean>,
   local_sdxl_model: "stabilityai/sdxl-turbo",
+  local_flux2_klein_model: "black-forest-labs/FLUX.2-klein-4B",
   shot_parallelism: 3,
   negative_prompt:
     "worst quality, low quality, blurry, out of focus, distorted anatomy, extra limbs, malformed hands, missing fingers, mangled face, asymmetric eyes, low res, jpeg artifacts, watermark, signature, text, logo, cropped, frame, border, cartoon, 3d render, cgi",

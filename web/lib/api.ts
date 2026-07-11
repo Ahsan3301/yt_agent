@@ -238,6 +238,9 @@ export type Settings = {
     // doesn't wipe user toggles on first load.
     // Local SDXL model id (HuggingFace repo). "" = default from config.
     local_sdxl_model?: string;
+    // Local Flux 2 klein-4B model id (HuggingFace repo). Kaggle T4×2 only.
+    // "" = default black-forest-labs/FLUX.2-klein-4B.
+    local_flux2_klein_model?: string;
     // How many shots to fetch in parallel per render. 3 = ~12-15 GB
     // VRAM on a P100/T4. Cap 6.
     shot_parallelism?: number;

@@ -169,13 +169,21 @@ DEFAULT_SETTINGS = {
         # quality with a documented daily quota. Auto-soft-cap at 150/day
         # (see modules.shotfinder._CF_DAILY_CAP) so overflow falls
         # through to Pollinations without any operator action.
-        "priority": ["cloudflare", "pollinations", "horde", "huggingface", "local_sdxl"],
+        "priority": [
+            "cloudflare",           # klein-9b pool, best quality
+            "local_flux2_klein",    # Kaggle T4×2 only, unlimited Flux 2 backup
+            "pollinations",         # Flux 1, unlimited network fallback
+            "horde",                # community SDXL safety net
+            "local_sdxl",           # legacy last-resort GPU fallback
+            "huggingface",          # optional user-token backup
+        ],
         "enabled": {
-            "cloudflare":   True,
-            "horde":        True,
-            "pollinations": True,
-            "huggingface":  True,
-            "local_sdxl":   False,
+            "cloudflare":         True,
+            "local_flux2_klein":  True,   # auto-gated to Kaggle T4×2 in _provider_ready
+            "horde":              True,
+            "pollinations":       True,
+            "huggingface":        True,
+            "local_sdxl":         False,
         },
         # `local_sdxl` uses diffusers on the worker's own GPU (T4/P100 on
         # Colab or Kaggle). Free, fast (~5-8 sec/image), no rate limits,
@@ -183,6 +191,13 @@ DEFAULT_SETTINGS = {
         # in 8 GB VRAM. Override with LOCAL_SDXL_MODEL env if you want a
         # different HF-repo checkpoint.
         "local_sdxl_model": "stabilityai/sdxl-turbo",
+        # `local_flux2_klein` runs Black Forest Labs' distilled Flux 2
+        # klein-4B on Kaggle T4×2 via device_map='balanced'. Same
+        # quality tier as CF klein-9b, unlimited, free. Apache 2.0
+        # licensed (commercial-safe). Override with
+        # LOCAL_FLUX2_KLEIN_MODEL env for a specific HF-repo checkpoint
+        # (e.g. a quantized variant).
+        "local_flux2_klein_model": "black-forest-labs/FLUX.2-klein-4B",
         # How many shots to fetch in parallel. Each worker thread runs
         # one shot's full provider chain end-to-end. Default 2 (was 3)
         # — three concurrent HF Inference requests were hitting the
