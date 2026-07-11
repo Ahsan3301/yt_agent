@@ -24,28 +24,19 @@ av==12.3.0
 kokoro>=0.9.4
 misaki>=0.9.4
 soundfile>=0.12
-# Local SDXL + Flux 2 klein-4B image generation via diffusers. Providers
-# are opt-in via the /settings "AI image generation" card and no-op on
-# CPU-only workers (checks torch.cuda.is_available() at load time).
+# Local SDXL image generation via diffusers. Provider is opt-in via
+# the /settings "AI image generation" card and no-ops on CPU-only
+# workers (checks torch.cuda.is_available() at load time).
 #
-# Version pins:
-#   - diffusers >= 0.36 ships the Flux2Pipeline class needed for klein-4B.
-#     0.30-0.35 don't have it and would fail at
-#     `from diffusers import Flux2KleinPipeline`.
-#   - transformers >= 4.51 is required by the Qwen3 text encoder klein-4B
-#     bundles. Older transformers throws
-#     `Expected Mistral3ForConditionalGeneration, got Qwen3ForCausalLM`.
-#   - Kokoro pins transformers < 4.50 in older releases. Kaggle notebook
-#     cell 2 tries `kokoro >= 1.0` first; if that resolver-conflicts,
-#     it installs Kokoro with --no-deps and voiceover.py falls back to
-#     edge-tts at runtime (already implemented — Oracle uses this path
-#     today).
-#   - sentencepiece is an indirect dep of some diffusers builds when
-#     Qwen3's tokenizer needs SP fallback.
-diffusers>=0.36
-transformers>=4.51
+# NOTE (2026-07-11): tried bumping to diffusers>=0.36 + transformers>=4.51
+# for the klein-4B provider — broke Kaggle boot (see commit ea90851 +
+# revert). Kokoro's transformers<4.50 pin is the blocker. Klein-4B code
+# stays in shotfinder.py but auto-disables at runtime via ImportError.
+# When we retry, need a proper Kaggle web-UI log to diagnose the exact
+# resolver conflict.
+diffusers>=0.30
+transformers>=4.40
 accelerate>=0.30
-sentencepiece>=0.2
 # Kokoro 0.9+ pulls `misaki` for phoneme handling. misaki calls
 # EspeakWrapper.set_data_path(...) which only exists in phonemizer-fork
 # (vanilla `phonemizer` on PyPI stopped receiving updates in 2023).
