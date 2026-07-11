@@ -182,7 +182,15 @@ def _cf_today_key() -> str:
 #    {"label":"channel-2","account_id":"bbb","api_token":"cfut_..."}]
 # Each account = ~60 imgs/day free. Rotation happens on 429-quota only.
 _CF_POOL_CACHE: list[dict] | None = None
-_CF_POOL_RAW = ""  # source string for cache invalidation
+# Cache-invalidation key derived from ALL three env vars the pool
+# builder reads. Was previously just CLOUDFLARE_ACCOUNTS_JSON, which
+# left a stale cache when a worker first rendered a global/own
+# channel (populating the fallback single-account pool) and then a
+# subsequent render used cf_source=off (which clears the single-
+# account env but not the JSON) — the stale pool kept returning the
+# previous channel's creds. Now any of the three env vars changing
+# forces a rebuild.
+_CF_POOL_ENV_FP = ""
 # In-process "burned today" set: keyed by account_id, value is the UTC
 # date (YYYY-MM-DD) it was marked. When date rolls over, the entry is
 # effectively expired.
@@ -195,14 +203,18 @@ def _cf_account_pool() -> list[dict]:
     the JSON is empty/missing (preserves the single-account behaviour
     the codebase had before this feature).
 
-    Cached across calls — the raw source string is memoised so a live
-    /keys update is picked up on the next call without a worker restart.
+    Cached across calls — invalidated whenever ANY of the three env
+    vars the builder reads changes, so per-channel apply_from_job
+    switches (own → global → off etc.) get picked up on the next call
+    without a worker restart.
     """
-    global _CF_POOL_CACHE, _CF_POOL_RAW
+    global _CF_POOL_CACHE, _CF_POOL_ENV_FP
     raw = os.getenv("CLOUDFLARE_ACCOUNTS_JSON", "").strip()
-    if raw != _CF_POOL_RAW:
-        # Env changed since last call — reparse.
-        _CF_POOL_RAW = raw
+    acc_env = os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip()
+    tok_env = os.getenv("CLOUDFLARE_API_TOKEN", "").strip()
+    fp = f"{raw}\x00{acc_env}\x00{tok_env}"
+    if fp != _CF_POOL_ENV_FP:
+        _CF_POOL_ENV_FP = fp
         _CF_POOL_CACHE = None
     if _CF_POOL_CACHE is not None:
         return _CF_POOL_CACHE
