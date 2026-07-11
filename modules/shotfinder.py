@@ -955,7 +955,14 @@ def _huggingface_generate(prompt, output_dir, trial, negative_prompt=""):
         return None, seed
 
     dest = os.path.join(output_dir, f"huggingface_{seed:08x}.jpg")
-    url = f"https://api-inference.huggingface.co/models/{_HF_MODEL}"
+    # HuggingFace shut down api-inference.huggingface.co in mid-2025 when
+    # they rebranded to Inference Providers. The domain no longer resolves
+    # at all (DNS NXDOMAIN). New endpoint is under router.huggingface.co,
+    # backed by the hf-inference provider by default. Configurable via
+    # HF_INFERENCE_PROVIDER env in case the user wants replicate/fal via
+    # HF's routing layer instead.
+    provider = os.getenv("HF_INFERENCE_PROVIDER", "hf-inference").strip() or "hf-inference"
+    url = f"https://router.huggingface.co/{provider}/models/{_HF_MODEL}"
     try:
         r = requests.post(
             url,
