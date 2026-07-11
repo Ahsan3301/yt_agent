@@ -19,6 +19,7 @@ output/
 data/run_state.json
 data/used_clips.json
 data/used_premises.json
+data/used_premises_*.json
 
 # ── Python ───────────────────────────────────────────────────
 __pycache__/

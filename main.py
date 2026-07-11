@@ -573,11 +573,26 @@ def run_pipeline(
             }
         else:
             log.info("[1/6] Researching content...")
-            content = _step(summary, "research", lambda: research(channel_type), run_id=run_id)
+            # Pass language so premise dedup is scoped per (niche, language).
+            # Previously ALL calls shared one global data/used_premises.json
+            # which caused a German horror channel to publish the same
+            # script 3× — both because the file was ephemeral on Kaggle
+            # (reset every boot) AND because the non-horror NIM-fallback
+            # path returned footage_keywords[0] every single time.
+            content = _step(summary, "research", lambda: research(
+                channel_type, language=_pipeline_lang,
+            ), run_id=run_id)
             if not content:
                 log.error("Research failed. Aborting.")
                 return _finish(summary, work_dir, False)
         log.info(f"Topic: {content['raw_title'][:80]}")
+        # Stash premise metadata on the summary so runs_db.write_run
+        # persists them. researcher._seed_from_db reads these fields
+        # on the next boot to seed the used-set — that's what keeps
+        # premise dedup alive across ephemeral Kaggle worker restarts.
+        summary["premise_key"] = str(content.get("premise_key") or content.get("raw_title") or "")[:200]
+        summary["premise"]     = str(content.get("raw_title") or "")[:400]
+        summary["language"]    = str(content.get("language") or _pipeline_lang or "en")[:8]
 
         # On T4x2, kick SDXL pre-warm on both GPUs in a background thread
         # NOW so it races the ~30-90 sec script LLM call AND the ~30-60
