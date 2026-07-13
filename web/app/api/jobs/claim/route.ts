@@ -211,29 +211,39 @@ export async function POST(req: NextRequest) {
       // filtered out above. If Oracle is one of several, the higher-
       // priority workers still get first shot without the password.
 
-      // Atomic claim via Firestore transaction. Before the 2026-07-13
-      // audit this was a plain `doc.ref.update()` with NO precondition
-      // — two concurrent workers hitting /api/jobs/claim within ~100ms
-      // both saw status="queued" in the outer query, both wrote
-      // status="claimed", and both returned the same job body →
-      // duplicate publish to YouTube. Re-read status inside the
-      // transaction and fail-fast if it's not still queued.
+      // Write-then-verify claim (portable across Firestore + PocketBase).
+      //
+      // 2026-07-13 audit #3 v1 used db.runTransaction(). The PocketBase
+      // adapter (web/lib/pocketbase-admin.ts) doesn't implement that
+      // method, so on DB_BACKEND=pocketbase (production) the call threw
+      // `runTransaction is not a function`, the enclosing catch swallowed
+      // it, and EVERY claim silently continued — a full regression.
+      //
+      // v2 uses the pattern that works on both backends:
+      //   1. Pre-check `status` from the query snapshot we already have.
+      //   2. PATCH the doc with our instance_id.
+      //   3. Re-read the doc; if `backend_instance_id` came back as
+      //      ours, we won the race. If not, the other worker's last-
+      //      write-wins PATCH stomped ours — continue.
+      // Both DBs serialize per-record writes, so exactly one worker's
+      // instance_id ends up persisted; the loser sees the winner's ID
+      // on re-read and bails out cleanly.
+      const preStatus = String(data.status || "");
+      if (preStatus !== "queued") continue;
       try {
-        const claimed = await db.runTransaction(async (tx) => {
-          const fresh = await tx.get(doc.ref);
-          if (!fresh.exists) return false;
-          const curStatus = String((fresh.data() || {}).status || "");
-          if (curStatus !== "queued") return false;
-          tx.update(doc.ref, {
-            status:              "claimed",
-            backend_instance_id: instance_id,
-            claimed_at:          now,
-            updated_at:          FieldValue.serverTimestamp(),
-          });
-          return true;
+        await doc.ref.update({
+          status:              "claimed",
+          backend_instance_id: instance_id,
+          claimed_at:          now,
+          updated_at:          FieldValue.serverTimestamp(),
         });
-        if (!claimed) {
-          // Someone else got there first — try the next queued doc.
+        // Verify OUR instance_id stuck (races: two workers PATCH within
+        // ms of each other; PB / Firestore serialize but last-write wins).
+        const check = await doc.ref.get();
+        if (!check.exists) continue;
+        const checkData = check.data() || {};
+        if (String(checkData.backend_instance_id || "") !== instance_id) {
+          // Another worker's PATCH landed after ours — they own the claim.
           continue;
         }
         return NextResponse.json({
