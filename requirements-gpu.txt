@@ -39,8 +39,25 @@ soundfile>=0.12
 #   Kokoro will still fall back to edge-tts on this transformers
 #     version (its AlbertModel path breaks at 4.50+). voiceover.py
 #     handles that gracefully at runtime.
-diffusers>=0.36,<0.40
-transformers>=4.55,<5.0
+# 2026-07-13 attempt 4 pin narrowing.
+# Attempt 3 landed transformers 4.57.6 + diffusers 0.39.0. Both had
+# broken top-level exports:
+#   cannot import name 'AlbertModel'         from 'transformers'
+#   cannot import name 'BloomPreTrainedModel' from 'transformers'
+#   cannot import name 'Qwen3ForCausalLM'    from 'transformers'
+# HuggingFace deprecated top-level model exports around transformers
+# 4.56 (submodule-only from that release onward). Kokoro AND
+# diffusers 0.39 both do `from transformers import <X>` at import
+# time and blow up.
+# Fix window:
+#   transformers 4.51..<4.56 — Qwen3ForCausalLM added, top-level
+#     exports still intact.
+#   diffusers 0.36..<0.37    — first Flux2KleinPipeline release; later
+#     0.37/0.38/0.39 track newer transformers layouts.
+# If 4.55.x still exports Qwen3ForCausalLM, klein-4B works AND Kokoro
+# might survive too.
+diffusers>=0.36,<0.37
+transformers>=4.51,<4.56
 accelerate>=0.30,<2.0
 sentencepiece>=0.2
 # Kokoro 0.9+ pulls `misaki` for phoneme handling. misaki calls
