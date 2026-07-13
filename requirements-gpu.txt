@@ -6,13 +6,16 @@
 # is guarded by try/except ImportError.
 #
 # Pin choices:
-#   torch 2.4.0 — Colab T4 has CUDA 12.x; the cu121 wheel matches.
+#   torch UNPINNED as of 2026-07-13 — Kaggle now ships torch 2.10+cu128
+#     pre-installed. Downgrading to 2.4.0+cu121 broke torchvision + torchaudio
+#     (they're built against 2.10.0) which cascaded into transformers 4.55.4
+#     lazy-import failures: AutoImageProcessor / AlbertModel / Qwen3ForCausalLM
+#     silently didn't register. Trust the base env instead — Colab
+#     also ships torch 2.4+ these days.
 #   decord 0.6.0 — only release with stable NVDEC GPU decode support.
 #   av 12.3.0 — PyAV with h264_nvenc encoder bindings; older wheels
 #               (<12) are missing the CUDA HW context plumbing.
 
---extra-index-url https://download.pytorch.org/whl/cu121
-torch==2.4.0+cu121
 decord==0.6.0
 av==12.3.0
 
@@ -56,7 +59,7 @@ soundfile>=0.12
 #     0.37/0.38/0.39 track newer transformers layouts.
 # If 4.55.x still exports Qwen3ForCausalLM, klein-4B works AND Kokoro
 # might survive too.
-diffusers>=0.36,<0.37
+diffusers>=0.37,<0.39
 transformers>=4.51,<4.56
 accelerate>=0.30,<2.0
 sentencepiece>=0.2
