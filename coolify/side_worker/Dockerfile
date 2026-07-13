@@ -68,7 +68,10 @@ RUN pip install --no-cache-dir --upgrade pip && \
         pydub>=0.25 \
         beautifulsoup4>=4.12 \
         lxml>=5.0 \
-        truststore>=0.9
+        truststore>=0.9 \
+        # Cross-platform file lock for used_premises + used_clips
+        # concurrency (audit fix #9). Same version pin as requirements.txt.
+        filelock>=3.12
 
 # Env flag consumed by shotfinder + main to short-circuit GPU probes
 # faster (torch isn't installed, so imports fail immediately anyway,
