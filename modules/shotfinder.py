@@ -1037,6 +1037,13 @@ def _huggingface_generate(prompt, output_dir, trial, negative_prompt=""):
 _LOCAL_SDXL_PIPES: dict = {}
 _LOCAL_SDXL_BROKEN = False
 _LOCAL_SDXL_BROKEN_REASON = ""
+
+# Providers whose "skipped ({reason})" line has already been logged
+# in this worker's lifetime. Second and later shots that see the same
+# provider unavailable log a terse breadcrumb instead of the full
+# ~200-char reason (audit follow-up 2026-07-13). Reset by process
+# restart — every fresh worker boot logs the full reason once.
+_SKIP_REASON_LOGGED: set[str] = set()
 # Per-device "this specific card can't load" markers. Used when GPU 0
 # works but GPU 1 OOMs during load — we want to keep serving from GPU 0
 # and just skip GPU 1 in round-robin, not tank the whole provider.
@@ -1949,7 +1956,18 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror"):
             continue
         ready, reason = _provider_ready(provider_name)
         if not ready:
-            log.info(f"  [ai-{slot+1}] {provider_name}: skipped ({reason})")
+            # Log the full reason ONCE per provider per worker lifetime.
+            # Subsequent skips (which happen on every shot of every render
+            # if the provider is disabled) log a terse breadcrumb pointing
+            # to the earlier detail. Before this the 200-char skip
+            # message spammed the log ~200×/render on any worker where
+            # klein-4B, SDXL, or an experimental provider was
+            # unavailable.
+            if provider_name not in _SKIP_REASON_LOGGED:
+                _SKIP_REASON_LOGGED.add(provider_name)
+                log.info(f"  [ai-{slot+1}] {provider_name}: skipped ({reason})")
+            else:
+                log.info(f"  [ai-{slot+1}] {provider_name}: skipped (see earlier log)")
             continue
         log.info(f"  [ai-{slot+1}] {provider_name}: trying ({ai_attempts} attempts)")
         for trial in range(ai_attempts):
