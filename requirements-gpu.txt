@@ -25,20 +25,23 @@ kokoro>=0.9.4
 misaki>=0.9.4
 soundfile>=0.12
 # Local SDXL + klein-4B image generation via diffusers.
-#   diffusers>=0.36 ships Flux2KleinPipeline (klein-4B).
-#   transformers>=4.55 — earlier note said >=4.51 but the 2026-07-11
-#     Kaggle boot log showed `Could not import module 'Qwen3ForCausalLM'`
-#     on the 4.51.x that pip resolved to. Qwen3ForCausalLM was first
-#     added in 4.51.0 but with incomplete registration; 4.53+ ships
-#     the full family. 4.55 is a known-good stable that matches
-#     diffusers 0.36's expectations.
+#
+# CAPS matter: 2026-07-13 boot log showed pip resolving
+# `transformers>=4.55` to transformers 5.13.1 (major rewrite that
+# dropped AlbertModel + BloomPreTrainedModel and moved Qwen3ForCausalLM
+# — broke Kokoro + diffusers AutoPipeline + klein-4B all at once).
+# Same class of runaway happened with diffusers landing on 0.39.0.
+# Pin both to their 4.x / 0.3x lines.
+#
+#   diffusers 0.36..<0.40 ships Flux2KleinPipeline; 0.39 works.
+#   transformers 4.55..<5.0 has Qwen3ForCausalLM; 5.x removed it.
 #   sentencepiece is required by Qwen3's tokenizer fallback.
-#   Kokoro will fall back to edge-tts on this transformers version
-#     (its AlbertModel path won't survive 4.50+). voiceover.py handles
-#     that transparently at runtime.
-diffusers>=0.36
-transformers>=4.55
-accelerate>=0.30
+#   Kokoro will still fall back to edge-tts on this transformers
+#     version (its AlbertModel path breaks at 4.50+). voiceover.py
+#     handles that gracefully at runtime.
+diffusers>=0.36,<0.40
+transformers>=4.55,<5.0
+accelerate>=0.30,<2.0
 sentencepiece>=0.2
 # Kokoro 0.9+ pulls `misaki` for phoneme handling. misaki calls
 # EspeakWrapper.set_data_path(...) which only exists in phonemizer-fork
