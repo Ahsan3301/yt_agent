@@ -1626,6 +1626,18 @@ def _local_flux2_klein_generate(prompt, output_dir, trial, negative_prompt=""):
         gen = torch.Generator(device="cuda").manual_seed(seed)
         # 1024×576 = 9:16 portrait, matches klein-9b on CF + editor's
         # target aspect for YouTube Shorts.
+        #
+        # Prompt distillation — same _distill_prompt_for_flux() used by
+        # klein-9b on Cloudflare AND Pollinations/HF Flux paths. Klein-4B
+        # is the exact same distilled Flux 2 model family as klein-9b —
+        # both benefit from the same Qwen-encoder-friendly polish (natural
+        # language sentences, no tag lists, capped length). This was
+        # missed in the initial klein-4B provider ship; without it, klein-4B
+        # on Kaggle got raw craft_image_prompt output while klein-9b on
+        # Cloudflare got the polished version — noticeable quality gap.
+        # Confirmed 2026-07-13. 600 char cap matches Pollinations Flux
+        # path (klein-4B has similar context window to Pollinations Flux).
+        distilled = _distill_prompt_for_flux(prompt)[:600]
         # num_inference_steps=5 (not the 4 BFL documents) — same fix as
         # SDXL-turbo above. Klein-4B's scheduler creates a sigmas array
         # of length steps+1. At steps=4 → length=5 → some code path in
@@ -1637,7 +1649,7 @@ def _local_flux2_klein_generate(prompt, output_dir, trial, negative_prompt=""):
         # trade vs losing every retry to the crash. Confirmed live during
         # the 2026-07-13 verify-render session.
         kwargs = {
-            "prompt": prompt,
+            "prompt": distilled,
             "num_inference_steps": 5,
             "guidance_scale": 1.0,
             "height": 1024,
