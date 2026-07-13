@@ -34,7 +34,13 @@ log = logging.getLogger(__name__)
 # a worker needs is GOOGLE_APPLICATION_CREDENTIALS_JSON_B64 (or _JSON).
 MANAGED_KEYS = [
     "GROQ_API_KEY",
+    # Multi-key pools (audit fix #12, 2026-07-13). JSON array of keys —
+    # rotate on 401/403/429 with 5-min cooldown per bad key. Falls back
+    # to the singular env above when unset. Same shape as
+    # CLOUDFLARE_ACCOUNTS_JSON but simpler: just a list of strings.
+    "GROQ_API_KEYS_JSON",
     "NVIDIA_NIM_API_KEY",
+    "NVIDIA_NIM_API_KEYS_JSON",
     "SHUTTERSTOCK_API_TOKEN",
     "SHUTTERSTOCK_CLIENT_ID",
     "SHUTTERSTOCK_CLIENT_SECRET",
@@ -51,6 +57,7 @@ MANAGED_KEYS = [
                                  #   [{"label":..,"account_id":..,"api_token":..}, ...]
                                  # ~60 imgs/day free per account; rotates on 429-quota.
     "OPENROUTER_API_KEY",        # Second-layer LLM fallback (llama-3.3 free tier)
+    "OPENROUTER_API_KEYS_JSON",  # Multi-key rotation (see NVIDIA_NIM_API_KEYS_JSON note)
     "OPENROUTER_MODEL",          # Optional model override (default llama-3.3-70b-instruct:free)
     "DISCORD_WEBHOOK_URL",       # alerting channel for renders + cleanup
     "YOUTUBE_REFRESH_TOKEN",     # auto-publish to YouTube

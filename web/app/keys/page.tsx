@@ -57,10 +57,28 @@ const SECTIONS: Array<{
         importance: "recommended",
       },
       {
+        name: "NVIDIA_NIM_API_KEYS_JSON",
+        label: "NVIDIA NIM Key Pool (multi-key rotation, JSON)",
+        description:
+          "OPTIONAL. Paste a JSON array of NIM keys as a single line — the pipeline rotates across them and cools any key that returns 401/403/429 for 5 min. Wins over NVIDIA_NIM_API_KEY above when set. Format: [\"nvapi-aaa...\",\"nvapi-bbb...\"]. Sign up for extra free NIM keys using different email aliases.",
+        get_url: "https://build.nvidia.com/explore/discover",
+        docs_url: "https://docs.api.nvidia.com/",
+        importance: "optional",
+      },
+      {
         name: "GROQ_API_KEY",
         label: "Groq (LLM fallback)",
         description:
           "Used when NIM rate-limits. Free tier: 30 req/min on Llama 3 models.",
+        get_url: "https://console.groq.com/keys",
+        docs_url: "https://console.groq.com/docs/quickstart",
+        importance: "optional",
+      },
+      {
+        name: "GROQ_API_KEYS_JSON",
+        label: "Groq Key Pool (multi-key rotation, JSON)",
+        description:
+          "OPTIONAL. Same JSON-array format as the NIM pool above. Rotates on 429 with 5-min cooldown per bad key. Wins over GROQ_API_KEY when set.",
         get_url: "https://console.groq.com/keys",
         docs_url: "https://console.groq.com/docs/quickstart",
         importance: "optional",
@@ -109,6 +127,15 @@ const SECTIONS: Array<{
         get_url: "https://openrouter.ai/keys",
         docs_url: "https://openrouter.ai/docs",
         importance: "recommended",
+      },
+      {
+        name: "OPENROUTER_API_KEYS_JSON",
+        label: "OpenRouter Key Pool (multi-key rotation, JSON)",
+        description:
+          "OPTIONAL. Same JSON-array format as the NIM/Groq pools. Rotates on 401/403/429 with 5-min cooldown per bad key. Wins over OPENROUTER_API_KEY when set.",
+        get_url: "https://openrouter.ai/keys",
+        docs_url: "https://openrouter.ai/docs",
+        importance: "optional",
       },
       {
         name: "OPENROUTER_MODEL",

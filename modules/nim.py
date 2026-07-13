@@ -48,14 +48,134 @@ def _retry(fn, attempts=3, base=2.0, desc="nim"):
 
 NIM_BASE = "https://integrate.api.nvidia.com/v1"
 
+
+# ── Multi-key pool (audit fix #12, 2026-07-13) ─────────────────
+# Each LLM provider (NIM / Groq / OpenRouter) accepts EITHER:
+#   - <PROVIDER>_API_KEY           (single key, legacy — still works)
+#   - <PROVIDER>_API_KEYS_JSON     (JSON array of keys, new)
+# When the JSON array is present, we rotate across keys: a 401/403/429
+# on one key puts it in a 5-min cooldown and the next call picks the
+# healthiest remaining key. When only the singular env is set, the
+# pool is a size-1 pool and behaviour is identical to pre-audit.
+#
+# Env fingerprint (both vars) is snapshotted so a key rotation via
+# /keys → keys_sync flushes the pool and gets picked up next call.
+class _KeyPool:
+    def __init__(self, provider: str, single_env: str, json_env: str):
+        self.provider = provider
+        self.single_env = single_env
+        self.json_env = json_env
+        self._keys: list[str] = []
+        self._cooling: dict[str, tuple[float, str]] = {}  # key → (available_at, reason)
+        self._fingerprint = ""
+        self._lock = threading.Lock()
+
+    def _refresh_if_env_changed(self):
+        fp = f"{os.getenv(self.json_env, '')}|{os.getenv(self.single_env, '')}"
+        if fp == self._fingerprint:
+            return
+        self._fingerprint = fp
+        parsed: list[str] = []
+        raw_json = (os.getenv(self.json_env, "") or "").strip()
+        if raw_json:
+            try:
+                arr = json.loads(raw_json)
+                if isinstance(arr, list):
+                    parsed = [str(k).strip() for k in arr if str(k or "").strip()]
+            except Exception as e:
+                log.warning(f"{self.provider} pool: {self.json_env} not valid JSON list ({e}) — falling back to single key")
+        if not parsed:
+            single = (os.getenv(self.single_env, "") or "").strip()
+            if single:
+                parsed = [single]
+        # Drop cooldowns for keys no longer in the pool.
+        self._keys = parsed
+        current = set(parsed)
+        self._cooling = {k: v for k, v in self._cooling.items() if k in current}
+
+    def pick(self) -> str:
+        """Return the healthiest key. Priority:
+          1. Any key never marked cooling.
+          2. Otherwise, key whose cooldown expired earliest ago.
+        Returns "" if no keys configured at all (caller raises).
+        """
+        with self._lock:
+            self._refresh_if_env_changed()
+            if not self._keys:
+                return ""
+            now = time.time()
+            never_cooled = [k for k in self._keys if k not in self._cooling]
+            if never_cooled:
+                return never_cooled[0]
+            # All cooled. Prefer keys whose cooldown has expired.
+            available = [k for k in self._keys if self._cooling.get(k, (0, ""))[0] <= now]
+            if available:
+                # Clear their cooldowns so they aren't perma-flagged.
+                for k in available:
+                    self._cooling.pop(k, None)
+                return available[0]
+            # Everyone is still cooling. Return whoever cools soonest.
+            soonest = min(self._keys, key=lambda k: self._cooling[k][0])
+            return soonest
+
+    def mark_cooling(self, key: str, seconds: float = 300.0, reason: str = ""):
+        if not key:
+            return
+        with self._lock:
+            if key not in self._keys:
+                return
+            # Never punish the ONLY key in a pool — cooldown would just
+            # break every future call. Still log so operator knows.
+            if len(self._keys) <= 1:
+                log.warning(f"{self.provider} pool: only 1 key, cannot rotate ({reason})")
+                return
+            self._cooling[key] = (time.time() + seconds, reason)
+            healthy = len([k for k in self._keys if k not in self._cooling
+                           or self._cooling[k][0] <= time.time()])
+            log.warning(
+                f"{self.provider} pool: key ending …{key[-4:]} cooling {seconds:.0f}s "
+                f"({reason}); {healthy}/{len(self._keys)} keys healthy"
+            )
+
+    def size(self) -> int:
+        with self._lock:
+            self._refresh_if_env_changed()
+            return len(self._keys)
+
+
+_NIM_POOL = _KeyPool("nim", "NVIDIA_NIM_API_KEY", "NVIDIA_NIM_API_KEYS_JSON")
+_GROQ_POOL = _KeyPool("groq", "GROQ_API_KEY", "GROQ_API_KEYS_JSON")
+_OR_POOL = _KeyPool("openrouter", "OPENROUTER_API_KEY", "OPENROUTER_API_KEYS_JSON")
+
+
+def _mark_key_cooling_from_exc(pool: "_KeyPool", key: str, exc: Exception) -> bool:
+    """If the exception is a 401/403/429, cool the key and return True
+    (caller should retry with next key). Otherwise return False (caller
+    should raise / retry with same key per its own backoff)."""
+    if not key:
+        return False
+    status = None
+    try:
+        resp = getattr(exc, "response", None)
+        if resp is not None:
+            status = getattr(resp, "status_code", None)
+    except Exception:
+        pass
+    if status in (401, 403, 429):
+        pool.mark_cooling(key, seconds=300.0, reason=f"HTTP {status}")
+        return True
+    return False
+
+
 def _nim_key() -> str:
     """Read the NIM key from env at CALL time — not import time.
 
-    keys_sync.pull_into_env() may fire after this module is first
-    imported (e.g. dashboard set the key AFTER worker boot). A
-    module-level constant would snapshot the empty pre-pull value and
-    is_available() would report False forever."""
-    return os.getenv("NVIDIA_NIM_API_KEY", "") or ""
+    Uses the multi-key pool (audit fix #12); returns the current healthy
+    key or "" if none configured. keys_sync.pull_into_env() may fire
+    after this module is first imported (e.g. dashboard set the key
+    AFTER worker boot); the pool re-reads env on every call, so a
+    late-arrived key is picked up transparently."""
+    return _NIM_POOL.pick()
 
 # Backwards-compat property — older code paths that still reference
 # `nim.NIM_KEY` see whatever the env currently has.
@@ -159,7 +279,7 @@ def _try_provider(name: str, messages, max_tokens, temperature,
     None on skip (missing key / breaker open / empty). Raises on network
     failure so the caller can record the exception for the last-err path."""
     if name == "groq":
-        if not os.getenv("GROQ_API_KEY", "").strip():
+        if _GROQ_POOL.size() == 0:
             return None
         if _groq_open():
             return None
@@ -178,7 +298,7 @@ def _try_provider(name: str, messages, max_tokens, temperature,
         _groq_record(False)
         return None
     if name == "openrouter":
-        if not os.getenv("OPENROUTER_API_KEY", "").strip():
+        if _OR_POOL.size() == 0:
             return None
         _or_model = os.getenv("OPENROUTER_MODEL", "").strip() or "meta-llama/llama-3.3-70b-instruct:free"
         try:
@@ -285,23 +405,35 @@ def is_available():
 
 
 def _post_chat(payload, timeout=60, attempts=3):
-    _k = _nim_key()
-    if not _k:
-        raise RuntimeError("NVIDIA_NIM_API_KEY not set")
-    headers = {
-        "Authorization": f"Bearer {_k}",
-        "Content-Type": "application/json",
-    }
-
+    # Rotate across the NIM pool on 401/403/429. Each _once call captures
+    # the current pool.pick() so a failed key is replaced BEFORE the
+    # backoff sleep in _retry. Non-auth errors still go through _retry's
+    # transient-error backoff logic on the same key.
     def _once():
+        k = _nim_key()
+        if not k:
+            raise RuntimeError("no NIM key configured (set NVIDIA_NIM_API_KEY or NVIDIA_NIM_API_KEYS_JSON)")
+        headers = {"Authorization": f"Bearer {k}", "Content-Type": "application/json"}
         _wait_for_slot()
-        r = requests.post(f"{NIM_BASE}/chat/completions", headers=headers, json=payload, timeout=timeout)
-        r.raise_for_status()
-        # Same charset fix as the streaming path — requests defaults to
-        # Latin-1 for JSON without a charset, which turns • / — / curly
-        # quotes into mojibake before r.json() sees them. Force UTF-8.
-        r.encoding = "utf-8"
-        return r.json()
+        try:
+            r = requests.post(f"{NIM_BASE}/chat/completions", headers=headers, json=payload, timeout=timeout)
+            r.raise_for_status()
+            r.encoding = "utf-8"
+            return r.json()
+        except requests.HTTPError as e:
+            if _mark_key_cooling_from_exc(_NIM_POOL, k, e):
+                # Immediate retry on the next healthy key — but only if
+                # the pool has one. Skips the _retry backoff to avoid a
+                # 3-attempt storm on the same-cooled key.
+                if _NIM_POOL.size() > 1:
+                    k2 = _nim_key()
+                    if k2 and k2 != k:
+                        headers["Authorization"] = f"Bearer {k2}"
+                        r = requests.post(f"{NIM_BASE}/chat/completions", headers=headers, json=payload, timeout=timeout)
+                        r.raise_for_status()
+                        r.encoding = "utf-8"
+                        return r.json()
+            raise
 
     return _retry(_once, attempts=attempts, desc="chat")
 
@@ -319,20 +451,28 @@ def _post_chat_streamed_pair(payload, read_timeout=20, total_timeout=60):
     on. Now 20s per chunk × 2 attempts + Groq escape = ~1-2 min
     absolute worst case. Confirmed live 2026-07-09.
     """
-    _k = _nim_key()
-    if not _k:
-        raise RuntimeError("NVIDIA_NIM_API_KEY not set")
-    headers = {
-        "Authorization": f"Bearer {_k}",
-        "Content-Type": "application/json",
-        "Accept": "text/event-stream",
-    }
     payload = dict(payload)
     payload["stream"] = True
 
     def _once():
+        k = _nim_key()
+        if not k:
+            raise RuntimeError("no NIM key configured (set NVIDIA_NIM_API_KEY or NVIDIA_NIM_API_KEYS_JSON)")
+        headers = {
+            "Authorization": f"Bearer {k}",
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+        }
         _wait_for_slot()
-        return _stream_once(payload, headers, read_timeout, total_timeout)
+        try:
+            return _stream_once(payload, headers, read_timeout, total_timeout)
+        except requests.HTTPError as e:
+            if _mark_key_cooling_from_exc(_NIM_POOL, k, e) and _NIM_POOL.size() > 1:
+                k2 = _nim_key()
+                if k2 and k2 != k:
+                    headers["Authorization"] = f"Bearer {k2}"
+                    return _stream_once(payload, headers, read_timeout, total_timeout)
+            raise
 
     return _retry(_once, attempts=2, desc="chat-stream")
 
@@ -562,9 +702,9 @@ def _groq_chat_fallback(messages, max_tokens=2048, temperature=0.7,
     Returns the content string on success, or empty string / raises
     on failure — same shape as chat().
     """
-    _g = os.getenv("GROQ_API_KEY", "") or ""
+    _g = _GROQ_POOL.pick()
     if not _g:
-        raise RuntimeError("GROQ_API_KEY not set (add via /keys)")
+        raise RuntimeError("no Groq key configured (set GROQ_API_KEY or GROQ_API_KEYS_JSON)")
 
     payload = {
         "model": os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
@@ -574,20 +714,28 @@ def _groq_chat_fallback(messages, max_tokens=2048, temperature=0.7,
     }
     if response_format:
         payload["response_format"] = response_format
-    headers = {
-        "Authorization": f"Bearer {_g}",
-        "Content-Type": "application/json",
-    }
-    r = requests.post(
-        "https://api.groq.com/openai/v1/chat/completions",
-        headers=headers, json=payload, timeout=timeout,
-    )
-    r.raise_for_status()
-    data = r.json() or {}
-    choices = data.get("choices") or []
-    if not choices:
-        return ""
-    return (choices[0].get("message") or {}).get("content", "") or ""
+
+    def _do(key: str) -> str:
+        r = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+            json=payload, timeout=timeout,
+        )
+        r.raise_for_status()
+        data = r.json() or {}
+        choices = data.get("choices") or []
+        if not choices:
+            return ""
+        return (choices[0].get("message") or {}).get("content", "") or ""
+
+    try:
+        return _do(_g)
+    except requests.HTTPError as e:
+        if _mark_key_cooling_from_exc(_GROQ_POOL, _g, e) and _GROQ_POOL.size() > 1:
+            _g2 = _GROQ_POOL.pick()
+            if _g2 and _g2 != _g:
+                return _do(_g2)
+        raise
 
 
 def _openrouter_chat_fallback(messages, max_tokens=2048, temperature=0.7,
@@ -595,9 +743,9 @@ def _openrouter_chat_fallback(messages, max_tokens=2048, temperature=0.7,
     """Call OpenRouter's OpenAI-compatible chat endpoint. Model is
     configurable via OPENROUTER_MODEL env; default is the free-tier
     llama-3.3-70b-instruct which is generous but rate-limited."""
-    _k = os.getenv("OPENROUTER_API_KEY", "") or ""
+    _k = _OR_POOL.pick()
     if not _k:
-        raise RuntimeError("OPENROUTER_API_KEY not set (add via /keys)")
+        raise RuntimeError("no OpenRouter key configured (set OPENROUTER_API_KEY or OPENROUTER_API_KEYS_JSON)")
     _model = os.getenv("OPENROUTER_MODEL", "").strip() or "meta-llama/llama-3.3-70b-instruct:free"
     # Sanity-check the model string. OpenRouter IDs always have a
     # provider/name shape (e.g. meta-llama/llama-3.3-70b-instruct:free,
@@ -619,23 +767,33 @@ def _openrouter_chat_fallback(messages, max_tokens=2048, temperature=0.7,
     }
     if response_format:
         payload["response_format"] = response_format
-    headers = {
-        "Authorization": f"Bearer {_k}",
-        "Content-Type": "application/json",
-        # OpenRouter recommends these for attribution + rate-limit tiers
-        "HTTP-Referer": os.getenv("OPENROUTER_REFERER", "https://yt-agent.thyker.online"),
-        "X-Title": "yt-agent",
-    }
-    r = requests.post(
-        "https://openrouter.ai/api/v1/chat/completions",
-        headers=headers, json=payload, timeout=timeout,
-    )
-    r.raise_for_status()
-    data = r.json() or {}
-    choices = data.get("choices") or []
-    if not choices:
-        return ""
-    return (choices[0].get("message") or {}).get("content", "") or ""
+    def _do(key: str) -> str:
+        headers = {
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+            # OpenRouter recommends these for attribution + rate-limit tiers
+            "HTTP-Referer": os.getenv("OPENROUTER_REFERER", "https://yt-agent.thyker.online"),
+            "X-Title": "yt-agent",
+        }
+        r = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers=headers, json=payload, timeout=timeout,
+        )
+        r.raise_for_status()
+        data = r.json() or {}
+        choices = data.get("choices") or []
+        if not choices:
+            return ""
+        return (choices[0].get("message") or {}).get("content", "") or ""
+
+    try:
+        return _do(_k)
+    except requests.HTTPError as e:
+        if _mark_key_cooling_from_exc(_OR_POOL, _k, e) and _OR_POOL.size() > 1:
+            _k2 = _OR_POOL.pick()
+            if _k2 and _k2 != _k:
+                return _do(_k2)
+        raise
 
 
 def chat_with_tools(messages, tools, model=None, max_tokens=2048,
@@ -794,9 +952,9 @@ def _groq_vision_score_fallback(messages, timeout=30):
     last-ditch fallback when NIM's vision chain has failed.
     OpenAI-compatible endpoint. Returns raw text; caller parses.
     """
-    _g = os.getenv("GROQ_API_KEY", "") or ""
+    _g = _GROQ_POOL.pick()
     if not _g:
-        raise RuntimeError("GROQ_API_KEY not set")
+        raise RuntimeError("no Groq key configured (set GROQ_API_KEY or GROQ_API_KEYS_JSON)")
     payload = {
         "model": os.getenv("GROQ_VISION_MODEL",
                            "meta-llama/llama-4-scout-17b-16e-instruct"),
@@ -804,17 +962,25 @@ def _groq_vision_score_fallback(messages, timeout=30):
         "max_tokens": 16,
         "temperature": 0.0,
     }
-    headers = {
-        "Authorization": f"Bearer {_g}",
-        "Content-Type": "application/json",
-    }
-    r = requests.post(
-        "https://api.groq.com/openai/v1/chat/completions",
-        headers=headers, json=payload, timeout=timeout,
-    )
-    r.raise_for_status()
-    data = r.json() or {}
-    choices = data.get("choices") or []
-    if not choices:
-        return ""
-    return (choices[0].get("message") or {}).get("content", "") or ""
+
+    def _do(key: str) -> str:
+        r = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+            json=payload, timeout=timeout,
+        )
+        r.raise_for_status()
+        data = r.json() or {}
+        choices = data.get("choices") or []
+        if not choices:
+            return ""
+        return (choices[0].get("message") or {}).get("content", "") or ""
+
+    try:
+        return _do(_g)
+    except requests.HTTPError as e:
+        if _mark_key_cooling_from_exc(_GROQ_POOL, _g, e) and _GROQ_POOL.size() > 1:
+            _g2 = _GROQ_POOL.pick()
+            if _g2 and _g2 != _g:
+                return _do(_g2)
+        raise
