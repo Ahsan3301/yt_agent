@@ -419,6 +419,46 @@ def run_pipeline(
     log.info(f"Starting pipeline | channel={channel_type} | run={run_id}")
     log.info("=" * 50)
 
+    # Preference-visibility audit (2026-07-13). The user asked that no
+    # preference silently gets ignored. Log at pipeline start:
+    #   - The full image_gen.priority list from settings.
+    #   - Which providers are READY on THIS worker.
+    #   - If a top-3 priority provider is NOT ready, WARN loudly with
+    #     the reason so the operator sees it in the log stream.
+    try:
+        from modules.config import load_settings as _ls_pref
+        from modules import shotfinder as _sf_pref
+        _ig = (_ls_pref().get("image_gen") or {})
+        _prio = list(_ig.get("priority") or [])
+        _enabled = dict(_ig.get("enabled") or {})
+        _ready = []
+        _skipped = []
+        for _p in _prio:
+            if not _enabled.get(_p, True):
+                _skipped.append((_p, "disabled in /settings"))
+                continue
+            try:
+                _ok, _why = _sf_pref._provider_ready(_p)
+            except Exception as _pe:
+                _ok, _why = False, f"probe error: {_pe}"
+            (_ready if _ok else _skipped).append((_p, _why) if not _ok else _p)
+        log.info(f"  image_gen.priority: {_prio}")
+        log.info(f"  image_gen ready on this worker: {[p for p in _ready]}")
+        # Warn only for providers in the TOP 3 that got skipped — the
+        # tail is expected to be fallback-only. WARN, not INFO, so it
+        # shows up in the log stream even if grep is filtering for
+        # ERROR/WARN.
+        _top3 = _prio[:3]
+        _top3_skipped = [(p, r) for p, r in _skipped if p in _top3]
+        for _p, _reason in _top3_skipped:
+            log.warning(
+                f"  ⚠️  TOP-{_prio.index(_p)+1} image provider {_p!r} unavailable on this worker: {_reason}. "
+                f"Chain will fall to slot {_prio.index(_p)+2} → {_prio[_prio.index(_p)+1] if _prio.index(_p)+1 < len(_prio) else '(end)'}. "
+                f"If you want {_p!r} specifically, edit the channel's allowed_workers so a compatible worker claims the render."
+            )
+    except Exception as _pref_e:
+        log.debug(f"preference-visibility audit skipped: {_pref_e}")
+
     run_state.start(run_id=run_id, channel=channel_type, dry_run=dry_run)
     # Stream this run's logs to Firestore runs_index/<id>/logs so the
     # dashboard's LogsPanel can subscribe in real-time. Best-effort —
