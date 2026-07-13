@@ -141,12 +141,27 @@ def _voice_config(channel_type, language=None, voice_override=None):
     preset = get_channel(channel_type)
     voice, rate, pitch = _resolve_voice(preset, language, voice_override=voice_override)
     s = load_settings().get("voice", {})
+    # Kokoro voice priority (per 2026-07-13 audit #10 — was hardcoded
+    # "am_michael" fallback which ignored the niche preset entirely):
+    #   1. Global settings.voice.kokoro_voice_<niche>  — operator's
+    #      per-niche override in /settings.
+    #   2. Niche preset's kokoro_voice (from modules/channels.py).
+    #   3. Hardcoded "am_michael" as last resort.
+    _kokoro_voice = (
+        s.get(f"kokoro_voice_{channel_type}")
+        or preset.get("kokoro_voice")
+        or "am_michael"
+    )
+    _kokoro_speed = float(
+        s.get(f"kokoro_speed_{channel_type}",
+              preset.get("kokoro_speed", 0.9))
+    )
     return {
         "edge":         voice,
         "edge_rate":    rate,
         "edge_pitch":   pitch,
-        "kokoro":       s.get(f"kokoro_voice_{channel_type}", "am_michael"),
-        "kokoro_speed": float(s.get(f"kokoro_speed_{channel_type}", 0.9)),
+        "kokoro":       _kokoro_voice,
+        "kokoro_speed": _kokoro_speed,
         "language":     (language or preset.get("language") or "en").lower()[:2],
     }
 

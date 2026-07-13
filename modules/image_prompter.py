@@ -213,13 +213,33 @@ def _brief_for(channel: str) -> str:
 
 
 def _craft_prompt_template(narration_excerpt, visual_description, channel,
-                           attempt, period=""):
+                           attempt, period="", tone_override="", language=""):
     angle = _ANGLE_VARIANTS[attempt % len(_ANGLE_VARIANTS)]
     brief = _brief_for(channel)
     period_line = (
         f'\nSTORY PERIOD (all objects, clothes, tech in the image MUST '
         f'belong to this era): "{period.strip()}"'
         if period and period.strip()
+        else ""
+    )
+    # Per-channel tone_override wins over niche brief mood — added
+    # 2026-07-13 (audit #11). Language is passed through for context
+    # (Flux 2 klein is English-native so we keep prompt English) but
+    # the narration_excerpt is in the target language, which the LLM
+    # needs to know not to translate for the "spoken during this shot"
+    # framing.
+    tone_line = (
+        f'\nOPERATOR-SET TONE (overrides niche mood): "{tone_override.strip()}" — '
+        f'let this tone tint the LIGHTING colour temperature, the camera '
+        f'framing, and the mood sentences.'
+        if tone_override and tone_override.strip()
+        else ""
+    )
+    lang_line = (
+        f'\nNARRATION-LANGUAGE NOTE: The narration excerpt above is in '
+        f'language code "{language}" — treat it as intent, do NOT '
+        f'translate. The image prompt itself stays in English.'
+        if language and language != "en"
         else ""
     )
 
@@ -253,6 +273,7 @@ NICHE STYLE BRIEF (weave the LOOK, LIGHT, CAMERA, and STORYTELLING RULE
 into your prompt; obey the "avoid" sentence — never list avoided items
 as a negative-tag string):
   {brief}
+{tone_line}{lang_line}
 {_COHERENCE_RULES}
 
 FORMAT REQUIREMENTS:
@@ -267,7 +288,8 @@ Respond with ONLY the image prompt text."""
 
 
 def craft_image_prompt(narration_excerpt, visual_description,
-                       channel="horror", attempt=0, period=""):
+                       channel="horror", attempt=0, period="",
+                       tone_override="", language=""):
     """
     Return a polished text-to-image prompt for this shot, OR None if NIM
     is unavailable. Caller should fall back to the storyboard's raw
@@ -283,7 +305,8 @@ def craft_image_prompt(narration_excerpt, visual_description,
     if not nim.is_available():
         return None
     user = _craft_prompt_template(narration_excerpt, visual_description,
-                                  channel, attempt, period=period)
+                                  channel, attempt, period=period,
+                                  tone_override=tone_override, language=language)
     # JSON mode keeps reasoning models (Nemotron 120b) from rambling — when
     # they have a structured schema to fill, they produce the final answer
     # efficiently instead of burning tokens on internal monologue.

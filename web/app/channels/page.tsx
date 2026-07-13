@@ -38,6 +38,9 @@ type Channel = {
   voice?: string | null;
   youtube_account_id?: string | null;
   run_at_hour?: number | null;
+  // IANA timezone (e.g. "America/Toronto", "Europe/Berlin"). Empty/null =
+  // UTC. Interpreted by the scheduled-render cron when checking run_at_hour.
+  timezone?: string | null;
   // Per-channel overrides — when unset, the niche preset's default wins.
   // tone bleeds across channels if only set in global /settings; setting
   // it here scopes it to this channel only.
@@ -550,6 +553,17 @@ function ChannelForm({
   const [runAtHour, setRunAtHour] = useState<number | null>(
     typeof initial?.run_at_hour === "number" ? initial.run_at_hour : null,
   );
+  // IANA timezone the run_at_hour is interpreted in. Empty = UTC (legacy
+  // behaviour). Auto-populated from the browser on new channels so most
+  // operators never touch it. Added 2026-07-13 (audit #6) — before this
+  // the hour was silently UTC-only.
+  const [timezone, setTimezone] = useState<string>(
+    initial?.timezone || (
+      typeof Intl !== "undefined" && Intl.DateTimeFormat
+        ? (Intl.DateTimeFormat().resolvedOptions().timeZone || "")
+        : ""
+    ),
+  );
   const [tone, setTone] = useState<string>(initial?.tone || "");
   const [privacy, setPrivacy] = useState<"" | "public" | "unlisted" | "private">(
     (initial?.privacy as "public" | "unlisted" | "private" | undefined) || "",
@@ -710,6 +724,7 @@ function ChannelForm({
       voice: voice || null,
       youtube_account_id: youtubeAccountId || null,
       run_at_hour: runAtHour,
+      timezone: timezone.trim() || null,
       tone: tone.trim() || null,
       privacy: privacy || null,
       discord_webhook: discordWebhook.trim() || null,
@@ -834,7 +849,9 @@ function ChannelForm({
           </div>
         </div>
         <div>
-          <label className="label">Publish time (UTC hour)</label>
+          <label className="label">
+            Publish time ({timezone ? `${timezone.split("/").pop()?.replace(/_/g, " ")}` : "UTC"})
+          </label>
           <select
             className="select"
             value={runAtHour == null ? "" : String(runAtHour)}
@@ -843,13 +860,28 @@ function ChannelForm({
               setRunAtHour(v === "" ? null : Math.max(0, Math.min(23, parseInt(v, 10))));
             }}
           >
-            <option value="">Default (09:00 UTC)</option>
+            <option value="">Default (09:00)</option>
             {Array.from({ length: 24 }, (_, h) => (
-              <option key={h} value={h}>{String(h).padStart(2, "0")}:00 UTC</option>
+              <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>
             ))}
           </select>
+          <input
+            type="text" className="input mt-1" placeholder="Timezone (e.g. America/Toronto)"
+            value={timezone} onChange={(e) => setTimezone(e.target.value)}
+            list="_common_tz_list"
+          />
+          <datalist id="_common_tz_list">
+            <option value="UTC" /><option value="America/New_York" />
+            <option value="America/Toronto" /><option value="America/Chicago" />
+            <option value="America/Denver" /><option value="America/Los_Angeles" />
+            <option value="Europe/London" /><option value="Europe/Berlin" />
+            <option value="Europe/Paris" /><option value="Europe/Madrid" />
+            <option value="Asia/Karachi" /><option value="Asia/Dubai" />
+            <option value="Asia/Kolkata" /><option value="Asia/Tokyo" />
+            <option value="Asia/Singapore" /><option value="Australia/Sydney" />
+          </datalist>
           <div className="text-[10px] text-neutral-500 mt-0.5">
-            The daily cron fires each hour; only channels whose hour matches queue jobs. Your local time now:{" "}
+            Empty timezone = UTC. Your local time now:{" "}
             <span className="text-neutral-300">{new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
             {" · "}UTC now: <span className="text-neutral-300">{String(new Date().getUTCHours()).padStart(2, "0")}:00</span>
           </div>

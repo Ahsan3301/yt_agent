@@ -27,6 +27,8 @@ type ChannelDoc = {
   niche: string;
   daily_count: number;
   run_at_hour?: number | null;
+  // IANA timezone (e.g. "America/Toronto"). Null = UTC.
+  timezone?: string | null;
   enabled: boolean;
   description?: string;
   web_research?: boolean | null;
@@ -376,6 +378,14 @@ export async function POST(req: NextRequest) {
          body.run_at_hour >= 0 && body.run_at_hour <= 23)
           ? Math.floor(body.run_at_hour)
           : null,
+      // IANA timezone the run_at_hour is interpreted in. Empty/null = UTC
+      // (legacy behaviour). Validation: any non-empty string ≤ 60 chars —
+      // Intl.DateTimeFormat at read time in scheduled-render is the
+      // source of truth for whether the TZ is valid; a typo falls back
+      // to UTC + logs a warning rather than 500ing at save time.
+      timezone: (typeof body.timezone === "string" && body.timezone.trim())
+        ? body.timezone.trim().slice(0, 60)
+        : null,
       tone: (typeof body.tone === "string" && body.tone.trim())
         ? body.tone.trim().slice(0, 40)
         : null,

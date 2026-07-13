@@ -45,11 +45,12 @@ const STEP_ORDER = [
 ] as const;
 
 const STATUS_STYLES: Record<string, string> = {
-  queued:    "border-amber-500/30 bg-amber-500/10 text-amber-300",
-  running:   "border-sky-500/30 bg-sky-500/10 text-sky-300",
-  complete:  "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
-  failed:    "border-red-500/30 bg-red-500/10 text-red-300",
-  cancelled: "border-neutral-500/30 bg-neutral-500/10 text-neutral-300",
+  queued:        "border-amber-500/30 bg-amber-500/10 text-amber-300",
+  running:       "border-sky-500/30 bg-sky-500/10 text-sky-300",
+  complete:      "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
+  needs_publish: "border-orange-500/30 bg-orange-500/10 text-orange-300",
+  failed:        "border-red-500/30 bg-red-500/10 text-red-300",
+  cancelled:     "border-neutral-500/30 bg-neutral-500/10 text-neutral-300",
 };
 
 export default function JobDetailPage({

@@ -126,13 +126,43 @@ export async function POST(req: NextRequest) {
         const count = Math.max(0, Math.min(10, Number(c.daily_count) || 0));
         if (!niche || count === 0) return;
         // Hour filter: skip channels whose configured hour doesn't
-        // match the current UTC hour. null → fires at DEFAULT_HOUR.
-        // "force=1" bypasses (used by the per-channel Run Now button).
+        // match the current hour in the channel's timezone.
+        //
+        // 2026-07-13 audit #6: `run_at_hour` was silently UTC-only,
+        // so a user in America/Toronto picking "9" got renders at
+        // 04:00 or 05:00 local time (and DST didn't work). Now the
+        // channel can carry an IANA timezone in `c.timezone` (e.g.
+        // "America/Toronto"); we compute the current hour in that
+        // TZ and compare. If unset, we fall back to UTC (existing
+        // behaviour — no silent breakage for channels without TZ).
         const channelHour = (typeof c.run_at_hour === "number" &&
                              c.run_at_hour >= 0 && c.run_at_hour <= 23)
           ? Math.floor(c.run_at_hour as number)
           : DEFAULT_HOUR;
-        if (!forceAll && channelHour !== nowHour) return;
+        const channelTz = (typeof c.timezone === "string" && c.timezone.trim())
+          ? String(c.timezone).trim()
+          : "";
+        let currentHourInTz: number = nowHour;
+        if (channelTz) {
+          try {
+            // Intl.DateTimeFormat handles IANA TZ + DST natively.
+            const nowInTz = new Intl.DateTimeFormat("en-US", {
+              timeZone: channelTz, hour: "numeric", hour12: false,
+            }).formatToParts(new Date())
+              .find((p) => p.type === "hour")?.value ?? String(nowHour);
+            const parsed = Number(nowInTz);
+            if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 23) {
+              currentHourInTz = parsed % 24;
+            }
+          } catch {
+            // Invalid TZ (typo) — fall back to UTC and log so the operator
+            // sees it in the route log.
+            logRoute(reqId, "invalid channel timezone; falling back to UTC", {
+              channel: c.name, timezone: channelTz,
+            });
+          }
+        }
+        if (!forceAll && channelHour !== currentHourInTz) return;
         const allowedWorkers = Array.isArray(c.allowed_workers)
           ? (c.allowed_workers as unknown[]).filter((x): x is string => typeof x === "string")
           : [];

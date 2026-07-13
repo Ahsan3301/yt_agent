@@ -46,15 +46,19 @@ type Job = {
   web_research?: boolean | null;
 };
 
-const STATUS_FILTERS = ["all", "queued", "running", "complete", "failed", "cancelled"] as const;
+const STATUS_FILTERS = ["all", "queued", "running", "complete", "needs_publish", "failed", "cancelled"] as const;
 type Filter = typeof STATUS_FILTERS[number];
 
 const STATUS_STYLES: Record<string, string> = {
-  queued:    "border-amber-500/30 bg-amber-500/10 text-amber-300",
-  running:   "border-sky-500/30 bg-sky-500/10 text-sky-300",
-  complete:  "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
-  failed:    "border-red-500/30 bg-red-500/10 text-red-300",
-  cancelled: "border-neutral-500/30 bg-neutral-500/10 text-neutral-300",
+  queued:        "border-amber-500/30 bg-amber-500/10 text-amber-300",
+  running:       "border-sky-500/30 bg-sky-500/10 text-sky-300",
+  complete:      "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
+  // Render succeeded but the publish/upload leg failed. Not a full
+  // failure — the video is on disk on the worker. Distinct amber-orange
+  // so the operator can spot it at a glance and hit Retry Publish.
+  needs_publish: "border-orange-500/30 bg-orange-500/10 text-orange-300",
+  failed:        "border-red-500/30 bg-red-500/10 text-red-300",
+  cancelled:     "border-neutral-500/30 bg-neutral-500/10 text-neutral-300",
 };
 
 export default function QueuePage() {

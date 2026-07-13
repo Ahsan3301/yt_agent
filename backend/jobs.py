@@ -483,25 +483,38 @@ def _run_one(job: dict[str, Any]):
                 upload_error = str(e)
                 log.warning(f"job {job_id} upload skipped: {upload_error}")
 
-            # Terminal status: rendered locally OK. Upload failure is
-            # SURFACED as a job error but the job is still marked
-            # complete-with-warning — the local file exists, the run
-            # summary is persisted, and the Library shows an entry.
-            job["status"] = "complete"
-            # Clear the in-progress step so the /queue UI stops rendering
-            # "Uploading" forever. The pipeline sets current_step to the
-            # last stage it ran; on success we want it to read as done.
-            job["current_step"] = "done"
-            job["current_step_label"] = "Complete"
-            job["percent"] = 100
+            # Terminal status.
+            #
+            # 2026-07-13 audit #7: previously status was always set to
+            # "complete" even when the upload/publish failed, leaving
+            # the /queue UI with no way to surface a "please retry the
+            # publish" state. The worker container's local /api/runs/*
+            # fallback URL 404s the moment the container cycles, so a
+            # complete-but-not-published run silently loses its video.
+            #
+            # New behaviour:
+            #   - render OK + upload OK → status="complete"
+            #   - render OK + upload FAIL → status="needs_publish". Queue
+            #     UI can surface a "Retry publish" button and route it
+            #     to /api/queue/<id>/republish or the side_jobs
+            #     publish_youtube path (both already exist for the YT
+            #     upload leg).
             if public:
+                job["status"] = "complete"
                 job["video_url"] = public
             else:
-                # Fallback: dashboard-hosted route serving from local disk
-                # (only works while the worker container lives).
+                job["status"] = "needs_publish"
+                # Keep the local fallback URL so the operator can still
+                # inspect the render while the worker container is alive.
                 job["video_url"] = f"/api/runs/{job['run_id']}/video"
                 if upload_error:
                     job["error"] = f"upload failed: {upload_error[:400]}"
+            # Clear the in-progress step so the /queue UI stops rendering
+            # "Uploading" forever. Even for needs_publish, the render is
+            # done — the retry surface handles the publish separately.
+            job["current_step"] = "done"
+            job["current_step_label"] = "Complete" if public else "Needs publish"
+            job["percent"] = 100
 
             # Persist the run summary + index UNCONDITIONALLY so the
             # Library page shows every completed render — even ones

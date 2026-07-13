@@ -776,7 +776,10 @@ def run_pipeline(
 
         # Storyboard: NIM breaks the narration into shots with per-shot
         # visual_description, search_query, and ai_prompt.
-        shots = plan_shots(script["narration"], num_shots, channel=channel_type)
+        shots = plan_shots(
+            script["narration"], num_shots, channel=channel_type,
+            language=_pipeline_lang, tone_override=_tone_clean,
+        )
         footage = None
 
         if shots:
@@ -820,6 +823,7 @@ def run_pipeline(
             sources = _step(summary, "footage", lambda: fetch_shots(
                 shots, clips_dir, channel=channel_type,
                 preset_sources=preset_sources,
+                tone_override=_tone_clean, language=_pipeline_lang,
             ), run_id=run_id)
             # Music separately — same provider chain as before, just no images.
             from modules.footage import get_music, MUSIC_KEYWORDS
@@ -868,6 +872,7 @@ def run_pipeline(
             sources = _step(summary, "footage", lambda: fetch_shots(
                 shots, clips_dir, channel=channel_type,
                 preset_sources=[],
+                tone_override=_tone_clean, language=_pipeline_lang,
             ), run_id=run_id)
             from modules.footage import get_music, MUSIC_KEYWORDS
             from modules.config import load_settings as _ls

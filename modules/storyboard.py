@@ -244,15 +244,17 @@ def _well_formed(shot):
     return True
 
 
-def plan_shots(narration, num_shots, channel: str = "horror", max_attempts=2):
+def plan_shots(narration, num_shots, channel: str = "horror",
+               max_attempts=2, language: str = "en", tone_override: str = ""):
     """
     Ask NIM to break `narration` into ~`num_shots` storyboard shots.
 
     `channel` selects the genre/tone/visual-style/keyword block injected
-    into the prompt. Previously the prompt was hardcoded for gothic-horror
-    which produced off-topic shots (and thus off-topic images) for
-    science / wisdom / finance channels. Now every channel gets prompts
-    grounded in its actual subject matter.
+    into the prompt. `language` + `tone_override` were added 2026-07-13
+    (audit #11): previously the storyboard prompt was entirely English +
+    used the hardcoded per-niche tone block, so a Spanish-narration
+    channel with a per-channel tone override got English-only-genre-
+    hardcoded shots that didn't reflect the operator's tone choice.
 
     Returns a list of shot dicts (only the well-formed ones — the LLM
     sometimes emits a trailing empty entry, especially near the token
@@ -265,11 +267,38 @@ def plan_shots(narration, num_shots, channel: str = "horror", max_attempts=2):
         log.warning("NIM not available — cannot generate storyboard")
         return None
 
+    genre_slots = _genre_block(channel)
+    # Overlay a per-channel tone if the operator set one — it wins over
+    # the niche-preset genre_tone. Preserves the visual_style/avoid_line
+    # so the visual palette stays niche-appropriate.
+    _tone_clean = str(tone_override or "").strip()
+    if _tone_clean:
+        genre_slots = dict(genre_slots)
+        genre_slots["genre_tone"] = (
+            f"{_tone_clean} (operator-set tone for this channel — takes "
+            f"priority over the niche default). "
+            f"Original niche framing: {genre_slots.get('genre_tone', '')}"
+        )
+    # Language hint: narration_excerpt fields are already in the target
+    # language (verbatim from the script). The prompt itself stays English
+    # so the LLM's structured output stays consistent, but we tell it the
+    # narration language so it doesn't try to "correct" foreign-language
+    # excerpts back to English inside its analysis.
+    lang_hint = ""
+    if language and language != "en":
+        lang_hint = (
+            f"\n\nNARRATION LANGUAGE: The narration above is written in "
+            f"language code '{language}'. Preserve every narration_excerpt "
+            f"VERBATIM in that language — do not translate. "
+            f"visual_description / search_query / ai_prompt fields stay "
+            f"in English so downstream image search + generation work."
+        )
+
     prompt = STORYBOARD_PROMPT.format(
         narration=narration.strip(),
         n=num_shots,
-        **_genre_block(channel),
-    )
+        **genre_slots,
+    ) + lang_hint
     last_raw = ""
     best_partial = None  # remember the best partial across attempts
 

@@ -1961,6 +1961,8 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror"):
                 # Offset per provider so each gets a distinct seed pool.
                 attempt=trial + (slot * 100),
                 period=period,
+                tone_override=tone_override,
+                language=language,
             )
             prompt_to_use = crafted or ai_prompt
             log.info(f"    {provider_name} prompt (try {trial+1}): {(crafted or ai_prompt)[:90]}...")
@@ -2051,7 +2053,8 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror"):
     return None
 
 
-def fetch_shots(shots, output_dir, channel="horror", preset_sources=None):
+def fetch_shots(shots, output_dir, channel="horror", preset_sources=None,
+                tone_override: str = "", language: str = ""):
     """For each shot, fetch one image (with vision validation). Returns the
     list of source dicts in shot order. Missing shots are simply skipped.
 
