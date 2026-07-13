@@ -1626,9 +1626,19 @@ def _local_flux2_klein_generate(prompt, output_dir, trial, negative_prompt=""):
         gen = torch.Generator(device="cuda").manual_seed(seed)
         # 1024×576 = 9:16 portrait, matches klein-9b on CF + editor's
         # target aspect for YouTube Shorts.
+        # num_inference_steps=5 (not the 4 BFL documents) — same fix as
+        # SDXL-turbo above. Klein-4B's scheduler creates a sigmas array
+        # of length steps+1. At steps=4 → length=5 → some code path in
+        # the transformer inference tries to access sigmas[num_inference_steps]
+        # = sigmas[5] and crashes with:
+        #   "IndexError: index 5 is out of bounds for dimension 0 with size 5"
+        # Bumping to 5 makes the array length 6 → index 5 valid → the
+        # bug can't fire. +25% inference time (~2s/image on T4) is a fair
+        # trade vs losing every retry to the crash. Confirmed live during
+        # the 2026-07-13 verify-render session.
         kwargs = {
             "prompt": prompt,
-            "num_inference_steps": 4,
+            "num_inference_steps": 5,
             "guidance_scale": 1.0,
             "height": 1024,
             "width": 576,
