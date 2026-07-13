@@ -477,14 +477,35 @@ def write_script(research_data, max_attempts=3):
     from modules import channels as _ch
 
     s = load_settings()
-    tone = s["content"].get("tone", "atmospheric")
     word_min = int(s["content"].get("target_word_min", 160))
     word_max = int(s["content"].get("target_word_max", 200))
-    tone_guidance = TONE_GUIDANCE.get(tone, TONE_GUIDANCE["atmospheric"])
     hard_cap = word_max + 100
 
     channel_type = research_data.get("type", "horror")
     channel_cfg = _ch.get_channel(channel_type)
+
+    # Tone resolution — priority order:
+    #   1. research_data["tone_override"] — per-channel tone from the
+    #      channels UI (main.py stashes it there for exactly this reason;
+    #      the 2026-07-13 audit found the previous code re-fetched
+    #      channel_cfg here and dropped main.py's mutation).
+    #   2. channel_cfg.tone — the niche preset's default.
+    #   3. Global settings.content.tone.
+    #   4. Hardcoded "atmospheric" fallback.
+    _override_tone = str(research_data.get("tone_override") or "").strip()
+    if _override_tone:
+        tone = _override_tone
+    elif channel_cfg.get("tone"):
+        tone = str(channel_cfg["tone"]).strip()
+    else:
+        tone = s["content"].get("tone", "atmospheric")
+    # channel_cfg carries the tone downstream too so BOTH the HORROR
+    # branch (which used to read only global tone_guidance) AND the
+    # UNIVERSAL branch see the same resolved value. Previously the
+    # HORROR branch had no per-channel override path at all.
+    channel_cfg = dict(channel_cfg)  # shallow copy — don't mutate the preset module
+    channel_cfg["tone"] = tone
+    tone_guidance = TONE_GUIDANCE.get(tone, TONE_GUIDANCE["atmospheric"])
 
     # Job-level overrides (set by the wizard / scheduled-render).
     language = (research_data.get("language") or channel_cfg.get("language") or "en").lower()[:2]
@@ -562,6 +583,10 @@ def write_script(research_data, max_attempts=3):
     if prefix_horror:    prefix_horror    += "\n\n"
 
     if channel_type == "horror":
+        # tone_guidance is derived from `tone` above — which now honors
+        # the per-channel override from research_data["tone_override"].
+        # A dashboard channel that set tone="ominous" or "campy" was
+        # previously ignored on this branch entirely.
         prompt = prefix_horror + HORROR_PROMPT.format(
             title=research_data["raw_title"],
             tone_guidance=tone_guidance,

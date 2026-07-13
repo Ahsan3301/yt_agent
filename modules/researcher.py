@@ -269,7 +269,17 @@ def research(channel_type: str, language: str = "en"):
 
     manual = (load_settings().get("content") or {}).get("manual_premise", "").strip()
     if manual:
-        log.info(f"Using manual premise from settings: {manual[:80]}")
+        # This global override forces the SAME premise across EVERY
+        # channel + language on every render. Flagged as HIGH-4 in the
+        # 2026-07-13 audit — the /settings knob can silently make all
+        # channels publish the same script if set and forgotten. Loud
+        # WARNING so the operator sees it in the log stream every time.
+        log.warning(
+            f"⚠️  GLOBAL manual_premise from /settings is overriding "
+            f"channel={channel_type!r} lang={lang!r} auto-research. "
+            f"Premise={manual[:80]!r}. Clear settings.content.manual_premise "
+            f"if you want per-channel auto-generated premises back."
+        )
         return {
             "type": channel_type,
             "raw_title": manual,

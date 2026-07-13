@@ -211,13 +211,31 @@ export async function POST(req: NextRequest) {
       // filtered out above. If Oracle is one of several, the higher-
       // priority workers still get first shot without the password.
 
+      // Atomic claim via Firestore transaction. Before the 2026-07-13
+      // audit this was a plain `doc.ref.update()` with NO precondition
+      // — two concurrent workers hitting /api/jobs/claim within ~100ms
+      // both saw status="queued" in the outer query, both wrote
+      // status="claimed", and both returned the same job body →
+      // duplicate publish to YouTube. Re-read status inside the
+      // transaction and fail-fast if it's not still queued.
       try {
-        await doc.ref.update({
-          status:               "claimed",
-          backend_instance_id:  instance_id,
-          claimed_at:           now,
-          updated_at:           FieldValue.serverTimestamp(),
+        const claimed = await db.runTransaction(async (tx) => {
+          const fresh = await tx.get(doc.ref);
+          if (!fresh.exists) return false;
+          const curStatus = String((fresh.data() || {}).status || "");
+          if (curStatus !== "queued") return false;
+          tx.update(doc.ref, {
+            status:              "claimed",
+            backend_instance_id: instance_id,
+            claimed_at:          now,
+            updated_at:          FieldValue.serverTimestamp(),
+          });
+          return true;
         });
+        if (!claimed) {
+          // Someone else got there first — try the next queued doc.
+          continue;
+        }
         return NextResponse.json({
           ok:   true,
           job:  { id: doc.id, ...data,

@@ -89,6 +89,7 @@ export async function POST(req: NextRequest) {
     const channelMeta: Array<{
       niche: string;
       channel_name: string;
+      description: string;
       web_research: boolean | null;
       real_events: boolean | null;
       language: string | null;
@@ -153,6 +154,7 @@ export async function POST(req: NextRequest) {
           channelMeta.push({
             niche,
             channel_name: String(c.name || doc.id),
+            description: (typeof c.description === "string" ? c.description : "").slice(0, 500),
             web_research:
               c.web_research === true ? true :
               c.web_research === false ? false : null,
@@ -194,7 +196,7 @@ export async function POST(req: NextRequest) {
         const inherited = bindingByNiche[niche] || null;
         for (let i = 0; i < n; i++) {
           channelMeta.push({
-            niche, channel_name: niche,
+            niche, channel_name: niche, description: "",
             web_research: null, real_events: null, language: null, voice: null,
             tone: null, privacy: null,
             youtube_account_id: inherited,
@@ -329,6 +331,10 @@ export async function POST(req: NextRequest) {
         // Track which dashboard-channel this job belongs to so the
         // /queue page can group jobs by channel later.
         source_channel_name: slot.channel_name,
+        // Per-channel description → channels.resolve() uses it to
+        // synthesize a custom-niche preset that reflects the operator's
+        // intent instead of a generic NIM-guessed one.
+        manual_channel_desc: slot.description || "",
         // Per-channel worker priority list + Oracle unlock hash.
         // Consumed by the /api/jobs/claim gate — see route.ts.
         allowed_workers: slot.allowed_workers,

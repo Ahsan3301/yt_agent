@@ -351,6 +351,14 @@ def run_pipeline(
     # one, it wins over the niche preset's default so a horror channel's
     # "chilling" doesn't bleed into a science channel that reuses the
     # settings.tone knob. Empty string skipped.
+    # Compute the effective tone override once — used in two places:
+    #   1. Mutated onto channel_cfg (local var here) so downstream steps
+    #      that read channel_cfg in main.py see it.
+    #   2. Stashed on `content` after research so it survives into
+    #      write_script (which re-fetches channel_cfg from CHANNEL_PRESETS
+    #      and would otherwise drop the mutation — this was the 2026-07-13
+    #      audit's HIGH-1 bug).
+    _tone_clean = ""
     if tone_override:
         _tone_clean = str(tone_override).strip()[:40]
         if _tone_clean:
@@ -644,6 +652,12 @@ def run_pipeline(
                 content["language"] = channel_cfg["language"]
             if real_events is not None:
                 content["real_events"] = bool(real_events)
+            # Per-channel tone override reaches scriptwriter via `content`
+            # — scriptwriter re-fetches channel_cfg from CHANNEL_PRESETS
+            # (dropping the mutation main.py did above), so this is the
+            # only path that survives. Empty string skipped.
+            if _tone_clean:
+                content["tone_override"] = _tone_clean
             script = _step(summary, "script", lambda: write_script(content), run_id=run_id)
         if not script:
             log.error("Script generation failed. Aborting.")

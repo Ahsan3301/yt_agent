@@ -42,6 +42,18 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     const niche = String(c.niche || "").trim();
     if (!niche) return NextResponse.json({ error: "channel has no niche" }, { status: 400 });
 
+    // Disabled channels shouldn't render unless the caller explicitly
+    // opts in with body.force=true. Before the 2026-07-13 audit, only
+    // the scheduled cron respected `enabled`; the Run Now button
+    // ignored it, so a disabled channel could still be manually fired.
+    const forceRun = body.force === true;
+    if (c.enabled === false && !forceRun) {
+      return NextResponse.json({
+        error: "channel is disabled",
+        hint: "toggle the channel on in /channels, or POST with {force:true} to override",
+      }, { status: 409 });
+    }
+
     const yt = (typeof c.youtube_account_id === "string" && c.youtube_account_id)
       ? String(c.youtube_account_id) : null;
 
@@ -94,6 +106,11 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         youtube_account_id: yt,
         unbound: !yt,
         source_channel_name: String(c.name || id),
+        // Channel description flows into main.py as manual_channel_desc so
+        // channels.resolve() can synthesize a custom-niche preset that
+        // actually uses the operator's words instead of a generic
+        // NIM-guessed one. Before the 2026-07-13 audit this was UI-only.
+        manual_channel_desc: (typeof c.description === "string" ? c.description : "").slice(0, 500),
         allowed_workers: Array.isArray(c.allowed_workers)
           ? (c.allowed_workers as unknown[]).filter((x): x is string => typeof x === "string")
           : [],
