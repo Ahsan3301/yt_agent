@@ -89,6 +89,33 @@ MUSIC_KEYWORDS = {
 
 
 # ── used-clips state ──────────────────────────────────────────
+# Cross-process file lock for the used_clips read-modify-write cycle
+# (audit fix #9, 2026-07-13). Two concurrent renders on the same host
+# used to lose an update when both loaded, appended, and saved
+# in-flight — the later writer overwrote the earlier writer's addition
+# and the "lost" clip id could be re-picked. filelock is a soft
+# dep — a worker without it falls back to unlocked behaviour with a
+# debug log (no crash).
+try:
+    from filelock import FileLock as _FileLock, Timeout as _FileLockTimeout
+    _HAS_FILELOCK = True
+except Exception:
+    _HAS_FILELOCK = False
+    _FileLockTimeout = Exception  # type: ignore
+
+
+class _NullLock:
+    def __enter__(self):  return self
+    def __exit__(self, *a): return False
+
+
+def _clips_lock(timeout: float = 15.0):
+    if not _HAS_FILELOCK:
+        return _NullLock()
+    os.makedirs(os.path.dirname(USED_CLIPS_FILE), exist_ok=True)
+    return _FileLock(USED_CLIPS_FILE + ".lock", timeout=timeout)
+
+
 def _load_used_clips():
     if not os.path.exists(USED_CLIPS_FILE):
         return []
@@ -109,9 +136,18 @@ def _save_used_clips(ids):
 
 
 def _remember_clip(clip_id):
-    used = _load_used_clips()
-    used.append(clip_id)
-    _save_used_clips(used)
+    # Load + append + save under a single lock so concurrent renders
+    # can't drop each other's newly-remembered clip.
+    try:
+        with _clips_lock():
+            used = _load_used_clips()
+            used.append(clip_id)
+            _save_used_clips(used)
+    except _FileLockTimeout:
+        log.warning("_remember_clip: lock timeout — appending unguarded")
+        used = _load_used_clips()
+        used.append(clip_id)
+        _save_used_clips(used)
 
 
 # ── download ──────────────────────────────────────────────────

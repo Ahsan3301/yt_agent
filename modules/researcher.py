@@ -31,6 +31,21 @@ from dotenv import load_dotenv
 
 from modules.config import load_settings
 
+# filelock: cross-platform file locks. Used to serialise the
+# read-modify-write cycle on used_premises files so two concurrent
+# renders on the same worker (Oracle typically) can't pick the same
+# combo. Cross-worker races (Kaggle + Oracle rendering at the same
+# time) are separately mitigated by the PB-seed in _load_used.
+# Import guarded — a worker without filelock installed just skips the
+# lock (returns to pre-audit behaviour, which is "usually fine" given
+# the 225-combo pool). Ships in requirements.txt >= 3.12.
+try:
+    from filelock import FileLock, Timeout as _FileLockTimeout
+    _HAS_FILELOCK = True
+except Exception:
+    _HAS_FILELOCK = False
+    _FileLockTimeout = Exception  # type: ignore
+
 load_dotenv()
 log = logging.getLogger(__name__)
 
@@ -179,16 +194,64 @@ def _seed_from_db(niche: str, language: str, limit: int = 30) -> set:
     return seeded
 
 
-def _save_used(combo_id: str, niche: str, language: str):
-    """Atomic write: temp file + replace, so a crash mid-write can't corrupt state."""
+class _NullLock:
+    """No-op context manager used when filelock isn't installed. Keeps
+    the with-statement shape identical so callers don't branch on
+    _HAS_FILELOCK."""
+    def __enter__(self):  return self
+    def __exit__(self, *a): return False
+
+
+def _lock_for(niche: str, language: str, timeout: float = 30.0):
+    """Return a file-lock context manager guarding the used_premises file
+    for (niche, language). Waits up to `timeout` sec for the lock; if
+    it times out, returns a no-op lock and logs — better to risk a rare
+    race than block the whole pipeline. Falls back to no-op on workers
+    without filelock installed."""
+    if not _HAS_FILELOCK:
+        return _NullLock()
     path = _used_file(niche, language)
-    used = _load_used(niche, language)
-    used.add(combo_id)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    lock_path = path + ".lock"
+    try:
+        return FileLock(lock_path, timeout=timeout)
+    except Exception as e:
+        log.debug(f"_lock_for({niche}, {language}) failed to construct: {e}")
+        return _NullLock()
+
+
+def _write_used_file(path: str, used: set) -> None:
+    """Atomic write: temp file + replace, so a crash mid-write can't
+    corrupt the file. Caller is responsible for holding the lock."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "w") as f:
         json.dump(list(used), f)
     os.replace(tmp, path)
+
+
+def _save_used(combo_id: str, niche: str, language: str):
+    """Convenience: load + add + save, all under the file lock. Kept for
+    call sites that don't already hold the lock (the tone/topic paths).
+    generate_horror_premise + _generic_research pick and reserve inside
+    the SAME lock to prevent two concurrent workers on the same
+    filesystem from picking the identical combo (audit fix #9)."""
+    lock = _lock_for(niche, language)
+    try:
+        with lock:
+            path = _used_file(niche, language)
+            used = _load_used(niche, language)
+            used.add(combo_id)
+            _write_used_file(path, used)
+    except _FileLockTimeout:
+        # Lock contention timeout — proceed WITHOUT the lock rather
+        # than fail the whole render. Worst case is a single duplicate
+        # premise, not a broken pipeline.
+        log.warning(f"_save_used({niche}/{language}): lock timeout — writing unguarded")
+        path = _used_file(niche, language)
+        used = _load_used(niche, language)
+        used.add(combo_id)
+        _write_used_file(path, used)
 
 
 def generate_horror_premise(language: str = "en") -> tuple[str, str]:
@@ -198,18 +261,37 @@ def generate_horror_premise(language: str = "en") -> tuple[str, str]:
     Returns (premise_text, premise_key). The key is the stable
     "setting|hook" tuple — scriptwriter should stash it on the run
     summary as `premise_key` so future DB-seed reads can pick it up.
+
+    Load + pick + save happens under a single per-(niche, language)
+    file lock (audit fix #9). Two concurrent workers on the same
+    filesystem can no longer pick the identical combo through a TOCTOU
+    race in the read-modify-write cycle.
     """
-    used = _load_used("horror", language)
+    lock = _lock_for("horror", language)
     all_combos = [(s, h) for s in HORROR_SETTINGS for h in HORROR_HOOKS]
-    unused = [c for c in all_combos if f"{c[0]}|{c[1]}" not in used]
-
-    if not unused:
-        log.info(f"All horror premise combinations used for lang={language!r} — resetting pool")
-        unused = all_combos
-
-    setting, hook = random.choice(unused)
-    key = f"{setting}|{hook}"
-    _save_used(key, "horror", language)
+    try:
+        with lock:
+            path = _used_file("horror", language)
+            used = _load_used("horror", language)
+            unused = [c for c in all_combos if f"{c[0]}|{c[1]}" not in used]
+            if not unused:
+                log.info(f"All horror premise combinations used for lang={language!r} — resetting pool")
+                unused = all_combos
+            setting, hook = random.choice(unused)
+            key = f"{setting}|{hook}"
+            used.add(key)
+            _write_used_file(path, used)
+    except _FileLockTimeout:
+        # Lock contention (rare — normally < 30 ms). Fall through to a
+        # lock-free pick; the DB seed on the next call will re-dedup.
+        log.warning(f"horror premise pick: lock timeout for lang={language!r} — picking unguarded")
+        used = _load_used("horror", language)
+        unused = [c for c in all_combos if f"{c[0]}|{c[1]}" not in used]
+        if not unused:
+            unused = all_combos
+        setting, hook = random.choice(unused)
+        key = f"{setting}|{hook}"
+        _save_used(key, "horror", language)
 
     return f"Someone experiences {hook}, while at {setting}.", key
 
