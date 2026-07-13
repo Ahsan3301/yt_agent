@@ -423,39 +423,69 @@ def run_pipeline(
     # preference silently gets ignored. Log at pipeline start:
     #   - The full image_gen.priority list from settings.
     #   - Which providers are READY on THIS worker.
-    #   - If a top-3 priority provider is NOT ready, WARN loudly with
-    #     the reason so the operator sees it in the log stream.
+    #   - If a top-3 priority provider is NOT ready, WARN loudly.
+    #
+    # The audit does its own basic probes (env vars + CUDA + settings
+    # toggle) — it can't call shotfinder._provider_ready because that
+    # lives inside fetch_shots() as a closure. The probes here mirror
+    # the checks _provider_ready does but at coarser granularity —
+    # good enough for the pipeline-start alert.
     try:
         from modules.config import load_settings as _ls_pref
-        from modules import shotfinder as _sf_pref
         _ig = (_ls_pref().get("image_gen") or {})
         _prio = list(_ig.get("priority") or [])
         _enabled = dict(_ig.get("enabled") or {})
-        _ready = []
-        _skipped = []
+
+        def _probe(name: str) -> tuple[bool, str]:
+            if _enabled.get(name, True) is False:
+                return False, "disabled in /settings"
+            if name == "cloudflare":
+                if not (os.getenv("CLOUDFLARE_ACCOUNTS_JSON", "").strip()
+                        or (os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip()
+                            and os.getenv("CLOUDFLARE_API_TOKEN", "").strip())):
+                    return False, "no CLOUDFLARE_ACCOUNTS_JSON / CLOUDFLARE_ACCOUNT_ID+TOKEN"
+                return True, ""
+            if name == "huggingface":
+                if not os.getenv("HF_TOKEN", "").strip():
+                    return False, "no HF_TOKEN"
+                return True, ""
+            if name in ("local_sdxl", "local_flux2_klein"):
+                try:
+                    import torch as _t_pref
+                    if not _t_pref.cuda.is_available():
+                        return False, "no CUDA device"
+                except Exception as _te:
+                    return False, f"torch not usable: {_te}"
+                # Klein-4B extra: needs Flux2KleinPipeline import.
+                if name == "local_flux2_klein":
+                    try:
+                        from diffusers import Flux2KleinPipeline as _fkp  # noqa: F401
+                    except Exception as _fe:
+                        return False, f"Flux2KleinPipeline import failed: {_fe}"
+                return True, ""
+            if name in ("pollinations", "horde"):
+                return True, ""  # always network-available
+            return True, ""
+
+        _ready, _skipped = [], []
         for _p in _prio:
-            if not _enabled.get(_p, True):
-                _skipped.append((_p, "disabled in /settings"))
-                continue
-            try:
-                _ok, _why = _sf_pref._provider_ready(_p)
-            except Exception as _pe:
-                _ok, _why = False, f"probe error: {_pe}"
-            (_ready if _ok else _skipped).append((_p, _why) if not _ok else _p)
+            _ok, _why = _probe(_p)
+            (_ready if _ok else _skipped).append(_p if _ok else (_p, _why))
+
         log.info(f"  image_gen.priority: {_prio}")
-        log.info(f"  image_gen ready on this worker: {[p for p in _ready]}")
-        # Warn only for providers in the TOP 3 that got skipped — the
-        # tail is expected to be fallback-only. WARN, not INFO, so it
-        # shows up in the log stream even if grep is filtering for
-        # ERROR/WARN.
-        _top3 = _prio[:3]
-        _top3_skipped = [(p, r) for p, r in _skipped if p in _top3]
-        for _p, _reason in _top3_skipped:
-            log.warning(
-                f"  ⚠️  TOP-{_prio.index(_p)+1} image provider {_p!r} unavailable on this worker: {_reason}. "
-                f"Chain will fall to slot {_prio.index(_p)+2} → {_prio[_prio.index(_p)+1] if _prio.index(_p)+1 < len(_prio) else '(end)'}. "
-                f"If you want {_p!r} specifically, edit the channel's allowed_workers so a compatible worker claims the render."
-            )
+        log.info(f"  image_gen ready on this worker: {_ready}")
+        # WARN for TOP-3 misses only — tail is expected to be fallback.
+        _top3 = set(_prio[:3])
+        for _p, _reason in _skipped:
+            if _p in _top3:
+                _slot = _prio.index(_p) + 1
+                _next = _prio[_slot] if _slot < len(_prio) else "(end)"
+                log.warning(
+                    f"  ⚠️  TOP-{_slot} image provider {_p!r} unavailable on this worker: "
+                    f"{_reason}. Chain will fall to slot {_slot+1} → {_next}. If you want "
+                    f"{_p!r} specifically, edit the channel's allowed_workers so a "
+                    f"compatible worker claims the render."
+                )
     except Exception as _pref_e:
         log.debug(f"preference-visibility audit skipped: {_pref_e}")
 
