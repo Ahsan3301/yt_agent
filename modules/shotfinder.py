@@ -1697,7 +1697,8 @@ def _score_local_image(path, visual, premise):
 
 # ── Per-shot finder ──────────────────────────────────────────
 
-def find_image_for_shot(shot, output_dir, used_ids, channel="horror"):
+def find_image_for_shot(shot, output_dir, used_ids, channel="horror",
+                        tone_override: str = "", language: str = ""):
     # Cancel check at entry — a user clicking Cancel between shots
     # shouldn't have to wait for the current shot to fully resolve
     # before the pipeline unwinds.
@@ -2141,7 +2142,8 @@ def fetch_shots(shots, output_dir, channel="horror", preset_sources=None,
             # consistent view; merge new additions back under lock.
             with used_lock:
                 snap = set(used_ids)
-            src = find_image_for_shot(shot, output_dir, snap, channel=channel)
+            src = find_image_for_shot(shot, output_dir, snap, channel=channel,
+                                      tone_override=tone_override, language=language)
             with used_lock:
                 used_ids.update(snap)
         if src:
