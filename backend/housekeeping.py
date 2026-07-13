@@ -80,10 +80,9 @@ def finalize_run(
     """
     result = {"public_url": current_public_url or "", "freed_mb": 0.0, "cleaned": False}
 
-    # Guard rails — never delete on a failed OR dry-run render.
-    if not published:
-        result["skipped_reason"] = "not published"
-        return result
+    # Guard rails — dry-run always preserved so the operator can inspect
+    # the intermediate SDXL frames / TTS audio / storyboard. work_dir
+    # missing is a no-op.
     if dry_run:
         result["skipped_reason"] = "dry_run"
         return result
@@ -91,21 +90,44 @@ def finalize_run(
         result["skipped_reason"] = f"work_dir missing: {work_dir!r}"
         return result
 
-    # 1) Mirror the final video to R2 so nuking the local folder doesn't
-    #    orphan the artefact. Idempotent — skips when the URL is
-    #    already an object-store URL. Uses the passed local_video_path
-    #    (canonical) with a fallback lookup inside work_dir.
+    # 1) Mirror the final video to R2 FIRST (BEFORE the `published`
+    #    guard) so nuking the local folder doesn't orphan the artefact.
+    #    Idempotent — skips when the URL is already an object-store
+    #    URL. Uses the passed local_video_path (canonical) with a
+    #    fallback lookup inside work_dir.
+    #
+    #    2026-07-13: previously this ran AFTER `if not published:
+    #    return`. That meant any successful render whose YouTube
+    #    publish failed (no youtube_account_id, YT quota, auth flap,
+    #    etc.) leaked its ~1.2 GB work_dir forever. Confirmed live:
+    #    Oracle side-worker container had 31 GB of leaked runs from
+    #    24 non-published successful renders. Fix is to mirror to R2
+    #    first, then decide cleanup based on "is the artifact safe
+    #    somewhere durable" — not on "did YT publish succeed".
     lp = local_video_path
     if not lp or not os.path.exists(lp):
         candidate = os.path.join(work_dir, "final_video.mp4")
         if os.path.exists(candidate):
             lp = candidate
     result["public_url"] = _mirror_to_r2_if_needed(lp, run_id, current_public_url)
+    has_durable = bool(result["public_url"]) and "/api/runs/" not in result["public_url"]
 
-    # If we still have no public URL (R2 not configured, upload failed,
-    # etc.), REFUSE to delete the local folder — otherwise the video is
-    # lost. Better to leak disk than the video itself.
-    if not result["public_url"] or "/api/runs/" in result["public_url"]:
+    # 2) Cleanup decision. Priority order:
+    #    a) Published to YouTube  → cleanup (durable URL guaranteed via mirror).
+    #    b) Not published + durable R2 URL → cleanup. The video is safe
+    #       on object storage; a later YT publish retry can pull it from
+    #       R2 without needing the local work_dir.
+    #    c) Not published + no durable URL → keep (avoid losing the
+    #       artefact entirely).
+    if not published and not has_durable:
+        result["skipped_reason"] = "not published + no durable URL — keeping local copy"
+        log.warning(
+            f"housekeeping: keeping {work_dir} — no YouTube publish AND "
+            f"no R2 URL (current={result['public_url']!r})"
+        )
+        return result
+    if not has_durable:
+        # Published but URL is the local /api/runs/ fallback (R2 down).
         result["skipped_reason"] = "no durable public URL — keeping local copy"
         log.warning(
             f"housekeeping: keeping {work_dir} because no R2 URL "

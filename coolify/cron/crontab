@@ -41,5 +41,16 @@
 # the host (see coolify/docker-compose.yml cron service).
 30 3 * * *  (docker builder prune -a -f && docker image prune -f && docker container prune -f) >> /proc/1/fd/1 2>&1
 
+# Every 2 hours — sweep leaked render work_dirs from the side-worker
+# container's writable layer. housekeeping.finalize_run is supposed to
+# rmtree these post-publish, but any bug in that path (a non-published
+# run, a failed R2 mirror, a crash before finalize) leaves ~1.2 GB per
+# run in /app/output/videos inside the container. This is the belt-and-
+# suspenders — any dir older than 2h (well past a 5-min render) that's
+# still there is a leak, safe to nuke. Confirmed live 2026-07-13:
+# accumulated 31 GB across 24 unpublished-but-successful runs before
+# this sweep was added (bug in finalize_run's `published` guard).
+0 */2 * * *  SW=$(docker ps --format '{{.Names}}' | grep '^side-worker' | head -1); [ -n "$SW" ] && docker exec $SW sh -c 'find /app/output/videos -mindepth 1 -maxdepth 1 -type d -mmin +120 -exec rm -rf {} + 2>/dev/null' >> /proc/1/fd/1 2>&1
+
 # Trailing newline is required — Linux crontab silently ignores the last
 # line if it doesn't end with one.
