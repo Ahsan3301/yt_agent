@@ -537,13 +537,17 @@ def handle(job: dict) -> None:
 
     # Compute the final PB status. A user-cancel is NOT a failure —
     # keeping them separate stops Discord spam + keeps the /reports
-    # graphs honest.
-    _final_status = "complete" if ok else (
+    # graphs honest. A render that completed but couldn't publish
+    # (expired YouTube token etc.) is "needs_publish" — visible in the
+    # queue UI with a retry surface, video preserved.
+    _needs_publish = bool(isinstance(res, dict) and res.get("needs_publish"))
+    _upload_err = str(res.get("upload_error") or "") if isinstance(res, dict) else ""
+    _final_status = ("needs_publish" if (ok and _needs_publish) else "complete") if ok else (
         "cancelled" if msg == "cancelled by user" else "failed"
     )
     _update_job(job_id, {
         "status": _final_status,
-        "error": "" if ok else msg,
+        "error": (_upload_err[:400] if (ok and _needs_publish) else ("" if ok else msg)),
         "current_step": kind,
         "current_step_label": f"{kind}: {msg[:100]}",
         "percent": 100,

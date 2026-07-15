@@ -982,12 +982,36 @@ def run_pipeline(
             # borrow_from_ranking toggle, so the borrowed material makes
             # it into the persisted publish_ready block instead of
             # mutating script at upload time.
-            video_id = _step(summary, "upload", lambda: upload_video(
-                final_video, script, channel_type,
-                youtube_account_id=youtube_account_id,
-                language=eff_language,
-                privacy_override=privacy_override,
-            ), run_id=run_id)
+            # Upload failures must NEVER destroy a completed render.
+            # 2026-07-15: a horror render finished 17 min of encoding
+            # (3.3 GB work_dir) then crashed at this step with
+            # `invalid_grant: Token has been expired or revoked` — the
+            # exception propagated to the outer handler, the run was
+            # marked failed, and force_cleanup DELETED the finished
+            # final_video.mp4. Wrap the upload in its own try/except:
+            # on any failure the render still finishes ok=True with
+            # upload_error + needs_publish set, so the video is
+            # preserved (locally + mirrored to storage by the caller)
+            # and the operator can retry the publish after fixing the
+            # token — instead of paying for the whole render again.
+            video_id = None
+            try:
+                video_id = _step(summary, "upload", lambda: upload_video(
+                    final_video, script, channel_type,
+                    youtube_account_id=youtube_account_id,
+                    language=eff_language,
+                    privacy_override=privacy_override,
+                ), run_id=run_id)
+            except run_state.Cancelled:
+                raise
+            except Exception as _upl_e:
+                log.error(
+                    f"YouTube upload failed ({_upl_e!r}) — render is COMPLETE "
+                    f"and preserved. Fix the account token and retry the "
+                    f"publish from the queue; do not re-render."
+                )
+                summary["upload_error"] = repr(_upl_e)[:400]
+                summary["needs_publish"] = True
             if video_id:
                 summary["video_id"]  = video_id
                 summary["video_url"] = f"https://youtu.be/{video_id}"
@@ -1001,8 +1025,15 @@ def run_pipeline(
                 }
                 log.info(f"Published: {summary['video_url']}")
             else:
-                log.error("Upload failed.")
-                return _finish(summary, work_dir, False)
+                # No video id — either the uploader returned None or the
+                # exception path above fired. Same treatment: the RENDER
+                # succeeded; only the publish leg is outstanding.
+                summary.setdefault("upload_error", "upload returned no video id")
+                summary["needs_publish"] = True
+                log.warning(
+                    "Upload did not complete — finishing run as "
+                    "complete-needs-publish so the video survives."
+                )
 
         log.info(f"Pipeline complete! Run: {run_id}")
         return _finish(summary, work_dir, True)
