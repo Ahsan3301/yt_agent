@@ -197,8 +197,33 @@ def run_ffmpeg(args, desc="ffmpeg", cwd=None):
     from modules import run_state
     run_state.check_cancel()
 
-    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "warning"] + args
-    log.info(f"Running {desc}: {' '.join(cmd[:6])}...")
+    # CPU cap: limit ffmpeg to 75% of available cores (min 1, max whole)
+    # so the encode leaves headroom for uvicorn heartbeats + system.
+    # Without this, ffmpeg saturates every core on the Oracle VPS,
+    # loading spikes to 5+, and heartbeat writes to PB start timing
+    # out → dashboard drops the worker → in-flight render crashes.
+    # Confirmed live 2026-07-15: renders were completing on the host
+    # but Oracle showed as "failed" because the worker was
+    # unresponsive to PB during peak encode load.
+    # Env override: FFMPEG_CPU_PERCENT (int 10..100), defaults to 75.
+    _pct = 75
+    try:
+        _pct = max(10, min(100, int(os.environ.get("FFMPEG_CPU_PERCENT", "75"))))
+    except Exception:
+        pass
+    try:
+        _n = os.cpu_count() or 2
+    except Exception:
+        _n = 2
+    _threads = max(1, (_n * _pct) // 100)
+    # Only inject -threads if the caller didn't already set one.
+    if "-threads" not in args:
+        base_args = ["-threads", str(_threads)] + list(args)
+    else:
+        base_args = list(args)
+
+    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "warning"] + base_args
+    log.info(f"Running {desc} (cpu_threads={_threads}/{_n}, {_pct}%): {' '.join(cmd[:8])}...")
 
     global _active_proc
     proc = subprocess.Popen(

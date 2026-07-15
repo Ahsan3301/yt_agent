@@ -638,12 +638,29 @@ def write_script(research_data, max_attempts=3):
         # model tends to write 180-220 words even when asked for shorter —
         # the script is still on-brand and usable, so rejecting it just
         # burns API budget on retries that often produce the same length.
-        # If you want SHORTER scripts, lower target_word_max in settings
-        # AND we now also push the hard cap into the prompt itself below.
-        problems = _validate(script, word_min=max(60, word_min - 20), word_max=word_max + 100)
+        # 2026-07-15: widened word_min tolerance from -20 to -40 and added
+        # a LAST-ATTEMPT rescue path — if we're on the final attempt and
+        # word count is within 90% of target min, ship it anyway rather
+        # than fail the whole render (Oracle logs showed 158-word narrations
+        # rejected against min=180 → whole render aborted → 5 failed jobs
+        # in a row).
+        problems = _validate(script, word_min=max(60, word_min - 40), word_max=word_max + 100)
         if not problems:
             log.info(f"Script written: '{script.get('youtube_title', '')}'")
             return script
+
+        # Last-attempt rescue — if the ONLY problem is "too short" and
+        # we're within 90% of the min target, accept it. Better a
+        # slightly-short but on-brand script than a failed render.
+        if attempt == max_attempts and script:
+            _wc = len(str(script.get("narration") or "").split())
+            _short_only = all("too short" in p or "narration too short" in p for p in problems)
+            if _short_only and _wc >= int(word_min * 0.85):
+                log.warning(
+                    f"Script last-attempt rescue: {_wc} words < target min {word_min} "
+                    f"but within 85% — accepting rather than failing the render."
+                )
+                return script
 
         log.warning(f"Attempt {attempt}: schema problems: {problems}")
         extra = [
