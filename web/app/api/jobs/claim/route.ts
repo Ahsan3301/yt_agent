@@ -51,6 +51,34 @@ function _canonicalLabel(body: Record<string, unknown>): "kaggle" | "colab" | "o
   return "";
 }
 
+// Load the channels collection once per claim request, keyed by channel
+// NAME (jobs store source_channel_name). Used to resolve the CURRENT
+// allowed_workers for each queued job instead of the snapshot the job
+// captured at creation time.
+//
+// Why (2026-07-15): jobs copy allowed_workers when queued. If the
+// operator toggles Kaggle OFF on a channel while jobs are still queued,
+// those jobs kept the stale list — needs-worker saw them as
+// kaggle-eligible and woke a Kaggle kernel that would boot into an
+// empty queue (Oracle claimed the job meanwhile). The live lookup makes
+// worker toggles take effect immediately for everything still in queue.
+async function _channelsByName(dbc: ReturnType<typeof adminDb>): Promise<Map<string, { allowed_workers: string[] }>> {
+  const out = new Map<string, { allowed_workers: string[] }>();
+  try {
+    const snap = await dbc.collection("channels").limit(100).get();
+    snap.forEach((doc) => {
+      const c = doc.data() as { name?: string; allowed_workers?: unknown };
+      const name = String(c.name || "").trim();
+      if (!name) return;
+      const aw = Array.isArray(c.allowed_workers)
+        ? (c.allowed_workers as unknown[]).filter((x): x is string => typeof x === "string")
+        : [];
+      out.set(name, { allowed_workers: aw });
+    });
+  } catch { /* soft-fail → callers fall back to the job snapshot */ }
+  return out;
+}
+
 // Fetch the currently-live worker labels (backends collection, heartbeat
 // within LIVE_HEARTBEAT_WINDOW_SEC). Used to enforce priority: a
 // lower-priority worker only claims when every higher-priority worker
@@ -124,6 +152,8 @@ export async function POST(req: NextRequest) {
     // Priority set — only fetched if any candidate job actually has
     // allowed_workers set. Cached across the loop.
     let liveLabels: Set<string> | null = null;
+    // Live channel config — lazily fetched once, cached across the loop.
+    let channelsByName: Map<string, { allowed_workers: string[] }> | null = null;
 
     for (const doc of snap.docs) {
       const data = doc.data() as Record<string, unknown>;
@@ -151,9 +181,18 @@ export async function POST(req: NextRequest) {
       // allowed_workers list includes "oracle" — SDXL is skipped
       // gracefully on that path.
       const allowedRaw = data.allowed_workers;
-      const allowedList: string[] = Array.isArray(allowedRaw)
+      const snapshotList: string[] = Array.isArray(allowedRaw)
         ? (allowedRaw as unknown[]).filter((x): x is string => typeof x === "string")
         : [];
+      // Resolve the CURRENT channel config — worker toggles must apply
+      // to already-queued jobs, not just new ones. Falls back to the
+      // job's snapshot when the channel row is gone / unnamed.
+      if (channelsByName === null) channelsByName = await _channelsByName(db);
+      const chanCfg = channelsByName.get(String(data.source_channel_name || "").trim());
+      const allowedList: string[] =
+        chanCfg && chanCfg.allowed_workers.length > 0
+          ? chanCfg.allowed_workers
+          : snapshotList;
       const oracleAllowedForRender = allowedList.includes("oracle");
       if (workerTier === "dashboard" && !SIDE_JOB_KINDS.has(kind) && !oracleAllowedForRender) {
         continue;

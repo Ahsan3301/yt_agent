@@ -33,9 +33,30 @@ export async function GET(req: NextRequest) {
   // toggled OFF (allowed_workers=['oracle','colab'] etc.) must NEVER
   // trigger a wake-kaggle — the wake burns a T4 boot + Kaggle quota
   // for work Kaggle isn't allowed to touch.
+  //
+  // 2026-07-15: eligibility now reads the channel's CURRENT
+  // allowed_workers (jobs only carry a snapshot from creation time).
+  // Before this, toggling Kaggle off on a channel didn't stop wakes
+  // for jobs already sitting in the queue — Kaggle booted into an
+  // empty queue while Oracle claimed the render.
   let queued = 0;
   let queuedKaggleEligible = 0;
   try {
+    // Live channel config keyed by name — one read, reused for every job.
+    const channelsByName = new Map<string, string[]>();
+    try {
+      const chSnap = await db.collection("channels").limit(100).get();
+      chSnap.forEach((doc) => {
+        const c = doc.data() as { name?: string; allowed_workers?: unknown };
+        const name = String(c.name || "").trim();
+        if (!name) return;
+        const aw = Array.isArray(c.allowed_workers)
+          ? (c.allowed_workers as unknown[]).filter((x): x is string => typeof x === "string")
+          : [];
+        channelsByName.set(name, aw);
+      });
+    } catch { /* soft-fail → job snapshots used below */ }
+
     const snap = await db
       .collection("jobs")
       .where("status", "==", "queued")
@@ -45,14 +66,18 @@ export async function GET(req: NextRequest) {
       const v = doc.data() as {
         backend_instance_id?: string | null;
         allowed_workers?: unknown;
+        source_channel_name?: string;
       };
       if (v.backend_instance_id) return;
       queued += 1;
-      // Legacy default when allowed_workers is missing/empty: Kaggle
-      // was historically the primary → treat as eligible.
-      const allowedArr = Array.isArray(v.allowed_workers)
+      const snapshotArr = Array.isArray(v.allowed_workers)
         ? (v.allowed_workers as unknown[]).filter((x): x is string => typeof x === "string")
         : [];
+      // Current channel config wins over the job's snapshot.
+      const liveArr = channelsByName.get(String(v.source_channel_name || "").trim());
+      const allowedArr = (liveArr && liveArr.length > 0) ? liveArr : snapshotArr;
+      // Legacy default when allowed_workers is missing/empty: Kaggle
+      // was historically the primary → treat as eligible.
       const kaggleAllowed = allowedArr.length === 0 || allowedArr.includes("kaggle");
       if (kaggleAllowed) queuedKaggleEligible += 1;
     });
