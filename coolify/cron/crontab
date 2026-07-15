@@ -52,5 +52,17 @@
 # this sweep was added (bug in finalize_run's `published` guard).
 0 */2 * * *  SW=$(docker ps --format '{{.Names}}' | grep '^side-worker' | head -1); [ -n "$SW" ] && docker exec $SW sh -c 'find /app/output/videos -mindepth 1 -maxdepth 1 -type d -mmin +120 -exec rm -rf {} + 2>/dev/null' >> /proc/1/fd/1 2>&1
 
+# Every 3 min — gateway auto-heal. The recurring "Gateway Timeout" /
+# HTTP 000 comes from Caddy's stale connection pool after ANY container
+# rotation (deploy scripts bounce Caddy, but the gateway sometimes goes
+# stale again minutes later — root cause is Caddy re-caching the old
+# container IP via docker DNS before the swap fully settles). This
+# watchdog probes the public login page from INSIDE the cluster via
+# Traefik's published port; if it isn't HTTP 200/3xx, it runs the full
+# heal cycle (Caddy restart + Traefik restart). Self-quieting: healthy
+# probes log nothing. Confirmed necessary 2026-07-15 — third stale
+# gateway in one session despite post-deploy bounces.
+*/3 * * * *  CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 --resolve yt-agent.thyker.online:443:132.226.86.61 https://yt-agent.thyker.online/login 2>/dev/null || echo 000); case "$CODE" in 2*|3*) ;; *) echo "gateway-heal: probe returned $CODE — restarting caddy+traefik"; CADDY=$(docker ps --format '{{.Names}}' | grep '^caddy' | head -1); [ -n "$CADDY" ] && docker restart $CADDY; sleep 3; docker restart coolify-proxy; esac >> /proc/1/fd/1 2>&1
+
 # Trailing newline is required — Linux crontab silently ignores the last
 # line if it doesn't end with one.
