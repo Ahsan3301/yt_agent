@@ -183,7 +183,18 @@ async def _edge_tts_async(text, voice, output_path, rate="+0%", pitch="+0Hz"):
     # subtitles instead of estimating timing from character counts
     # (which drifted noticeably on longer narrations — every user
     # complaint of 'subtitles not syncing' traces here).
-    communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
+    # boundary="WordBoundary" — REQUIRED on edge-tts 7.x. The default
+    # changed to SentenceBoundary, so our WordBoundary listener below
+    # captured nothing and the .words.json sidecar was silently never
+    # written → captions fell back to the drift-prone character-count
+    # heuristic on every edge-tts render. Reproduced locally on 7.2.8
+    # (2026-07-16): default stream emits {audio, SentenceBoundary} only.
+    # Guard with try/except for pre-7.x versions that lack the kwarg.
+    try:
+        communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch,
+                                           boundary="WordBoundary")
+    except TypeError:
+        communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
     boundaries: list[dict] = []
 
     async def _drive():
