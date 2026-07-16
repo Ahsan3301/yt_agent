@@ -123,10 +123,60 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Inherit channel-level config for this niche (2026-07-16).
+    // Jobs created through this gateway previously carried NO
+    // allowed_workers, NO source_channel_name, and NO cf_* fields:
+    //   - claim gate saw an empty allowlist → ANY worker could claim,
+    //     including Kaggle on channels where the operator turned
+    //     Kaggle off;
+    //   - the wake logic below fired unconditionally → Kaggle booted
+    //     for jobs it was never allowed to touch;
+    //   - channel_cf's fail-closed default treated the missing
+    //     cf_source as "off" → Cloudflare was silently skipped for
+    //     every gateway-created job even when the channel had a
+    //     configured pool.
+    // Resolve the first ENABLED channel whose niche matches and stamp
+    // its worker + Cloudflare + publish config onto the job, exactly
+    // like render-now and scheduled-render do. Explicit body fields
+    // still win where present.
+    let chanAllowed: string[] = [];
+    let chanYt: string | null = null;
+    let chanStamp: Record<string, unknown> = {};
+    try {
+      const chSnap = await adminDb().collection("channels").limit(50).get();
+      const match = chSnap.docs
+        .map((d) => d.data() as Record<string, unknown>)
+        .find((c) => c.enabled !== false && String(c.niche || "").trim() === channel);
+      if (match) {
+        chanAllowed = Array.isArray(match.allowed_workers)
+          ? (match.allowed_workers as unknown[]).filter((x): x is string => typeof x === "string")
+          : [];
+        chanYt = (typeof match.youtube_account_id === "string" && match.youtube_account_id)
+          ? String(match.youtube_account_id) : null;
+        const cfSource = String(match.cloudflare_source || "off");
+        chanStamp = {
+          source_channel_name: String(match.name || channel),
+          allowed_workers: chanAllowed,
+          oracle_password_hash: (typeof match.oracle_password_hash === "string" && match.oracle_password_hash)
+            ? match.oracle_password_hash : null,
+          cf_source: cfSource,
+          cf_own_account_id: cfSource === "own" ? String(match.cloudflare_account_id || "").trim() : "",
+          cf_own_api_token:  cfSource === "own" ? String(match.cloudflare_api_token || "").trim() : "",
+          cf_pool:           cfSource === "own" ? String(match.cloudflare_pool || "").trim() : "",
+          llm_priority: (typeof match.llm_priority === "string" && match.llm_priority.trim())
+            ? String(match.llm_priority).trim().slice(0, 60) : "",
+          tone_override: (typeof match.tone === "string" && match.tone) ? String(match.tone) : null,
+          privacy_override: (match.privacy === "public" || match.privacy === "unlisted" || match.privacy === "private")
+            ? String(match.privacy) : null,
+        };
+      }
+    } catch { /* soft-fail → legacy shape, claim gate stays permissive */ }
+
     // Synthesize the job row (same shape as backend/jobs.py's submit).
     const jobId = _shortId();
     const now = Date.now() / 1000;
     const base = {
+      ...chanStamp,
       id: jobId,
       status: "queued",
       channel,
@@ -153,7 +203,9 @@ export async function POST(req: NextRequest) {
       real_events:  real_events  === undefined ? null : real_events,
       language,
       voice_override,
-      youtube_account_id,
+      // Explicit body binding wins; else inherit the channel's bound
+      // account so gateway-created jobs publish to the right channel.
+      youtube_account_id: youtube_account_id || chanYt,
     };
 
     // Pick a URL-based worker (tunnel mode) for direct HTTP dispatch.
@@ -180,7 +232,19 @@ export async function POST(req: NextRequest) {
     const DEDUP_SEC = 90;
     let wakePromise: Promise<void> | null = null;
 
-    if (anyLive.ok) {
+    // Kaggle must be in the channel's allowed_workers for a wake to be
+    // justified — waking it for an oracle-only channel burns a T4 boot
+    // + quota on a job the claim gate will refuse to hand over. Empty
+    // list = legacy default (kaggle allowed). 2026-07-16: this wake
+    // previously fired unconditionally, and the GH workflow_dispatch
+    // path skips the needs-worker probe entirely, so Kaggle booted for
+    // every gateway job regardless of the channel's worker toggles.
+    const kaggleAllowedForJob = chanAllowed.length === 0 || chanAllowed.includes("kaggle");
+    if (!kaggleAllowedForJob) {
+      logRoute(reqId, "kaggle wake SKIPPED (channel excludes kaggle)", {
+        channel, allowed_workers: chanAllowed,
+      });
+    } else if (anyLive.ok) {
       logRoute(reqId, "kaggle wake SKIPPED (live worker with headroom)", {
         instance_id: anyLive.instance_id,
         gpu_util:    anyLive.gpu_util,
