@@ -48,6 +48,17 @@ consistent with this period — this is CRITICAL to prevent the image
 model from mashing eras together (rotary phone glued to a smartphone,
 medieval knight with a wristwatch, etc.).
 
+THE PERIOD MUST COME FROM THE NARRATION, NOT FROM THE CHANNEL'S VISUAL
+STYLE. Read the narration for technology and setting cues FIRST:
+  - smartphones, texting, apps, wifi, Airbnb, rideshares, laptops,
+    security cameras, social media → story_period MUST be present-day.
+  - gas lamps, carriages, telegrams, servants' bells → period setting OK.
+The channel style keywords (e.g. "candlelit", "victorian", "gothic")
+describe LIGHTING and MOOD ONLY — they are NOT an instruction to
+relocate a modern story into the past. A story about text messages set
+in "Victorian England" produces absurd images (a rotary telephone
+"displaying" a text message) and MUST NOT happen.
+
 For EACH shot return:
   - narration_excerpt: the exact substring of the narration this shot covers.
     Concatenated in order, the excerpts must reconstruct the full narration
@@ -106,8 +117,14 @@ The "shots" array MUST contain exactly {n} entries."""
 # names. `default` is used for unknown channels (or custom user channels).
 _GENRE_TONE_BY_CHANNEL: dict[str, dict[str, str]] = {
     "horror": {
-        "genre_tone":       "chilling gothic horror. Viewer should feel physically uneasy by the end. Visual reference: Hereditary / The Witch / Midsommar — atmospheric, decaying, candlelit, victorian, fog, occult, supernatural threat.",
-        "visual_style":     "low-key lighting, cool desaturated palette, fog, film grain, victorian/period detail, night-time or candlelit interiors.",
+        # NOTE: "victorian/candlelit" here are MOOD references, not an
+        # era instruction — the storyboard prompt explicitly tells the
+        # LLM to derive story_period from the narration's technology.
+        # (2026-07-16: an Airbnb/smartphone story got anchored to
+        # "Victorian-era England" because of these keywords, producing
+        # rotary telephones that "display text messages".)
+        "genre_tone":       "chilling gothic horror. Viewer should feel physically uneasy by the end. Visual reference: Hereditary / The Witch / Midsommar — atmospheric, decaying, shadow-soaked, fog, occult, supernatural threat. Mood only: derive the actual era from the narration.",
+        "visual_style":     "low-key lighting, cool desaturated palette, fog, film grain, night-time or dimly-lit interiors. Period detail ONLY when the narration itself is period-set.",
         "avoid_line":       "no daylight, no contemporary office/urban imagery, no cartoons or illustrations.",
         "style_keywords_tail": "cinematic, 35mm film, candlelight, fog, victorian gothic, atmospheric horror, dramatic shadows, dread-soaked",
     },
