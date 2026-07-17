@@ -34,16 +34,32 @@ export async function GET() {
     });
   }
   try {
-    const snap = await adminDb()
-      .collection("jobs")
-      .orderBy("queued_at", "desc")
-      .limit(_LIST_LIMIT)
-      .get();
+    // Two queries merged (2026-07-17): the newest-N page ALONE dropped
+    // ACTIVE jobs whose queued_at is old — e.g. a requeued job that a
+    // worker was actively rendering sat outside the newest-20 window,
+    // so the queue UI showed "0 running" while the Monitor showed the
+    // worker mid-render at 82%. Active rows (queued/claimed/running/
+    // needs_publish) are now ALWAYS included regardless of age.
+    const [pageSnap, ...activeSnaps] = await Promise.all([
+      adminDb().collection("jobs")
+        .orderBy("queued_at", "desc")
+        .limit(_LIST_LIMIT)
+        .get(),
+      ...["queued", "claimed", "running", "needs_publish"].map((st) =>
+        adminDb().collection("jobs").where("status", "==", st).limit(50).get(),
+      ),
+    ]);
+    const seen = new Set<string>();
     const out: unknown[] = [];
-    snap.forEach((doc) => {
+    const push = (doc: { id: string; data: () => Record<string, unknown> }) => {
       const d = doc.data();
-      out.push({ ...d, id: d.id || doc.id });
-    });
+      const id = String(d.id || doc.id);
+      if (seen.has(id)) return;
+      seen.add(id);
+      out.push({ ...d, id });
+    };
+    for (const s of activeSnaps) s.forEach(push);
+    pageSnap.forEach(push);
     _cachedList = { at: Date.now(), body: out };
     logRoute(reqId, "list jobs", { count: out.length, cache: "MISS" });
     return NextResponse.json(out, {
