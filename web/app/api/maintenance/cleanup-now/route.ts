@@ -212,9 +212,24 @@ export async function POST(req: NextRequest) {
     summary.errors.push(`jobs cleanup: ${String(e)}`);
   }
 
-  // ── orphan queued jobs (always 2h regardless of days) ──────
+  // ── orphan queued jobs ──────
+  // Live-worker-aware threshold (2026-07-17, matches maintenance/cleanup):
+  // a deep queue being actively drained by one worker is NOT orphaned.
+  // 24h when any backend heartbeated <10 min ago; 2h only when nothing
+  // is alive.
   try {
-    const orphanCutoff = now - ORPHAN_QUEUED_HOURS * 3600;
+    let workerAlive = false;
+    try {
+      const bSnap = await adminDb().collection("backends").limit(50).get();
+      const liveCut = now - 600;
+      bSnap.forEach((bd) => {
+        const b = bd.data() as Record<string, unknown>;
+        const seen = _toEpoch(b.last_seen_at) ?? _toEpoch(b.last_seen);
+        if (seen != null && seen > liveCut) workerAlive = true;
+      });
+    } catch { /* soft-fail → conservative 2h behaviour */ }
+    const effectiveHours = workerAlive ? 24 : ORPHAN_QUEUED_HOURS;
+    const orphanCutoff = now - effectiveHours * 3600;
     const snap = await adminDb().collection("jobs")
       .where("status", "==", "queued")
       .where("queued_at", "<", orphanCutoff)
@@ -230,7 +245,7 @@ export async function POST(req: NextRequest) {
       try {
         await doc.ref.update({
           status: "failed",
-          error: `orphaned in queue >${ORPHAN_QUEUED_HOURS}h with no backend claim`,
+          error: `orphaned in queue >${effectiveHours}h with no backend claim`,
           finished_at: now,
         });
         n += 1;
@@ -239,7 +254,7 @@ export async function POST(req: NextRequest) {
       }
     }
     summary.orphan_queued_failed = n;
-    if (n > 0) summary.detail.push(`Marked ${n} orphan-queued jobs (>${ORPHAN_QUEUED_HOURS}h) as failed`);
+    if (n > 0) summary.detail.push(`Marked ${n} orphan-queued jobs (>${effectiveHours}h) as failed`);
   } catch (e) {
     summary.errors.push(`orphan queued: ${String(e)}`);
   }

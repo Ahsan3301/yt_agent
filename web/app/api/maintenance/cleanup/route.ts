@@ -118,8 +118,28 @@ export async function POST(req: NextRequest) {
   // dispatch (worker died before claim, or duplicate from idempotency
   // race). Mark them failed so the watchdog stops treating them as
   // "claimable work" — keeps Kaggle from staying alive forever.
+  //
+  // 2026-07-17: threshold is now live-worker-aware. Oracle CPU renders
+  // take 40-70 min each, so a 5-job scheduled batch means the tail
+  // waits 3-5h in queue while a perfectly healthy worker drains it
+  // sequentially — the flat 2h sweep was killing those (user screenshot:
+  // 5 jobs "orphaned in queue for >2h" while Oracle was mid-queue).
+  // If ANY backend heartbeated within the last 10 min, the queue is
+  // being actively worked → use a 24h threshold. Only the genuine
+  // no-worker-alive case keeps the aggressive 2h cutoff.
   try {
-    const cutoff = now - ORPHAN_QUEUED_HOURS * 3600;
+    let workerAlive = false;
+    try {
+      const bSnap = await adminDb().collection("backends").limit(50).get();
+      const liveCut = now - 600;
+      bSnap.forEach((bd) => {
+        const b = bd.data() as Record<string, unknown>;
+        const seen = _toEpoch(b.last_seen_at) ?? _toEpoch(b.last_seen);
+        if (seen != null && seen > liveCut) workerAlive = true;
+      });
+    } catch { /* soft-fail → conservative 2h behaviour */ }
+    const effectiveHours = workerAlive ? 24 : ORPHAN_QUEUED_HOURS;
+    const cutoff = now - effectiveHours * 3600;
     const snap = await adminDb()
       .collection("jobs")
       .where("status", "==", "queued")
@@ -133,7 +153,7 @@ export async function POST(req: NextRequest) {
       if (q != null && q < cutoff) {
         batch.update(doc.ref, {
           status: "failed",
-          error: `orphaned in queue for >${ORPHAN_QUEUED_HOURS}h with no backend claim`,
+          error: `orphaned in queue for >${effectiveHours}h with no backend claim`,
           finished_at: now,
         });
         n += 1;
