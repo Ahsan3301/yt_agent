@@ -278,13 +278,23 @@ export async function POST(req: NextRequest) {
         });
         // Verify OUR instance_id stuck (races: two workers PATCH within
         // ms of each other; PB / Firestore serialize but last-write wins).
-        const check = await doc.ref.get();
-        if (!check.exists) continue;
-        const checkData = check.data() || {};
-        if (String(checkData.backend_instance_id || "") !== instance_id) {
-          // Another worker's PATCH landed after ours — they own the claim.
-          continue;
-        }
+        // If the verify READ fails transiently, we still RETURN the job:
+        // our PATCH succeeded, so we own it with high probability — the
+        // alternative (skipping) left the job stuck status='claimed'
+        // under a live worker forever, because cleanup-stale only
+        // requeues claimed jobs whose instance is dead. Worst case of
+        // returning is the rare double-render (same as pre-fix), vs a
+        // guaranteed stuck job. (2026-07-17 audit finding.)
+        try {
+          const check = await doc.ref.get();
+          if (check.exists) {
+            const checkData = check.data() || {};
+            if (String(checkData.backend_instance_id || "") !== instance_id) {
+              // Another worker's PATCH landed after ours — they own it.
+              continue;
+            }
+          }
+        } catch { /* verify read failed — proceed as owner (see above) */ }
         return NextResponse.json({
           ok:   true,
           job:  { id: doc.id, ...data,

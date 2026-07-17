@@ -414,6 +414,27 @@ function JobRow({
   // Resume is only meaningful for FAILED side-jobs. Render jobs are
   // re-triggered by re-running the pipeline from Library, not resumed.
   const canResume = isSideJob && job.status === "failed";
+  // needs_publish = render succeeded, YouTube upload failed (expired
+  // token etc). The video survives — queue a publish_youtube side-job
+  // instead of re-rendering. Requires run_id + a bound account.
+  const canRetryPublish = job.status === "needs_publish" && Boolean(job.run_id);
+  const [publishBusy, setPublishBusy] = useState(false);
+  const retryPublish = async () => {
+    if (!job.run_id) return;
+    setPublishBusy(true);
+    try {
+      const r = await fetch(`/api/runs/${encodeURIComponent(job.run_id)}/publish`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ youtube_account_id: job.youtube_account_id || "" }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) alert(`Retry publish failed: ${d.error || r.status}`);
+      else alert(`Publish queued (job ${d.job_id || "?"}) — watch the queue.`);
+    } finally {
+      setPublishBusy(false);
+    }
+  };
   return (
     <tr className="border-t border-line hover:bg-bg-2/50">
       <td className="px-3 py-2">
@@ -500,6 +521,17 @@ function JobRow({
       <td className="px-2 py-2 text-xs text-neutral-500">{fmtAge(job.queued_at)}</td>
       <td className="px-3 py-2 text-right">
         <div className="inline-flex items-center gap-1 justify-end">
+          {canRetryPublish && (
+            <button
+              onClick={retryPublish}
+              disabled={publishBusy}
+              className="btn h-7 text-xs border-orange-500/40 bg-orange-500/10 text-orange-300"
+              title={`Queue a YouTube publish for run ${job.run_id} (account ${job.youtube_account_id || "channel default"}) — no re-render`}
+            >
+              {publishBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCw className="h-3 w-3" />}
+              Retry publish
+            </button>
+          )}
           {canResume && (
             <button
               onClick={onResume}

@@ -206,6 +206,8 @@ export async function POST(req: NextRequest) {
       // Explicit body binding wins; else inherit the channel's bound
       // account so gateway-created jobs publish to the right channel.
       youtube_account_id: youtube_account_id || chanYt,
+      // Same publish-warning chip semantics as render-now + scheduled-render.
+      unbound: !(youtube_account_id || chanYt),
     };
 
     // Pick a URL-based worker (tunnel mode) for direct HTTP dispatch.
@@ -276,7 +278,8 @@ export async function POST(req: NextRequest) {
             channel, dry_run,
             manual_topic, manual_script, manual_title,
             manual_channel_desc, manual_images, web_research,
-            real_events, language, voice_override, youtube_account_id,
+            real_events, language, voice_override,
+            youtube_account_id: youtube_account_id || chanYt,
           }),
         });
         if (r.ok) {
@@ -285,8 +288,17 @@ export async function POST(req: NextRequest) {
           // status checks find the same record. (Backend's submit()
           // already wrote to Firestore on the first _persist, so the
           // doc lives at jobs/<workerJob.id>, NOT jobs/<jobId>.)
+          //
+          // chanStamp goes FIRST so the channel-inherited config
+          // (allowed_workers, cf_*, oracle hash, tone/privacy, name)
+          // survives on the dispatch path too — before 2026-07-17 it
+          // was only written on the queued-no-worker branch, so any
+          // job that dispatched directly to a live worker lost every
+          // channel setting (CF silently off, no worker gating).
           const finalId = workerJob.id || jobId;
           await upsertJob(finalId, {
+            ...chanStamp,
+            unbound: !(youtube_account_id || chanYt),
             ...workerJob,
             backend_instance_id: target.instance_id,
             backend_url: target.url,

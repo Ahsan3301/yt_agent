@@ -180,7 +180,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         const wakeUrl = base
           ? `${base}/api/backends/wake-kaggle`
           : new URL("/api/backends/wake-kaggle", req.url).toString();
-        fetch(wakeUrl, { method: "POST", headers: { "X-Request-Id": reqId } }).catch(() => {});
+        fetch(wakeUrl, { method: "POST", headers: { "X-Request-Id": reqId, "X-API-Key": process.env.RENDER_TRIGGER_KEY || "" } }).catch(() => {});
         woke = true;
         logRoute(reqId, "run-now waking kaggle (primary, not live)", { wakeUrl, primary });
       } else if (primary === "colab" && !live.has("colab") && !live.has("kaggle") && kaggleAllowed) {
@@ -193,7 +193,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         const wakeUrl = base
           ? `${base}/api/backends/wake-kaggle`
           : new URL("/api/backends/wake-kaggle", req.url).toString();
-        fetch(wakeUrl, { method: "POST", headers: { "X-Request-Id": reqId } }).catch(() => {});
+        fetch(wakeUrl, { method: "POST", headers: { "X-Request-Id": reqId, "X-API-Key": process.env.RENDER_TRIGGER_KEY || "" } }).catch(() => {});
         woke = true;
         logRoute(reqId, "run-now waking kaggle as colab-primary fallback", { wakeUrl, primary });
       } else {

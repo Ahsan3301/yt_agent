@@ -297,7 +297,10 @@ export async function POST(req: NextRequest) {
           });
           fetch(wakeUrl, {
             method: "POST",
-            headers: { "X-Request-Id": reqId },
+            headers: {
+              "X-Request-Id": reqId,
+              "X-API-Key": process.env.RENDER_TRIGGER_KEY || "",
+            },
           }).catch(() => {});
         } else {
           logRoute(reqId, "scheduled-render: no wake needed", {
@@ -314,7 +317,9 @@ export async function POST(req: NextRequest) {
     // Iterate channelMeta — each entry is ONE job slot (channel with
     // daily_count=2 → 2 slots in this array). Each gets its own job
     // id + Firestore doc + dispatch attempt.
+    let slotIdx = -1;
     for (const slot of channelMeta) {
+      slotIdx += 1;
       const cleanChannel = String(slot.niche || "").trim();
       if (!cleanChannel || cleanChannel.length > 60) {
         skipped.push({ channel: slot.niche, reason: "invalid niche name (empty / too long)" });
@@ -329,7 +334,9 @@ export async function POST(req: NextRequest) {
         status: "queued" as const,
         channel: cleanChannel,
         dry_run,
-        queued_at: Date.now() / 1000,
+        // Space by ms per slot so orderBy(queued_at) tie-breaks are
+        // deterministic in the claim loop (matches render-now).
+        queued_at: Date.now() / 1000 + slotIdx * 0.001,
         started_at: null,
         finished_at: null,
         percent: 0,

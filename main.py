@@ -1069,7 +1069,15 @@ def _finish(summary, work_dir, ok):
         video_url=summary.get("video_url"),
         error=summary.get("error"),
     )
-    return ok
+    # Return the FULL summary dict (2026-07-17). Previously returned the
+    # bare bool `ok`, which broke the side-worker's needs_publish
+    # detection: entrypoint.py did `res.get("needs_publish")` on what
+    # was always a bool → isinstance check failed → every
+    # render-ok-but-upload-failed run was reported as plain "complete"
+    # with no retry surface. All callers coerce with
+    # `bool(res.get("ok")) if isinstance(res, dict) else bool(res)`,
+    # so bool-shaped legacy callers keep working.
+    return summary
 
 
 def main():
@@ -1119,8 +1127,8 @@ def main():
         for i in range(count):
             if count > 1:
                 log.info(f"\n>>> Video {i+1} of {count}")
-            ok = run_pipeline(channel_type=channel, dry_run=args.dry_run)
-            if ok:
+            _res = run_pipeline(channel_type=channel, dry_run=args.dry_run)
+            if (bool(_res.get("ok")) if isinstance(_res, dict) else bool(_res)):
                 success_count += 1
             if i < count - 1:
                 time.sleep(15)

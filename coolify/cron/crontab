@@ -50,7 +50,12 @@
 # still there is a leak, safe to nuke. Confirmed live 2026-07-13:
 # accumulated 31 GB across 24 unpublished-but-successful runs before
 # this sweep was added (bug in finalize_run's `published` guard).
-0 */2 * * *  SW=$(docker ps --format '{{.Names}}' | grep '^side-worker' | head -1); [ -n "$SW" ] && docker exec $SW sh -c 'find /app/output/videos -mindepth 1 -maxdepth 1 -type d -mmin +120 -exec rm -rf {} + 2>/dev/null' >> /proc/1/fd/1 2>&1
+# 2026-07-17 (audit): the sweep now EXCLUDES the active run's dir. A
+# long render (20-shot + Pollinations retries on 1.5 vCPU) can exceed
+# 120 min, and the run dir's mtime stops advancing once its top-level
+# entries exist — the old sweep could rm -rf an in-progress render's
+# inputs mid-encode. The active run_id comes from data/run_state.json.
+0 */2 * * *  SW=$(docker ps --format '{{.Names}}' | grep '^side-worker' | head -1); [ -n "$SW" ] && docker exec $SW sh -c 'ACTIVE=$(python3 -c "import json;d=json.load(open(\"data/run_state.json\"));print(d.get(\"run_id\",\"\") if d.get(\"status\") in (\"running\",\"starting\") else \"\")" 2>/dev/null); for d in $(find /app/output/videos -mindepth 1 -maxdepth 1 -type d -mmin +120 2>/dev/null); do [ "$(basename $d)" = "$ACTIVE" ] && continue; rm -rf "$d"; done' >> /proc/1/fd/1 2>&1
 
 # Every 3 min — gateway auto-heal. The recurring "Gateway Timeout" /
 # HTTP 000 comes from Caddy's stale connection pool after ANY container
@@ -62,7 +67,13 @@
 # heal cycle (Caddy restart + Traefik restart). Self-quieting: healthy
 # probes log nothing. Confirmed necessary 2026-07-15 — third stale
 # gateway in one session despite post-deploy bounces.
-*/3 * * * *  CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 --resolve yt-agent.thyker.online:443:132.226.86.61 https://yt-agent.thyker.online/login 2>/dev/null || echo 000); case "$CODE" in 2*|3*) ;; *) echo "gateway-heal: probe returned $CODE — restarting caddy+traefik"; CADDY=$(docker ps --format '{{.Names}}' | grep '^caddy' | head -1); [ -n "$CADDY" ] && docker restart $CADDY; sleep 3; docker restart coolify-proxy; esac >> /proc/1/fd/1 2>&1
+# Softened 2026-07-17 (audit): (a) requires TWO consecutive failed
+# probes (state file) so a transient blip / in-progress deploy doesn't
+# trigger a restart; (b) only restarts CADDY (app-scoped) on the first
+# heal — coolify-proxy (SHARED Traefik fronting every app on the host)
+# is only bounced if Caddy alone didn't fix it by the NEXT tick (third
+# consecutive failure).
+*/3 * * * *  CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 --resolve yt-agent.thyker.online:443:132.226.86.61 https://yt-agent.thyker.online/login 2>/dev/null || echo 000); case "$CODE" in 2*|3*) rm -f /tmp/gwfail ;; *) N=$(($(cat /tmp/gwfail 2>/dev/null || echo 0) + 1)); echo "$N" > /tmp/gwfail; echo "gateway-heal: probe returned $CODE (consecutive fail #$N)"; if [ "$N" -eq 2 ]; then CADDY=$(docker ps --format '{{.Names}}' | grep '^caddy' | head -1); [ -n "$CADDY" ] && docker restart $CADDY && echo "gateway-heal: restarted caddy"; elif [ "$N" -ge 3 ]; then docker restart coolify-proxy && echo "gateway-heal: escalated — restarted coolify-proxy"; rm -f /tmp/gwfail; fi; esac >> /proc/1/fd/1 2>&1
 
 # Trailing newline is required — Linux crontab silently ignores the last
 # line if it doesn't end with one.

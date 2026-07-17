@@ -445,7 +445,7 @@ def _run_one(job: dict[str, Any]):
     _cf_snap = _cf.apply_from_job(job)
     _llm_snap = _cllm.apply_from_job(job)
     try:
-        ok = run_pipeline(
+        _res = run_pipeline(
             channel_type=job["channel"],
             dry_run=job["dry_run"],
             manual_topic=job.get("manual_topic", ""),
@@ -464,6 +464,8 @@ def _run_one(job: dict[str, Any]):
     finally:
         _cf.restore_env(_cf_snap)
         _cllm.restore_env(_llm_snap)
+    # run_pipeline returns the summary dict as of 2026-07-17 (bool before).
+    ok = bool(_res.get("ok")) if isinstance(_res, dict) else bool(_res)
 
     # Pipeline finished — final state and (optionally) upload.
     final_state = run_state.read()
