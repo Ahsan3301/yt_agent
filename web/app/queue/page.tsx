@@ -102,8 +102,22 @@ export default function QueuePage() {
   }, []);
 
   const filtered = useMemo(() => {
-    if (filter === "all") return jobs;
-    return jobs.filter((j) => j.status === filter);
+    const base = filter === "all" ? jobs : jobs.filter((j) => j.status === filter);
+    // ACTIVE work floats to the top regardless of queued_at. Requeued
+    // jobs keep their original (old) timestamp, so a currently-RUNNING
+    // render could be buried under a page of newer terminal rows —
+    // the operator then sees the Monitor "Editing video" with no
+    // visible job and reasonably concludes it's a ghost (2026-07-17).
+    // Order: running → claimed → queued → needs_publish → the rest,
+    // newest-first within each group.
+    const rank = (s: string) =>
+      s === "running" ? 0 : s === "claimed" ? 1 : s === "queued" ? 2 :
+      s === "needs_publish" ? 3 : 4;
+    return [...base].sort((a, b) => {
+      const r = rank(a.status) - rank(b.status);
+      if (r !== 0) return r;
+      return (b.queued_at || 0) - (a.queued_at || 0);
+    });
   }, [jobs, filter]);
 
   const counts = useMemo(() => {
