@@ -210,9 +210,9 @@ NIM_KEY = _KeyProxy()
 # chronically-429ing minimax.
 TEXT_MODEL_PRIMARY   = os.getenv("NIM_TEXT_MODEL",   "nvidia/nemotron-3-super-120b-a12b")
 TEXT_MODEL_FALLBACKS = [
-    # Qwen 2.5 72B Instruct — very stable on NIM, excellent JSON
-    # adherence (helps storyboard + SEO calls).
-    "qwen/qwen2.5-72b-instruct",
+    # qwen/qwen2.5-72b-instruct REMOVED 2026-07-17 — NIM now returns
+    # 404 for it on every call (model retired from the catalog). It was
+    # burning one fast-fail round trip per fallback walk.
     # Llama-3.3-70b — was primary; keep as fallback because it does
     # respond during off-peak hours and has a slightly different
     # style-fingerprint if Nemotron's is overplayed.
