@@ -1703,6 +1703,117 @@ def _local_flux2_klein_generate(prompt, output_dir, trial, negative_prompt=""):
         return None, seed
 
 
+# ── Agnes AI image provider (agnes-ai.com) ────────────────────────
+# Free OpenAI-compatible multimodal API (Sapiens AI, Singapore).
+# Per-channel: the render's AGNES_API_KEY is set by backend.channel_agnes
+# from the channel's own key (agnes_source='own'). Empty key → provider
+# skipped by _provider_ready. Generous free image quota (thousands/day),
+# so it's a strong CF-pool-exhaustion fallback — but quality is
+# inconsistent per reviews, so slot it BELOW the flux providers.
+_AGNES_BASE = os.getenv("AGNES_API_BASE", "https://apihub.agnes-ai.com/v1")
+_AGNES_IMAGE_MODEL = os.getenv("AGNES_IMAGE_MODEL", "agnes-image-2.1-flash")
+_AGNES_COOLDOWN_UNTIL = 0.0   # set on 401/402/429 so we stop hammering
+
+
+def _agnes_key() -> str:
+    return (os.getenv("AGNES_API_KEY", "") or "").strip()
+
+
+def _agnes_generate(prompt, output_dir, trial, negative_prompt=""):
+    """Generate one image via Agnes AI. Returns (path, seed) on success,
+    (None, seed) on any failure. OpenAI-images-style endpoint:
+      POST {base}/v1/images/generations
+      body: {model, prompt, size, extra_body:{response_format:"url"}}
+      resp: {data:[{url}]}  → we download the PNG and re-save as JPG.
+    """
+    global _AGNES_COOLDOWN_UNTIL
+    seed = int(hashlib.md5(f"{prompt}|{trial}|agnes".encode()).hexdigest()[:8], 16)
+    key = _agnes_key()
+    if not key:
+        return None, seed
+    if time.time() < _AGNES_COOLDOWN_UNTIL:
+        return None, seed
+
+    # Agnes runs a Gemini-Flash-class image model — natural-language
+    # prompts work best (same as Flux). Reuse the flux distiller.
+    final_prompt = _distill_prompt_for_flux(prompt)[:700]
+    body = {
+        "model": _AGNES_IMAGE_MODEL,
+        "prompt": final_prompt,
+        # Portrait 9:16 for Shorts. Tested: 576x1024 request → ~736x1312
+        # PNG. The editor's ken-burns pan/crop normalises the rest.
+        "size": os.getenv("AGNES_IMAGE_SIZE", "576x1024"),
+        "extra_body": {"response_format": "url"},
+    }
+    dest = os.path.join(output_dir, f"agnes_{seed:08x}.jpg")
+    try:
+        r = requests.post(
+            f"{_AGNES_BASE}/images/generations",
+            headers={"Authorization": f"Bearer {key}",
+                     "Content-Type": "application/json"},
+            json=body, timeout=120,
+        )
+        if r.status_code in (401, 402, 403, 429):
+            # Auth/quota problem — cool down 10 min so we don't burn the
+            # per-shot attempt budget re-hitting a dead/exhausted key.
+            _AGNES_COOLDOWN_UNTIL = time.time() + 600
+            log.warning(f"agnes: HTTP {r.status_code} — cooling provider 10 min")
+            return None, seed
+        r.raise_for_status()
+        data = (r.json() or {}).get("data") or []
+        if not data:
+            return None, seed
+        img_url = str(data[0].get("url") or "").strip()
+        if not img_url:
+            # Fall back to b64 if the account is configured for it.
+            b64 = data[0].get("b64_json")
+            if b64:
+                import base64 as _b64
+                with open(dest, "wb") as f:
+                    f.write(_b64.b64decode(b64))
+                return (dest, seed) if _agnes_ok(dest) else (None, seed)
+            return None, seed
+        # Download the URL.
+        ir = requests.get(img_url, stream=True, timeout=120)
+        ir.raise_for_status()
+        with open(dest, "wb") as f:
+            for chunk in ir.iter_content(chunk_size=8192):
+                f.write(chunk)
+        return (dest, seed) if _agnes_ok(dest) else (None, seed)
+    except Exception as e:
+        log.warning(f"agnes gen failed: {e}")
+        return None, seed
+
+
+def _agnes_ok(path: str) -> bool:
+    """Reject truncated/degenerate downloads (same guard SDXL uses)."""
+    try:
+        if not os.path.exists(path) or os.path.getsize(path) < 4096:
+            return False
+        from PIL import Image as _Img
+        import numpy as _np
+        with _Img.open(path) as im:
+            im = im.convert("RGB")
+            arr = _np.asarray(im).astype(_np.float32)
+        if float(arr.std()) < 6 or float(arr.mean()) < 4:
+            log.warning("agnes: degenerate image (near-uniform) — treating as failure")
+            return False
+        # Normalise to JPG so the editor pipeline (which globs *.jpg for
+        # some paths) + storage stay consistent with other providers.
+        if not path.lower().endswith(".jpg"):
+            return True
+        with _Img.open(path) as im:
+            im.convert("RGB").save(path, "JPEG", quality=92)
+        return True
+    except Exception:
+        # If PIL isn't available or the check errored, accept the file
+        # as long as it's non-trivial in size (belt-and-braces).
+        try:
+            return os.path.exists(path) and os.path.getsize(path) >= 4096
+        except Exception:
+            return False
+
+
 def _score_local_image(path, visual, premise):
     """Vision-score a LOCAL image file by passing it as a data URL."""
     try:
@@ -1871,7 +1982,7 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror",
         )
     ig_cfg = (load_settings().get("image_gen") or {})
     priority = ig_cfg.get("priority") or [
-        "cloudflare", "local_flux2_klein", "pollinations",
+        "cloudflare", "local_flux2_klein", "agnes", "pollinations",
         "horde", "local_sdxl", "huggingface",
     ]
     ig_enabled = ig_cfg.get("enabled") or {}
@@ -1949,6 +2060,12 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror",
                     )
             except Exception:
                 pass
+        if name == "agnes":
+            if not _agnes_key():
+                return False, "no AGNES_API_KEY (channel agnes_source=off or no key)"
+            if time.time() < _AGNES_COOLDOWN_UNTIL:
+                wait = int(_AGNES_COOLDOWN_UNTIL - time.time())
+                return False, f"cooling after auth/quota error ({wait}s remaining)"
         if name == "pollinations":
             if _pollinations_breaker_skip():
                 wait = int(_POLL_OPEN_UNTIL - time.time())
@@ -1966,6 +2083,7 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror",
     _AI_PROVIDERS = {
         "cloudflare":         _cloudflare_generate,   # Flux 2 dev via Workers AI, ~150/day free
         "local_flux2_klein":  _local_flux2_klein_generate,  # Kaggle T4×2 only
+        "agnes":              _agnes_generate,        # Agnes AI, per-channel key, big free quota
         "horde":              _horde_generate,        # real SDXL crowdsourced, works anon
         "huggingface":        _huggingface_generate,
         "local_sdxl":         _local_sdxl_generate,

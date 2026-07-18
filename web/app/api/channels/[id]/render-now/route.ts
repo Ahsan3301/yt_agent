@@ -130,6 +130,13 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         cf_pool: c.cloudflare_source === "own"
           ? String(c.cloudflare_pool || "").trim()
           : "",
+        // Per-channel Agnes AI image key. Only carried when the channel
+        // opted in (agnes_source=own) so channels that leave it off never
+        // ship their prompts to Agnes.
+        agnes_source: String(c.agnes_source || "off"),
+        agnes_own_api_key: c.agnes_source === "own"
+          ? String(c.agnes_api_key || "").trim()
+          : "",
         llm_priority: (typeof c.llm_priority === "string" && c.llm_priority.trim())
           ? String(c.llm_priority).trim().slice(0, 60)
           : "",

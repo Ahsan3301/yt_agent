@@ -484,6 +484,11 @@ const IMAGE_GEN_PROVIDERS: { key: string; label: string; hint: string }[] = [
     hint: "Legacy fallback. Needs GPU sm_7.0+ (T4/A100 OK, P100 fails). Kept as safety net if klein-4B fails to load. Recommend disabling once klein-4B is verified working.",
   },
   {
+    key: "agnes",
+    label: "Agnes AI (per-channel key)",
+    hint: "Free OpenAI-compatible image API (agnes-ai.com). Big free daily quota — strong Cloudflare-exhaustion fallback. PER-CHANNEL: only fires for channels that set Agnes to 'Use my key' on the channel edit page; channels left off never touch it. This global toggle controls whether it participates in the chain at all + its position.",
+  },
+  {
     key: "pollinations",
     label: "Pollinations Flux 1",
     hint: "Cloud API, free, no key. Fast (~2-10s/img on a good day). Occasionally rate-limits under load. Better prompt adherence than SDXL, slightly less than Flux 2.",
@@ -501,10 +506,11 @@ const IMAGE_GEN_PROVIDERS: { key: string; label: string; hint: string }[] = [
 ];
 
 const IMAGE_GEN_DEFAULT: NonNullable<Settings["image_gen"]> = {
-  priority: ["cloudflare", "local_flux2_klein", "pollinations", "horde", "local_sdxl", "huggingface"],
+  priority: ["cloudflare", "local_flux2_klein", "agnes", "pollinations", "horde", "local_sdxl", "huggingface"],
   enabled: {
     cloudflare: true,
     local_flux2_klein: true,
+    agnes: true,
     pollinations: true,
     horde: true,
     local_sdxl: false,

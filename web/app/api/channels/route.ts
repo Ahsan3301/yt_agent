@@ -72,6 +72,14 @@ type ChannelDoc = {
   cloudflare_pool_action?: "set" | "clear";
   cloudflare_action?: "set" | "clear";
   cloudflare_global_password?: string;  // required when switching to "global"
+  // Per-channel Agnes AI image provider (agnes-ai.com). Fully
+  // per-channel + write-only: each channel supplies its OWN key, so
+  // channels that leave this off never send prompts to Agnes.
+  //   "off"  → Agnes skipped for this channel
+  //   "own"  → use agnes_api_key for this channel's renders
+  agnes_source?: "off" | "own";
+  agnes_api_key?: string;           // own mode only, write-only
+  agnes_action?: "set" | "clear";
 };
 
 // Strip sensitive fields before returning to the client. Also
@@ -83,12 +91,14 @@ function _publicView(d: Record<string, unknown>): Record<string, unknown> {
     cloudflare_account_id,
     cloudflare_api_token,
     cloudflare_pool,
+    agnes_api_key,
     ...rest
   } = d as {
     oracle_password_hash?: string;
     cloudflare_account_id?: string;
     cloudflare_api_token?: string;
     cloudflare_pool?: string;
+    agnes_api_key?: string;
   };
   // Count pool entries for a friendly "3 accounts pooled" chip in the UI
   // without ever leaking the actual account_ids/tokens.
@@ -105,6 +115,8 @@ function _publicView(d: Record<string, unknown>): Record<string, unknown> {
     has_cloudflare_own_creds: Boolean(cloudflare_account_id && cloudflare_api_token),
     has_cloudflare_pool: cf_pool_count > 0,
     cloudflare_pool_count: cf_pool_count,
+    // Never return the Agnes key; just whether one is stored.
+    has_agnes_key: Boolean(agnes_api_key),
   };
 }
 
@@ -351,6 +363,41 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // ── Agnes AI per-channel key (write-only) ──────────────────────
+    // Same shape as the CF single-account path: agnes_action=set stores
+    // the key + flips source to "own"; =clear wipes it + source to off;
+    // action absent + source=own leaves the stored key alone.
+    const agnesPatch: Record<string, unknown> = {};
+    if (body.agnes_source === "off") {
+      agnesPatch.agnes_source = "off";
+      agnesPatch.agnes_api_key = "";
+    } else if (body.agnes_source === "own") {
+      if (body.agnes_action === "set") {
+        const k = String(body.agnes_api_key || "").trim();
+        if (k.length < 12) {
+          return NextResponse.json(
+            { error: "agnes_api_key missing or too short (expect an sk-... key from agnes-ai.com)" },
+            { status: 400 },
+          );
+        }
+        agnesPatch.agnes_source = "own";
+        agnesPatch.agnes_api_key = k;
+      } else if (body.agnes_action === "clear") {
+        agnesPatch.agnes_source = "off";
+        agnesPatch.agnes_api_key = "";
+      } else {
+        // Switching to own without a new key — only OK if one is stored.
+        const existingData = existing.exists ? (existing.data() as Record<string, unknown>) : {};
+        if (!existingData?.agnes_api_key) {
+          return NextResponse.json(
+            { error: "agnes_source=own but no key stored and none supplied" },
+            { status: 400 },
+          );
+        }
+        agnesPatch.agnes_source = "own";
+      }
+    }
+
     const payload = {
       id,
       name:        body.name.trim().slice(0, 80),
@@ -405,6 +452,7 @@ export async function POST(req: NextRequest) {
       llm_priority: _sanitizeLlmPriority(body.llm_priority),
       ...passwordPatch,
       ...cfPatch,
+      ...agnesPatch,
       updated_at: FieldValue.serverTimestamp(),
       ...(existing.exists ? {} : { created_at: FieldValue.serverTimestamp() }),
     };

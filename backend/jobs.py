@@ -442,8 +442,10 @@ def _run_one(job: dict[str, Any]):
     # "off" → wiped so shotfinder skips CF entirely on this channel.
     from backend import channel_cf as _cf
     from backend import channel_llm as _cllm
+    from backend import channel_agnes as _cag
     _cf_snap = _cf.apply_from_job(job)
     _llm_snap = _cllm.apply_from_job(job)
+    _ag_snap = _cag.apply_from_job(job)
     try:
         _res = run_pipeline(
             channel_type=job["channel"],
@@ -464,6 +466,7 @@ def _run_one(job: dict[str, Any]):
     finally:
         _cf.restore_env(_cf_snap)
         _cllm.restore_env(_llm_snap)
+        _cag.restore_env(_ag_snap)
     # run_pipeline returns the summary dict as of 2026-07-17 (bool before).
     ok = bool(_res.get("ok")) if isinstance(_res, dict) else bool(_res)
 

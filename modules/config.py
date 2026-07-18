@@ -172,6 +172,7 @@ DEFAULT_SETTINGS = {
         "priority": [
             "cloudflare",           # klein-9b pool, best quality
             "local_flux2_klein",    # Kaggle T4×2 only, unlimited Flux 2 backup
+            "agnes",                # Agnes AI, per-channel key, big free quota
             "pollinations",         # Flux 1, unlimited network fallback
             "horde",                # community SDXL safety net
             "local_sdxl",           # legacy last-resort GPU fallback
@@ -180,6 +181,7 @@ DEFAULT_SETTINGS = {
         "enabled": {
             "cloudflare":         True,
             "local_flux2_klein":  True,   # auto-gated to Kaggle T4×2 in _provider_ready
+            "agnes":              True,   # per-channel: only fires when a channel sets agnes_source=own + key
             "horde":              True,
             "pollinations":       True,
             "huggingface":        True,

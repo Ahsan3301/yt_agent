@@ -104,6 +104,8 @@ export async function POST(req: NextRequest) {
       cf_own_account_id: string;
       cf_own_api_token: string;
       cf_pool: string;
+      agnes_source: string;
+      agnes_own_api_key: string;
       llm_priority: string;
     }> = [];
     // Build a niche→binding lookup so the legacy fallback path (below)
@@ -180,6 +182,10 @@ export async function POST(req: NextRequest) {
         // Per-channel Cloudflare account POOL for multi-account rotation.
         const cfPool = cfSource === "own"
           ? String(c.cloudflare_pool || "").trim() : "";
+        // Per-channel Agnes AI image key.
+        const agnesSource = String(c.agnes_source || "off");
+        const agnesKey = agnesSource === "own"
+          ? String(c.agnes_api_key || "").trim() : "";
         for (let i = 0; i < count; i++) {
           channelMeta.push({
             niche,
@@ -203,6 +209,8 @@ export async function POST(req: NextRequest) {
             cf_own_account_id: cfOwnAcc,
             cf_own_api_token: cfOwnTok,
             cf_pool: cfPool,
+            agnes_source: agnesSource,
+            agnes_own_api_key: agnesKey,
             llm_priority: (typeof c.llm_priority === "string" && c.llm_priority.trim())
               ? String(c.llm_priority).trim().slice(0, 60) : "",
           });
@@ -237,6 +245,8 @@ export async function POST(req: NextRequest) {
             cf_own_account_id: "",
             cf_own_api_token: "",
             cf_pool: "",
+            agnes_source: "off",
+            agnes_own_api_key: "",
             llm_priority: "",
           });
         }
@@ -383,6 +393,8 @@ export async function POST(req: NextRequest) {
         cf_own_account_id: slot.cf_own_account_id,
         cf_own_api_token: slot.cf_own_api_token,
         cf_pool: slot.cf_pool,
+        agnes_source: slot.agnes_source,
+        agnes_own_api_key: slot.agnes_own_api_key,
         llm_priority: slot.llm_priority,
         updated_at: FieldValue.serverTimestamp(),
       };

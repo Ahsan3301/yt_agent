@@ -179,6 +179,8 @@ export async function POST(req: NextRequest) {
           cf_own_account_id: cfSource === "own" ? String(match.cloudflare_account_id || "").trim() : "",
           cf_own_api_token:  cfSource === "own" ? String(match.cloudflare_api_token || "").trim() : "",
           cf_pool:           cfSource === "own" ? String(match.cloudflare_pool || "").trim() : "",
+          agnes_source: String(match.agnes_source || "off"),
+          agnes_own_api_key: match.agnes_source === "own" ? String(match.agnes_api_key || "").trim() : "",
           llm_priority: (typeof match.llm_priority === "string" && match.llm_priority.trim())
             ? String(match.llm_priority).trim().slice(0, 60) : "",
           tone_override: (typeof match.tone === "string" && match.tone) ? String(match.tone) : null,

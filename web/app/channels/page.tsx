@@ -71,6 +71,10 @@ type Channel = {
   // Comma-separated ordered list of LLM providers this channel should
   // use, e.g. "nim,openrouter,groq". Empty = worker default.
   llm_priority?: string;
+  // Per-channel Agnes AI image provider. "own" + a stored key opts this
+  // channel in; "off" (default) keeps it fully isolated.
+  agnes_source?: "off" | "own";
+  has_agnes_key?: boolean;
 };
 
 type LlmProviderKey = "nim" | "openrouter" | "groq";
@@ -661,6 +665,17 @@ function ChannelForm({
     hasCfPool ? "keep" : "set",
   );
   const [cfPoolJson, setCfPoolJson] = useState<string>("");
+
+  // ── Agnes AI image provider (per-channel) ──────────────────
+  // "off" | "own" — matches server field agnes_source.
+  const [agnesSource, setAgnesSource] = useState<"off" | "own">(
+    (initial?.agnes_source as "off" | "own") || "off",
+  );
+  const hasAgnesKey = !!initial?.has_agnes_key;
+  const [agnesAction, setAgnesAction] = useState<"keep" | "set">(
+    hasAgnesKey && initial?.agnes_source === "own" ? "keep" : "set",
+  );
+  const [agnesKey, setAgnesKey] = useState<string>("");
   // Operator unlock required to switch INTO global mode. Same value as
   // ORACLE_UNLOCK_PASSWORD env, prompted here only when the user picks
   // global; never round-trips back to the client.
@@ -707,6 +722,8 @@ function ChannelForm({
       cloudflare_pool?: string;
       cloudflare_pool_action?: "set" | "clear";
       cloudflare_global_password?: string;
+      agnes_action?: "set" | "clear";
+      agnes_api_key?: string;
     } = {
       id: initial?.id || "",
       name: name.trim(),
@@ -730,6 +747,7 @@ function ChannelForm({
       discord_webhook: discordWebhook.trim() || null,
       allowed_workers: workers,
       cloudflare_source: cfSource,
+      agnes_source: agnesSource,
       llm_priority: llms.join(","),
     };
     if (oraclePasswordAction === "set" && oraclePasswordInput.trim().length >= 4) {
@@ -768,6 +786,17 @@ function ChannelForm({
     }
     if (cfSource === "global" && cfGlobalPassword) {
       payload.cloudflare_global_password = cfGlobalPassword;
+    }
+    // Agnes bits.
+    if (agnesSource === "own" && agnesAction === "set") {
+      if (agnesKey.trim().length < 12) {
+        alert("Enter the Agnes API key (sk-...), or switch Agnes off.");
+        return;
+      }
+      payload.agnes_action = "set";
+      payload.agnes_api_key = agnesKey.trim();
+    } else if (agnesSource === "off") {
+      payload.agnes_action = "clear";
     }
     onSave(payload);
   };
@@ -1394,6 +1423,67 @@ function ChannelForm({
               Verified server-side against the dashboard env. Never stored
               on the channel doc.
             </p>
+          </div>
+        )}
+      </div>
+
+      {/* ── Agnes AI image provider (per-channel) ───────────── */}
+      <div className="space-y-3 rounded-lg border border-line bg-bg-2 p-3">
+        <div className="flex items-center justify-between">
+          <div className="font-medium text-sm">Agnes AI image gen</div>
+          {agnesSource === "own" && hasAgnesKey && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300">key set</span>
+          )}
+        </div>
+        <p className="text-[10px] text-neutral-500 -mt-1">
+          Optional free image provider (agnes-ai.com), used in the image
+          priority chain. Per-channel + private: this channel uses its OWN
+          key, and channels left off never send prompts to Agnes. Big free
+          quota — good as a Cloudflare-exhaustion fallback.
+        </p>
+        <div className="flex gap-1.5">
+          {(["off", "own"] as const).map((v) => (
+            <button
+              key={v}
+              type="button"
+              onClick={() => setAgnesSource(v)}
+              className={`btn h-7 text-xs ${
+                agnesSource === v
+                  ? "border-accent/50 bg-accent/15 text-accent"
+                  : "btn-ghost"
+              }`}
+            >
+              {v === "off" ? "Off" : "Use my key"}
+            </button>
+          ))}
+        </div>
+        {agnesSource === "own" && (
+          <div className="space-y-1">
+            {hasAgnesKey && (
+              <div className="flex gap-1.5">
+                {(["keep", "set"] as const).map((a) => (
+                  <button
+                    key={a}
+                    type="button"
+                    onClick={() => setAgnesAction(a)}
+                    className={`btn h-6 text-[10px] ${
+                      agnesAction === a ? "border-accent/50 bg-accent/15 text-accent" : "btn-ghost"
+                    }`}
+                  >
+                    {a === "keep" ? "Keep stored key" : "Replace key"}
+                  </button>
+                ))}
+              </div>
+            )}
+            {(!hasAgnesKey || agnesAction === "set") && (
+              <input
+                type="password"
+                className="input w-full text-xs"
+                placeholder="Agnes API key (sk-...) from agnes-ai.com console"
+                value={agnesKey}
+                onChange={(e) => setAgnesKey(e.target.value)}
+              />
+            )}
           </div>
         )}
       </div>
