@@ -73,7 +73,14 @@
 # heal — coolify-proxy (SHARED Traefik fronting every app on the host)
 # is only bounced if Caddy alone didn't fix it by the NEXT tick (third
 # consecutive failure).
-*/3 * * * *  CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 --resolve yt-agent.thyker.online:443:132.226.86.61 https://yt-agent.thyker.online/login 2>/dev/null || echo 000); case "$CODE" in 2*|3*) rm -f /tmp/gwfail ;; *) N=$(($(cat /tmp/gwfail 2>/dev/null || echo 0) + 1)); echo "$N" > /tmp/gwfail; echo "gateway-heal: probe returned $CODE (consecutive fail #$N)"; if [ "$N" -eq 2 ]; then CADDY=$(docker ps --format '{{.Names}}' | grep '^caddy' | head -1); [ -n "$CADDY" ] && docker restart $CADDY && echo "gateway-heal: restarted caddy"; elif [ "$N" -ge 3 ]; then docker restart coolify-proxy && echo "gateway-heal: escalated — restarted coolify-proxy"; rm -f /tmp/gwfail; fi; esac >> /proc/1/fd/1 2>&1
+# 2026-07-18: probe now runs in a HOST-NETWORK container. The old probe
+# ran from this cron container's bridge network, whose hairpin NAT path
+# kept working while the eth0-side DNAT was wedged — so the watchdog
+# saw 200 while every real external client got connection timeouts
+# (confirmed live: external 000, internal 200, Traefik logs silent =
+# connections never reached the application layer). Host-network curl
+# traverses the same iptables DOCKER chain externals use.
+*/3 * * * *  CODE=$(docker run --rm --network host curlimages/curl:latest -s -o /dev/null -w '%{http_code}' --max-time 10 --resolve yt-agent.thyker.online:443:132.226.86.61 https://yt-agent.thyker.online/login 2>/dev/null || echo 000); case "$CODE" in 2*|3*) rm -f /tmp/gwfail ;; *) N=$(($(cat /tmp/gwfail 2>/dev/null || echo 0) + 1)); echo "$N" > /tmp/gwfail; echo "gateway-heal: probe returned $CODE (consecutive fail #$N)"; if [ "$N" -eq 2 ]; then CADDY=$(docker ps --format '{{.Names}}' | grep '^caddy' | head -1); [ -n "$CADDY" ] && docker restart $CADDY && echo "gateway-heal: restarted caddy"; elif [ "$N" -ge 3 ]; then docker restart coolify-proxy && echo "gateway-heal: escalated — restarted coolify-proxy"; rm -f /tmp/gwfail; fi; esac >> /proc/1/fd/1 2>&1
 
 # Trailing newline is required — Linux crontab silently ignores the last
 # line if it doesn't end with one.
