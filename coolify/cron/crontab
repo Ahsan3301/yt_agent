@@ -57,6 +57,16 @@
 # inputs mid-encode. The active run_id comes from data/run_state.json.
 0 */2 * * *  SW=$(docker ps --format '{{.Names}}' | grep '^side-worker' | head -1); [ -n "$SW" ] && docker exec $SW sh -c 'ACTIVE=$(python3 -c "import json;d=json.load(open(\"data/run_state.json\"));print(d.get(\"run_id\",\"\") if d.get(\"status\") in (\"running\",\"starting\") else \"\")" 2>/dev/null); for d in $(find /app/output/videos -mindepth 1 -maxdepth 1 -type d -mmin +120 2>/dev/null); do [ "$(basename $d)" = "$ACTIVE" ] && continue; rm -rf "$d"; done' >> /proc/1/fd/1 2>&1
 
+# Every 2 min — CONTAINER REVIVAL. The single biggest cause of the
+# recurring "server timeout" was NOT proxy staleness: on 2026-07-20 the
+# dashboard container was found Exited(143) for 2 hours with
+# RestartPolicy=no, so nothing ever brought it back and every heal cycle
+# had no upstream to route to. Restart policies are now set at create
+# time, but this is the belt-and-braces: any expected app container
+# found in a non-running state gets started immediately. Logs only when
+# it actually revives something.
+*/2 * * * *  for C in $(docker ps -a --filter "name=dashboard-" --filter "name=side-worker" --filter "name=pocketbase-" --filter "name=caddy-" --filter "name=minio-" --format '{{.Names}}'); do S=$(docker inspect -f '{{.State.Status}}' "$C" 2>/dev/null); if [ "$S" != "running" ]; then echo "container-revive: $C was $S — starting"; docker start "$C" >/dev/null 2>&1 && echo "container-revive: $C started"; fi; done >> /proc/1/fd/1 2>&1
+
 # Every 3 min — gateway auto-heal. The recurring "Gateway Timeout" /
 # HTTP 000 comes from Caddy's stale connection pool after ANY container
 # rotation (deploy scripts bounce Caddy, but the gateway sometimes goes
