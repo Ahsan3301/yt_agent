@@ -270,14 +270,25 @@ services:
     #   mem=6g        → half of the 12 GiB RAM
     #   cpu-shares=512 → half the default 1024, so kernel gives the
     #                    other site's containers priority under contention
-    #   pids-limit=512 → contains a runaway subprocess fork bomb
+    #   pids-limit removed 2026-07-20 — Coolify's compose runner sets
+    #   deploy.resources.limits.pids internally, and Docker Compose
+    #   rejects any project that has both short-form pids_limit and the
+    #   long-form limit with distinct values. This broke EVERY Coolify
+    #   UI redeploy since 2026-07-11 with:
+    #     "services.side-worker: can't set distinct values on
+    #      'pids_limit' and 'deploy.resources.limits.pids': invalid
+    #      compose project"
+    #   The hot-swap deploy path was unaffected (it runs docker-run
+    #   directly, not compose), which is why the site kept working —
+    #   but the redeploy button silently failed. Fork-bomb protection
+    #   is lost; if it becomes a problem, set it via the deploy block
+    #   only (pids: 512 under deploy.resources.limits) — never both.
     deploy:
       resources:
         limits:
           cpus: "1.6"
           memory: 6g
     cpu_shares: 512
-    pids_limit: 512
 
 networks:
   yt_agent_net:
