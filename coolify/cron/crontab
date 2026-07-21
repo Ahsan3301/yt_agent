@@ -65,7 +65,7 @@
 # time, but this is the belt-and-braces: any expected app container
 # found in a non-running state gets started immediately. Logs only when
 # it actually revives something.
-*/2 * * * *  for C in $(docker ps -a --filter "name=dashboard-" --filter "name=side-worker" --filter "name=pocketbase-" --filter "name=caddy-" --filter "name=minio-" --format '{{.Names}}'); do S=$(docker inspect -f '{{.State.Status}}' "$C" 2>/dev/null); if [ "$S" != "running" ]; then echo "container-revive: $C was $S — starting"; docker start "$C" >/dev/null 2>&1 && echo "container-revive: $C started"; fi; done >> /proc/1/fd/1 2>&1
+*/2 * * * *  for C in $(docker ps -a --filter "name=dashboard-" --filter "name=side-worker" --filter "name=pocketbase-" --filter "name=caddy-" --filter "name=minio-" --format '{{.Names}}' | grep -v '^minio-init-'); do S=$(docker inspect -f '{{.State.Status}}' "$C" 2>/dev/null); if [ "$S" != "running" ]; then echo "container-revive: $C was $S — starting"; docker start "$C" >/dev/null 2>&1 && echo "container-revive: $C started"; fi; done >> /proc/1/fd/1 2>&1
 
 # Every 3 min — gateway auto-heal. The recurring "Gateway Timeout" /
 # HTTP 000 comes from Caddy's stale connection pool after ANY container
