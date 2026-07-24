@@ -4,16 +4,40 @@ import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import {
   Play, Square, CheckCircle2, XCircle, Loader2, AlertTriangle,
-  Film, Sparkles, Clock, Wand2,
+  Film, Sparkles, Wand2, Layers, ListChecks, History, BarChart3,
+  KeyRound, ArrowRight, Zap, Video, Clock, TrendingUp,
 } from "lucide-react";
 import clsx from "clsx";
 import {
-  getSettings, getState, startRun, cancelRun, resetState, getPreflight,
-  listRuns, type Settings, type RunState, type Run,
+  getState, cancelRun, resetState, getPreflight,
+  listRuns, listJobs, type RunState, type Run, type Job,
 } from "@/lib/api";
-import { PRESET_CHANNELS, loadCustomChannels, type ChannelPreset } from "@/lib/channels";
 import VideoPlayer from "@/components/VideoPlayer";
 import LogsPanel from "@/components/LogsPanel";
+import { PageHeader } from "@/components/PageHeader";
+
+/**
+ * Dashboard home — the "studio overview" page.
+ *
+ * Previously this was a hybrid: header + preflight + big quick-run
+ * form (channel picker + dry-run + Run button) + live progress +
+ * latest run + logs. The quick-run form duplicated /app/create and
+ * /app/create/wizard — three creation entry points confused users.
+ *
+ * This rewrite pulls the create form OUT (dashboard is overview
+ * only) and points users at the right specialised page:
+ *   /app/create/wizard  — 5-step guided flow (default primary CTA)
+ *   /app/create         — advanced free-form (topic seed, script
+ *                         paste, image uploads, per-run overrides)
+ *   /app/channels       — for scheduled + recurring publishing
+ *
+ * The overview surfaces the things a returning user actually wants:
+ *   - Stat cards (channels, videos this week, success rate, last run)
+ *   - Live progress if a render is in flight
+ *   - Quick-action tiles to the specialised pages
+ *   - Recent runs grid with thumbnails
+ *   - Compact preflight banner only when something's wrong
+ */
 
 const STEP_ORDER = [
   ["research",  "Researching topic"],
@@ -24,40 +48,30 @@ const STEP_ORDER = [
   ["upload",    "Uploading"],
 ] as const;
 
+type Channel = { id: string; name: string; niche: string; enabled?: boolean };
+
 export default function Dashboard() {
-  const [settings, setSettings] = useState<Settings | null>(null);
   const [state, setState] = useState<RunState>({ status: "idle" });
-  const [latest, setLatest] = useState<Run | null>(null);
+  const [runs, setRuns] = useState<Run[]>([]);
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [channels, setChannels] = useState<Channel[]>([]);
   const [preflight, setPreflight] = useState<{ ok: boolean; error?: string } | null>(null);
-  const [channel, setChannel] = useState<string>("horror");
-  const [savedChannels, setSavedChannels] = useState<ChannelPreset[]>([]);
-  useEffect(() => {
-    setSavedChannels(loadCustomChannels());
-  }, []);
-  const [dry, setDry] = useState(true);
-  const [starting, setStarting] = useState(false);
 
-  // Initial load
-  useEffect(() => {
-    (async () => {
-      try {
-        const s = await getSettings();
-        setSettings(s);
-        setChannel(s.content.channel);
-      } catch {}
-      try { setPreflight(await getPreflight()); } catch {}
-      refreshLatest();
-    })();
-  }, []);
-
-  const refreshLatest = useCallback(async () => {
+  const refresh = useCallback(async () => {
+    try { setRuns(await listRuns()); } catch {}
+    try { setJobs(await listJobs()); } catch {}
     try {
-      const runs = await listRuns();
-      setLatest(runs[0] || null);
+      const r = await fetch("/api/channels", { cache: "no-store" });
+      if (r.ok) setChannels(await r.json());
     } catch {}
   }, []);
 
-  // Poll run state every 1.2s while running.
+  useEffect(() => {
+    refresh();
+    getPreflight().then(setPreflight).catch(() => {});
+  }, [refresh]);
+
+  // Poll run state — 3s while running, 10s when idle.
   useEffect(() => {
     let cancelled = false;
     let lastStatus: string | undefined = undefined;
@@ -66,17 +80,9 @@ export default function Dashboard() {
       try {
         const s = await getState();
         setState(s);
-        // When status transitions away from "running", refresh latest run.
-        if (lastStatus === "running" && s.status !== "running") {
-          refreshLatest();
-        }
+        if (lastStatus === "running" && s.status !== "running") refresh();
         lastStatus = s.status;
       } catch {}
-      // Backed off from 1.2s / 4s to 3s / 10s. The server-side cache
-      // on /api/jobs is 3s, so polling faster than that just returned
-      // the same data and wasted Firestore reads. With the 50K/day
-      // free Firestore quota, even one user with one tab open at the
-      // old cadence could burn the entire daily budget in 2 hours.
       const delay = state.status === "running" ? 3000 : 10_000;
       setTimeout(tick, delay);
     };
@@ -88,84 +94,129 @@ export default function Dashboard() {
   const isRunning = state.status === "running";
   const currentIdx = STEP_ORDER.findIndex(([k]) => k === state.current_step);
 
-  const onRun = async () => {
-    setStarting(true);
-    try {
-      await startRun(channel, dry);
-    } catch (e) {
-      alert("Failed to start: " + (e as Error).message);
-    }
-    setStarting(false);
-  };
-  const onCancel = async () => { await cancelRun(); };
-  const onClear = async () => { await resetState(); setState({ status: "idle" }); };
+  // Stats derived from the loaded data.
+  const activeChannels = channels.filter((c) => c.enabled !== false).length;
+  const totalChannels = channels.length;
+  const now = Date.now() / 1000;
+  const weekAgo = now - 7 * 86400;
+  const recentRuns = runs.filter((r) => Number(r.finished_at || 0) >= weekAgo);
+  const recentTerminal = recentRuns.filter((r) => r.status !== "storage_only");
+  const succeeded = recentTerminal.filter((r) => r.ok !== false && r.status !== "failed").length;
+  const successRate = recentTerminal.length > 0 ? Math.round((succeeded / recentTerminal.length) * 100) : null;
+  const latestFinishedAt = runs[0]?.finished_at ? Number(runs[0].finished_at) : null;
+  const queuedNow = jobs.filter((j) => j.status === "queued").length;
+  const runningNow = jobs.filter((j) => j.status === "running").length;
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
-          <p className="text-sm text-neutral-400">Kick off a run and watch progress live.</p>
-        </div>
-        <StatusPill status={state.status} />
-      </div>
+    <div className="space-y-8">
+      <PageHeader
+        eyebrow="Studio"
+        title="Dashboard"
+        subtitle="Overview of your channels, jobs, and recent renders."
+        actions={
+          <>
+            <Link href="/app/create" className="btn h-9 text-xs">
+              <Wand2 className="h-3.5 w-3.5" /> Advanced create
+            </Link>
+            <Link href="/app/create/wizard" className="btn btn-primary h-9 text-xs">
+              <Sparkles className="h-3.5 w-3.5" /> New Short
+            </Link>
+          </>
+        }
+      />
 
-      {/* Preflight banner */}
+      {/* Preflight — only appears when something's wrong */}
       {preflight && !preflight.ok && (
-        <div className="card border-amber-500/30 bg-amber-500/5">
+        <div className="card border-amber-500/30 bg-amber-500/[0.04] animate-[fadeUp_0.4s_cubic-bezier(0.16,1,0.3,1)_both]">
           <div className="flex items-start gap-3">
             <AlertTriangle className="h-5 w-5 text-amber-400 mt-0.5" />
-            <div>
+            <div className="min-w-0 flex-1">
               <div className="font-medium text-amber-300">Preflight warning</div>
-              <pre className="mt-1 whitespace-pre-wrap text-sm text-amber-200/80">{preflight.error}</pre>
+              <pre className="mt-1 whitespace-pre-wrap text-sm text-amber-200/80 overflow-x-auto">{preflight.error}</pre>
             </div>
           </div>
         </div>
       )}
 
-      {/* Live progress (running) */}
-      {isRunning && (
-        <div className="card space-y-4">
-          <div className="flex items-start justify-between">
-            <div>
-              <div className="text-lg font-semibold">Generating video</div>
-              <div className="text-xs text-neutral-500 mt-0.5">
-                Run <code className="text-neutral-300">{state.run_id}</code> · channel{" "}
-                <span className="text-neutral-200">{state.channel}</span> ·
-                elapsed {state.started_at ? Math.floor(Date.now()/1000 - state.started_at) : 0}s
+      {/* Stat cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <StatCard
+          icon={Layers}
+          label="Channels"
+          value={String(activeChannels)}
+          hint={totalChannels > activeChannels ? `${totalChannels - activeChannels} disabled` : "all active"}
+          href="/app/channels"
+        />
+        <StatCard
+          icon={Video}
+          label="Videos this week"
+          value={String(recentTerminal.length)}
+          hint={`${recentRuns.length} total incl. drafts`}
+          href="/app/history"
+        />
+        <StatCard
+          icon={TrendingUp}
+          label="Success rate"
+          value={successRate == null ? "—" : `${successRate}%`}
+          hint={recentTerminal.length > 0 ? `${succeeded} of ${recentTerminal.length}` : "no runs yet"}
+          href="/app/reports"
+        />
+        <StatCard
+          icon={Clock}
+          label="Latest render"
+          value={latestFinishedAt ? fmtAgeShort(now - latestFinishedAt) : "—"}
+          hint={runs[0]?.channel || (runs.length ? "channel unknown" : "no runs yet")}
+          href={runs[0]?.run_id ? `/app/queue/${runs[0].run_id}` : "/app/history"}
+        />
+      </div>
+
+      {/* Live queue / progress strip */}
+      {isRunning ? (
+        <div className="card space-y-4 animate-[fadeUp_0.4s_cubic-bezier(0.16,1,0.3,1)_both]">
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="relative h-10 w-10 rounded-xl bg-gradient-to-br from-accent/25 to-accent-glow/15 border border-accent/30 flex items-center justify-center shrink-0">
+                <Loader2 className="h-5 w-5 text-accent animate-spin" />
+                <span className="absolute inset-0 rounded-xl bg-accent/20 blur-lg -z-10 animate-pulse-slow" />
+              </div>
+              <div className="min-w-0">
+                <div className="text-base font-semibold truncate">
+                  {state.current_step_label || "Rendering"} …
+                </div>
+                <div className="text-xs text-neutral-500 truncate">
+                  {state.channel} · elapsed {state.started_at ? Math.floor(now - state.started_at) : 0}s ·{" "}
+                  <code className="text-neutral-400">{state.run_id?.slice(0, 20)}</code>
+                </div>
               </div>
             </div>
-            <button className="btn btn-danger" onClick={onCancel}>
-              <Square className="h-4 w-4" /> Cancel
+            <button className="btn btn-danger h-9 text-xs" onClick={cancelRun}>
+              <Square className="h-3.5 w-3.5" /> Cancel
             </button>
           </div>
 
           <div>
-            <div className="flex items-center justify-between text-sm mb-1.5">
-              <span className="text-neutral-300">{state.current_step_label || "Working"}</span>
-              <span className="font-mono text-neutral-400">{Math.round(state.percent || 0)}%</span>
+            <div className="flex items-center justify-between text-xs mb-1.5">
+              <span className="text-neutral-400">Progress</span>
+              <span className="font-mono text-neutral-300 tabular-nums">
+                {Math.round(state.percent || 0)}%
+              </span>
             </div>
             <div className="progress-track">
-              <div className="progress-fill" style={{ width: `${Math.max(2, state.percent || 0)}%` }} />
+              <div className="progress-fill"
+                   style={{ width: `${Math.max(2, state.percent || 0)}%` }} />
             </div>
           </div>
 
-          {/* Step checklist */}
-          <div className="grid grid-cols-2 gap-x-6 gap-y-1 sm:grid-cols-3 md:grid-cols-6">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-y-2 gap-x-3">
             {STEP_ORDER.map(([key, label], i) => {
-              const done = i < currentIdx;
+              const done   = i < currentIdx;
               const active = i === currentIdx;
               return (
-                <div key={key} className="flex items-center gap-2 text-sm">
-                  {done ? (
-                    <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                  ) : active ? (
-                    <Loader2 className="h-4 w-4 text-amber-400 animate-spin" />
-                  ) : (
-                    <div className="h-4 w-4 rounded-full border border-line" />
-                  )}
-                  <span className={clsx(done ? "text-neutral-400" : active ? "text-white" : "text-neutral-500")}>
+                <div key={key} className="flex items-center gap-1.5 text-xs">
+                  {done   ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" /> :
+                   active ? <Loader2 className="h-3.5 w-3.5 text-amber-400 animate-spin shrink-0" /> :
+                            <div className="h-3.5 w-3.5 rounded-full border border-line shrink-0" />}
+                  <span className={clsx(done ? "text-neutral-400" : active ? "text-white" : "text-neutral-500", "truncate")}>
                     {label}
                   </span>
                 </div>
@@ -173,168 +224,233 @@ export default function Dashboard() {
             })}
           </div>
         </div>
-      )}
-
-      {/* Idle / done — run controls */}
-      {!isRunning && (
-        <div className="card space-y-4">
-          <div className="flex items-start justify-between gap-3 flex-wrap">
-            <div className="text-lg font-semibold flex items-center gap-2">
-              <Sparkles className="h-5 w-5 text-accent" /> Start a new run
+      ) : (state.status === "complete" || state.status === "failed") && (
+        <div className="card space-y-4 animate-[fadeUp_0.4s_cubic-bezier(0.16,1,0.3,1)_both]">
+          <div className="flex items-center justify-between">
+            <div className="text-base font-semibold flex items-center gap-2">
+              {state.status === "complete"
+                ? <><CheckCircle2 className="h-5 w-5 text-emerald-400" /> Last run complete</>
+                : <><XCircle className="h-5 w-5 text-red-400" /> Last run failed</>}
             </div>
-            <Link
-              href="/create"
-              className="btn btn-ghost h-8 text-xs"
-              title="Open the full creator: topic/script input, image upload, custom niches, web research toggle"
-            >
-              <Wand2 className="h-3.5 w-3.5" />
-              Advanced create
-            </Link>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
-            <div>
-              <label className="label">Channel</label>
-              <select className="select" value={channel} onChange={(e) => setChannel(e.target.value)}>
-                {PRESET_CHANNELS.map((c) => (
-                  <option key={c.name} value={c.name}>{c.label}</option>
-                ))}
-                {savedChannels.length > 0 && (
-                  <optgroup label="Your custom niches">
-                    {savedChannels.map((c) => (
-                      <option key={c.name} value={c.name}>{c.label}</option>
-                    ))}
-                  </optgroup>
-                )}
-              </select>
-            </div>
-            <label className="flex items-center gap-2 text-sm pt-6">
-              <input
-                type="checkbox" className="h-4 w-4 accent-accent"
-                checked={dry} onChange={(e) => setDry(e.target.checked)}
-              />
-              Dry run (skip upload)
-            </label>
-            <button className="btn btn-primary w-full" disabled={starting} onClick={onRun}>
-              <Play className="h-4 w-4" />
-              {starting ? "Starting…" : "Run pipeline now"}
+            <button className="btn btn-ghost h-8 text-xs"
+                    onClick={() => { resetState(); setState({ status: "idle" }); }}>
+              Dismiss
             </button>
           </div>
-          <p className="text-xs text-neutral-500">
-            Quick run uses the channel&apos;s defaults (auto research + auto script).
-            For topic seeds, full scripts, image uploads or the web research toggle,
-            use <Link href="/create" className="text-accent hover:underline">Advanced create</Link>.
-          </p>
-        </div>
-      )}
-
-      {/* Last-run result (when complete/failed) */}
-      {!isRunning && (state.status === "complete" || state.status === "failed") && (
-        <div className="card space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="text-lg font-semibold flex items-center gap-2">
-              {state.status === "complete" ? (
-                <><CheckCircle2 className="h-5 w-5 text-emerald-400" /> Run complete</>
-              ) : (
-                <><XCircle className="h-5 w-5 text-red-400" /> Run failed</>
-              )}
-            </div>
-            <button className="btn btn-ghost" onClick={onClear}>Clear</button>
-          </div>
           {state.error && (
-            <pre className="text-sm text-red-300 bg-red-500/5 border border-red-500/20 rounded-md p-3 whitespace-pre-wrap">
+            <pre className="text-sm text-red-300 bg-red-500/[0.06] border border-red-500/20 rounded-lg p-3 whitespace-pre-wrap overflow-x-auto">
               {state.error}
             </pre>
           )}
           {state.video_path && state.run_id && (
-            <VideoPlayer
-              runId={state.run_id}
-              publicUrl={state.video_url}
-              className="w-full max-w-sm rounded-md border border-line"
-            />
+            <VideoPlayer runId={state.run_id} publicUrl={state.video_url}
+                         className="w-full max-w-sm rounded-lg border border-line" />
           )}
         </div>
       )}
 
-      {/* Live backend logs. Passing runId flips LogsPanel into the
-          dashboard-side polling path (reads /api/runs/<id>/logs → PB
-          run_logs). Without runId it would fall back to the legacy
-          worker-URL polling path which is empty on outbound-poll
-          deployments and left the panel stuck at 'Waiting for
-          backend output…'. */}
-      <LogsPanel
-        active={isRunning}
-        runId={state.run_id || latest?.run_id || undefined}
-      />
+      {/* Queue snapshot — only when there's anything to show */}
+      {(queuedNow > 0 || runningNow > 0) && (
+        <Link href="/app/queue"
+              className="card card-hover flex items-center justify-between group">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-lg bg-accent/15 border border-accent/30 flex items-center justify-center">
+              <ListChecks className="h-5 w-5 text-accent" />
+            </div>
+            <div>
+              <div className="font-medium">
+                {runningNow > 0 && <>{runningNow} running{queuedNow > 0 && ", "}</>}
+                {queuedNow  > 0 && <>{queuedNow} queued</>}
+              </div>
+              <div className="text-xs text-neutral-500">Open the queue for details</div>
+            </div>
+          </div>
+          <ArrowRight className="h-4 w-4 text-neutral-500 group-hover:text-white group-hover:translate-x-0.5 transition" />
+        </Link>
+      )}
 
-      {/* Latest finished run */}
-      {!isRunning && latest && (
-        <div className="card space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="font-medium flex items-center gap-2">
-              <Film className="h-4 w-4 text-neutral-400" /> Latest run
-            </div>
-            <div className="flex items-center gap-2">
-              {latest.shots && (
-                <span className="pill pill-info">
-                  <Sparkles className="h-3 w-3" />
-                  storyboard · {latest.shots.length} shots
-                </span>
-              )}
-              {latest.storyboard_fallback && (
-                <span className="pill pill-warn">
-                  <AlertTriangle className="h-3 w-3" /> fallback path
-                </span>
-              )}
-              {latest.ok === false && <span className="pill pill-danger">failed</span>}
+      {/* Quick actions */}
+      <section className="space-y-3">
+        <div className="text-[10px] uppercase tracking-[0.18em] text-neutral-500 px-1">
+          Quick actions
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <ActionTile href="/app/create/wizard" icon={Sparkles} title="New Short"     body="Guided 5-step flow" primary />
+          <ActionTile href="/app/create"        icon={Wand2}    title="Custom render" body="Topic seed, script, images" />
+          <ActionTile href="/app/channels"      icon={Layers}   title="Channels"      body="Manage niches + schedules" />
+          <ActionTile href="/app/history"       icon={History}  title="Library"       body="Browse past renders" />
+        </div>
+      </section>
+
+      {/* Recent renders */}
+      {runs.length > 0 && (
+        <section className="space-y-3">
+          <div className="flex items-center justify-between px-1">
+            <div className="text-[10px] uppercase tracking-[0.18em] text-neutral-500">Recent renders</div>
+            <Link href="/app/history" className="text-xs text-neutral-400 hover:text-white transition">
+              View all →
+            </Link>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {runs.slice(0, 6).map((r) => <RunCard key={r.run_id} run={r} />)}
+          </div>
+        </section>
+      )}
+
+      {/* Live logs — only render when there's a run to attach to */}
+      {(isRunning || state.run_id || runs[0]?.run_id) && (
+        <section className="space-y-3">
+          <div className="flex items-center justify-between px-1">
+            <div className="text-[10px] uppercase tracking-[0.18em] text-neutral-500">Live logs</div>
+            {state.run_id && (
+              <Link href={`/app/queue/${state.run_id}`} className="text-xs text-neutral-400 hover:text-white transition">
+                Open run →
+              </Link>
+            )}
+          </div>
+          <LogsPanel active={isRunning} runId={state.run_id || runs[0]?.run_id || undefined} />
+        </section>
+      )}
+
+      {/* Empty state — no runs, no channels */}
+      {!isRunning && runs.length === 0 && channels.length === 0 && (
+        <div className="card text-center py-14 space-y-4">
+          <div className="mx-auto h-14 w-14 rounded-2xl bg-gradient-to-br from-accent/25 to-accent-glow/15 border border-accent/30 flex items-center justify-center">
+            <Sparkles className="h-6 w-6 text-accent" />
+          </div>
+          <div className="space-y-1.5 max-w-md mx-auto">
+            <div className="text-lg font-semibold">Publish your first Short</div>
+            <div className="text-sm text-neutral-400">
+              Set up a channel with a niche, tone, and voice — then let the studio write, narrate, edit and upload.
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-3 text-sm">
-            <Metric label="Run ID" value={<code>{latest.run_id}</code>} />
-            <Metric label="Channel" value={latest.channel || "—"} />
-            <Metric label="Mode" value={latest.dry_run ? "dry-run" : "upload"} />
+          <div className="flex flex-wrap justify-center gap-2 pt-2">
+            <Link href="/app/channels" className="btn btn-primary h-10 text-sm">
+              <Layers className="h-4 w-4" /> Add a channel
+            </Link>
+            <Link href="/app/keys" className="btn h-10 text-sm">
+              <KeyRound className="h-4 w-4" /> Add API keys
+            </Link>
           </div>
-          {(latest.has_video || latest.video_url || latest.youtube_video_id) && (
-            <VideoPlayer
-              runId={latest.run_id}
-              publicUrl={latest.video_url}
-              mirrors={latest.mirrors}
-              youtubeVideoId={latest.youtube_video_id}
-              className="w-full max-w-sm rounded-md border border-line"
-            />
-          )}
         </div>
       )}
     </div>
   );
 }
 
-function StatusPill({ status }: { status: string }) {
-  const map: Record<string, string> = {
-    running:  "pill-warn",
-    complete: "pill-success",
-    failed:   "pill-danger",
-    idle:     "pill-muted",
-  };
-  const cls = map[status] || "pill-muted";
-  return (
-    <span className={clsx("pill", cls)}>
-      <span className={clsx("h-1.5 w-1.5 rounded-full",
-        status === "running" ? "bg-amber-400 animate-pulse-slow" :
-        status === "complete" ? "bg-emerald-400" :
-        status === "failed" ? "bg-red-400" : "bg-neutral-400")} />
-      {status.toUpperCase()}
-    </span>
-  );
-}
+/* ────────────────────────────────────────────────────────────
+   Small building blocks (kept inline for locality)
+   ──────────────────────────────────────────────────────────── */
 
-function Metric({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <div className="card-tight">
-      <div className="label">{label}</div>
-      <div className="text-base font-medium text-white">{value}</div>
+function StatCard({
+  icon: Icon, label, value, hint, href,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  value: string;
+  hint?: string;
+  href?: string;
+}) {
+  const body = (
+    <div className="card card-hover h-full flex flex-col justify-between">
+      <div className="flex items-start justify-between">
+        <div className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium">
+          {label}
+        </div>
+        <div className="h-7 w-7 rounded-lg bg-accent/10 border border-accent/20 flex items-center justify-center">
+          <Icon className="h-3.5 w-3.5 text-accent" />
+        </div>
+      </div>
+      <div className="mt-3">
+        <div className="text-2xl md:text-3xl font-semibold tracking-tight tabular-nums">{value}</div>
+        {hint && <div className="text-[11px] text-neutral-500 mt-0.5 truncate">{hint}</div>}
+      </div>
     </div>
   );
+  return href ? <Link href={href} className="block group">{body}</Link> : body;
 }
 
-// Clock import kept for tree-shaking warning silence — unused intentionally
-void Clock;
+function ActionTile({
+  href, icon: Icon, title, body, primary,
+}: {
+  href: string;
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  body: string;
+  primary?: boolean;
+}) {
+  return (
+    <Link href={href} className={clsx(
+      "group relative rounded-xl border p-4 space-y-2 card-hover overflow-hidden transition",
+      primary
+        ? "border-accent/40 bg-gradient-to-br from-accent/[0.08] to-transparent"
+        : "border-line bg-bg-1/60 backdrop-blur",
+    )}>
+      <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity bg-gradient-to-br from-accent/[0.06] via-transparent to-accent-glow/[0.04]" />
+      <div className="relative">
+        <div className={clsx(
+          "h-9 w-9 rounded-lg flex items-center justify-center border",
+          primary
+            ? "bg-gradient-to-br from-accent/30 to-accent-glow/20 border-accent/40"
+            : "bg-accent/10 border-accent/20"
+        )}>
+          <Icon className="h-4 w-4 text-accent" />
+        </div>
+        <div className="font-medium text-[14px] mt-3">{title}</div>
+        <div className="text-xs text-neutral-500 mt-0.5">{body}</div>
+      </div>
+    </Link>
+  );
+}
+
+function RunCard({ run }: { run: Run }) {
+  const finishedAt = Number(run.finished_at || 0);
+  const now = Date.now() / 1000;
+  const age = finishedAt > 0 ? fmtAgeShort(now - finishedAt) : "—";
+  const ok  = run.ok !== false && run.status !== "failed";
+  const stateCls = run.status === "failed"        ? "border-red-500/40 bg-red-500/[0.04]" :
+                   run.status === "storage_only"  ? "border-amber-500/40 bg-amber-500/[0.04]" :
+                   ok                             ? "border-line" :
+                                                     "border-line";
+  return (
+    <Link href={`/app/queue/${run.run_id}`}
+          className={clsx("group rounded-xl border p-4 space-y-3 card-hover", stateCls)}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-medium truncate">
+            {run.title || run.channel || "Untitled run"}
+          </div>
+          <div className="text-[11px] text-neutral-500 truncate mt-0.5">
+            {run.channel || "—"} · {age}
+          </div>
+        </div>
+        <RunStatusIcon status={run.status || "complete"} ok={ok} />
+      </div>
+      {(run.has_video || run.video_url) && (
+        <div className="aspect-video rounded-lg overflow-hidden bg-bg-2/70 border border-line/60 flex items-center justify-center">
+          <Film className="h-6 w-6 text-neutral-600" />
+          {/* Real VideoPlayer thumbnail could go here later — currently
+              the payload includes video_url but not a poster image. */}
+        </div>
+      )}
+    </Link>
+  );
+}
+
+function RunStatusIcon({ status, ok }: { status: string; ok: boolean }) {
+  if (status === "failed" || !ok) return <XCircle className="h-4 w-4 text-red-400 shrink-0" />;
+  if (status === "storage_only")  return <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0" />;
+  return <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />;
+}
+
+function fmtAgeShort(sec: number): string {
+  if (!Number.isFinite(sec) || sec < 0) return "—";
+  if (sec < 60)    return `${Math.floor(sec)}s ago`;
+  if (sec < 3600)  return `${Math.floor(sec / 60)}m ago`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
+  return `${Math.floor(sec / 86400)}d ago`;
+}
+
+// Kept for future — Play + BarChart3 icons imported but only used by
+// route metadata / future dashboards. Silence tree-shake warnings.
+void Play; void BarChart3; void Zap;
