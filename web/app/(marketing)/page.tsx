@@ -1,23 +1,23 @@
 import Link from "next/link";
 import {
   Sparkles, ArrowRight, Play, Check, Zap, Mic, Video, Layers,
-  Clock, Palette, Wand2, Rocket, TrendingUp,
+  Clock, Palette, Wand2, Rocket, TrendingUp, Star,
 } from "lucide-react";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { adminDb } from "@/lib/firebase-admin";
+import { Reveal } from "@/components/Reveal";
 
 /**
- * Public landing page — a real one, not a placeholder.
+ * Public landing page.
  *
- * The hero + features + pricing content is editable by the superadmin
- * at /superadmin/content. Anything the operator hasn't customised
- * falls back to the DEFAULT_CONTENT below, which is written in
- * user-benefit language (no "workers", "Kaggle", "tenant" jargon —
- * that stuff is internal plumbing, not something visitors care about).
+ * Hero + features + pricing are editable at /superadmin/content
+ * (60s revalidate). Content falls back to DEFAULT_CONTENT below —
+ * written in user-benefit language, no internal-plumbing terms.
  *
- * revalidate=60 caps PB reads to 1/minute per rendered variant. Edit
- * copy in /superadmin/content, refresh the landing 60s later.
+ * Design: layered ambient blobs, animated gradient text, scroll-
+ * triggered fade-ups on every section. Palette + motion tokens live
+ * in web/app/globals.css so the whole app inherits the redesign.
  */
 export const revalidate = 60;
 
@@ -26,9 +26,6 @@ const CONTENT_ID = "landingcontent0";
 type Feature = { title: string; body: string };
 type Tier = { name: string; price: string; sub?: string; features?: string[]; highlight?: boolean };
 
-// Copy that speaks to the outcome ("publish daily without touching a video
-// editor") not the implementation ("a distributed worker pool with
-// per-channel key isolation"). Every visitor is a creator, not an engineer.
 const DEFAULT_CONTENT = {
   hero_title: "Ship YouTube Shorts on autopilot",
   hero_sub:
@@ -77,34 +74,37 @@ export default async function LandingPage() {
 
   return (
     <div className="flex-1 flex flex-col relative overflow-hidden">
-      {/* Ambient background gradients — establish the mood before any content */}
+      {/* Ambient blobs — slowly drift, establish the palette before content */}
       <div aria-hidden className="pointer-events-none absolute inset-0 -z-10">
-        <div className="absolute -top-40 -left-32 h-[520px] w-[520px] rounded-full bg-accent/[0.14] blur-[120px]" />
-        <div className="absolute top-40 -right-32 h-[520px] w-[520px] rounded-full bg-[#7c3aed]/[0.12] blur-[120px]" />
-        <div className="absolute inset-0 opacity-[0.05]" style={{
-          backgroundImage:
-            "radial-gradient(circle at 1px 1px, rgba(255,255,255,0.5) 1px, transparent 0)",
-          backgroundSize: "40px 40px",
+        <div className="blob top-[-10rem] left-[-8rem] h-[600px] w-[600px]" style={{
+          background: "radial-gradient(circle, rgba(139,92,246,0.28) 0%, transparent 70%)",
         }} />
+        <div className="blob top-[20rem] right-[-10rem] h-[520px] w-[520px] animate-[blob_28s_ease-in-out_infinite]"
+             style={{ background: "radial-gradient(circle, rgba(236,72,153,0.22) 0%, transparent 70%)" }} />
+        <div className="blob top-[70rem] left-[10%] h-[480px] w-[480px] animate-[blob_20s_ease-in-out_infinite_reverse]"
+             style={{ background: "radial-gradient(circle, rgba(249,115,22,0.18) 0%, transparent 70%)" }} />
+        <div className="absolute inset-0 dot-grid" />
       </div>
 
-      {/* ── Top nav ──────────────────────────────────────────────── */}
-      <header className="relative z-10 border-b border-line/60 backdrop-blur bg-bg/60">
+      {/* ── Nav ──────────────────────────────────────────────────── */}
+      <header className="sticky top-0 z-30 border-b border-line/40 bg-bg/70 backdrop-blur-lg">
         <div className="mx-auto max-w-6xl px-6 py-4 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2">
-            <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-accent to-accent-glow flex items-center justify-center shadow-glow">
-              <Play className="h-4 w-4 text-white fill-white" />
+          <Link href="/" className="flex items-center gap-2.5 group">
+            <div className="relative h-9 w-9 rounded-xl bg-gradient-to-br from-accent via-accent-glow to-accent-spark flex items-center justify-center shadow-glow group-hover:scale-105 transition-transform">
+              <Play className="h-4 w-4 text-white fill-white" strokeWidth={0} />
             </div>
-            <span className="font-semibold tracking-tight">Shortsmith</span>
+            <span className="font-semibold tracking-tight text-[15px]">Shortsmith</span>
           </Link>
-          <div className="flex items-center gap-2">
-            <Link href="#features" className="hidden sm:inline text-sm text-neutral-400 hover:text-neutral-200 px-3">Features</Link>
-            <Link href="#how" className="hidden sm:inline text-sm text-neutral-400 hover:text-neutral-200 px-3">How it works</Link>
+          <nav className="hidden md:flex items-center gap-1">
+            <Link href="#features"  className="text-sm text-neutral-400 hover:text-white px-3 py-2 transition">Features</Link>
+            <Link href="#how"       className="text-sm text-neutral-400 hover:text-white px-3 py-2 transition">How it works</Link>
             {c.pricing_tiers.length > 0 && (
-              <Link href="#pricing" className="hidden sm:inline text-sm text-neutral-400 hover:text-neutral-200 px-3">Pricing</Link>
+              <Link href="#pricing" className="text-sm text-neutral-400 hover:text-white px-3 py-2 transition">Pricing</Link>
             )}
-            <Link href="/login" className="text-sm text-neutral-300 hover:text-white px-3">Log in</Link>
-            <Link href={c.hero_cta_href} className="btn btn-primary h-9 px-4 text-sm shadow-lg shadow-accent/20">
+          </nav>
+          <div className="flex items-center gap-2">
+            <Link href="/login" className="text-sm text-neutral-300 hover:text-white px-3 py-2 transition">Log in</Link>
+            <Link href={c.hero_cta_href} className="btn btn-primary h-9 px-4 text-sm">
               {c.hero_cta_text}
             </Link>
           </div>
@@ -114,184 +114,257 @@ export default async function LandingPage() {
       {/* ── Hero ─────────────────────────────────────────────────── */}
       <section className="relative z-10 px-6 pt-20 md:pt-28 pb-16 md:pb-24">
         <div className="mx-auto max-w-4xl text-center space-y-8">
-          <div className="inline-flex items-center gap-2 rounded-full border border-line bg-bg-1/70 backdrop-blur px-4 py-1.5 text-xs text-neutral-300">
-            <Sparkles className="h-3.5 w-3.5 text-accent" />
-            End-to-end YouTube Shorts automation
-          </div>
+          <Reveal>
+            <div className="inline-flex items-center gap-2 rounded-full border border-line-strong bg-bg-1/70 backdrop-blur px-4 py-1.5 text-xs text-neutral-300 shadow-[var(--shadow-elev-1)]">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full rounded-full bg-accent opacity-75 animate-ping" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-accent" />
+              </span>
+              End-to-end YouTube Shorts automation
+            </div>
+          </Reveal>
 
-          <h1 className="text-5xl md:text-7xl font-bold tracking-tight leading-[1.05]">
-            {(() => {
-              // Split the last few words into the gradient span for
-              // visual weight. Falls back to the whole title in gradient
-              // when it's too short to split cleanly.
-              const words = c.hero_title.split(/\s+/).filter(Boolean);
-              const tailCount = Math.min(3, Math.max(1, Math.floor(words.length / 2)));
-              const head = words.slice(0, words.length - tailCount).join(" ");
-              const tail = words.slice(-tailCount).join(" ");
-              return (
-                <>
-                  {head && <span className="block">{head}</span>}
-                  <span className="block bg-gradient-to-r from-accent via-accent-glow to-accent bg-clip-text text-transparent">
-                    {tail}
-                  </span>
-                </>
-              );
-            })()}
-          </h1>
+          <Reveal delay={100}>
+            <h1 className="text-5xl md:text-7xl font-bold tracking-tight leading-[1.05]">
+              {(() => {
+                const words = c.hero_title.split(/\s+/).filter(Boolean);
+                const tailCount = Math.min(3, Math.max(1, Math.floor(words.length / 2)));
+                const head = words.slice(0, words.length - tailCount).join(" ");
+                const tail = words.slice(-tailCount).join(" ");
+                return (
+                  <>
+                    {head && <span className="block">{head}</span>}
+                    <span className="block text-gradient">{tail}</span>
+                  </>
+                );
+              })()}
+            </h1>
+          </Reveal>
 
-          <p className="text-lg md:text-xl text-neutral-400 max-w-2xl mx-auto leading-relaxed">
-            {c.hero_sub}
-          </p>
+          <Reveal delay={200}>
+            <p className="text-lg md:text-xl text-neutral-400 max-w-2xl mx-auto leading-relaxed">
+              {c.hero_sub}
+            </p>
+          </Reveal>
 
-          <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
-            <Link href={c.hero_cta_href} className="btn btn-primary h-11 px-6 text-sm shadow-xl shadow-accent/25">
-              {c.hero_cta_text} <ArrowRight className="h-4 w-4" />
-            </Link>
-            <Link href="#how" className="btn h-11 px-6 text-sm border-line-strong">
-              See how it works
-            </Link>
-          </div>
+          <Reveal delay={300}>
+            <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+              <Link href={c.hero_cta_href}
+                    className="btn btn-primary h-12 px-7 text-sm shadow-xl shadow-accent/30 group">
+                {c.hero_cta_text}
+                <ArrowRight className="h-4 w-4 group-hover:translate-x-0.5 transition-transform" />
+              </Link>
+              <Link href="#how" className="btn h-12 px-6 text-sm border-line-strong">
+                See how it works
+              </Link>
+            </div>
+          </Reveal>
 
-          {/* Trust strip */}
-          <div className="pt-8 flex flex-wrap items-center justify-center gap-x-8 gap-y-2 text-xs text-neutral-500">
-            <span className="inline-flex items-center gap-1.5"><Check className="h-3 w-3 text-accent" /> Multi-account YouTube</span>
-            <span className="inline-flex items-center gap-1.5"><Check className="h-3 w-3 text-accent" /> 20+ languages</span>
-            <span className="inline-flex items-center gap-1.5"><Check className="h-3 w-3 text-accent" /> Runs on cron</span>
-            <span className="inline-flex items-center gap-1.5"><Check className="h-3 w-3 text-accent" /> No video editing skills needed</span>
-          </div>
+          <Reveal delay={400}>
+            <div className="pt-8 flex flex-wrap items-center justify-center gap-x-8 gap-y-2 text-xs text-neutral-500">
+              <span className="inline-flex items-center gap-1.5"><Check className="h-3 w-3 text-accent" /> Multi-account YouTube</span>
+              <span className="inline-flex items-center gap-1.5"><Check className="h-3 w-3 text-accent" /> 20+ languages</span>
+              <span className="inline-flex items-center gap-1.5"><Check className="h-3 w-3 text-accent" /> Runs on cron</span>
+              <span className="inline-flex items-center gap-1.5"><Check className="h-3 w-3 text-accent" /> No video editing skills needed</span>
+            </div>
+          </Reveal>
         </div>
 
         {/* Product preview mockup — pure CSS/SVG, no external assets */}
-        <div className="mx-auto max-w-5xl mt-16 md:mt-20">
-          <div className="relative rounded-2xl border border-line-strong bg-bg-1/80 backdrop-blur shadow-2xl overflow-hidden">
-            {/* faux browser chrome */}
-            <div className="flex items-center gap-1.5 px-4 py-3 border-b border-line/60 bg-bg-2/50">
-              <span className="h-2.5 w-2.5 rounded-full bg-red-500/60" />
-              <span className="h-2.5 w-2.5 rounded-full bg-amber-500/60" />
-              <span className="h-2.5 w-2.5 rounded-full bg-emerald-500/60" />
-              <div className="ml-4 text-[10px] text-neutral-500 font-mono">/app</div>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-4 min-h-[320px]">
-              {/* faux sidebar */}
-              <aside className="hidden md:block border-r border-line/60 bg-bg-2/30 p-3 space-y-1">
-                {["Dashboard", "Create", "Channels", "Queue", "Library", "Reports", "Settings"].map((s, i) => (
-                  <div key={s} className={`px-2 py-1.5 rounded text-xs ${i === 2 ? "bg-accent/15 text-accent" : "text-neutral-500"}`}>
-                    {s}
-                  </div>
-                ))}
-              </aside>
-              {/* faux main */}
-              <main className="md:col-span-3 p-5 space-y-3">
-                <div className="text-xs text-neutral-500">Channels</div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {[
-                    { name: "Ghost Tales", niche: "horror", status: "running" },
-                    { name: "Money Minute", niche: "finance", status: "queued" },
-                    { name: "Orbitarium", niche: "science", status: "complete" },
-                    { name: "Ancient Wisdom", niche: "wisdom", status: "running" },
-                  ].map((ch) => (
-                    <div key={ch.name} className="rounded-lg border border-line bg-bg-2/40 p-3 flex items-center justify-between">
-                      <div>
-                        <div className="text-sm font-medium">{ch.name}</div>
-                        <div className="text-[10px] text-neutral-500">{ch.niche}</div>
-                      </div>
-                      <div className={`text-[10px] px-1.5 py-0.5 rounded border ${
-                        ch.status === "running" ? "border-amber-500/40 text-amber-300 bg-amber-500/10" :
-                        ch.status === "queued"  ? "border-sky-500/40 text-sky-300 bg-sky-500/10" :
-                                                   "border-emerald-500/40 text-emerald-300 bg-emerald-500/10"
-                      }`}>{ch.status}</div>
+        <Reveal delay={500}>
+          <div className="mx-auto max-w-5xl mt-16 md:mt-20 relative group">
+            {/* Gradient glow rim */}
+            <div className="absolute -inset-0.5 bg-gradient-to-r from-accent via-accent-glow to-accent-spark rounded-2xl blur-lg opacity-40 group-hover:opacity-60 transition-opacity animate-[gradientShift_6s_ease-in-out_infinite] bg-[length:200%_100%]" />
+            <div className="relative rounded-2xl border border-line-strong bg-bg-1/95 backdrop-blur shadow-[var(--shadow-elev-3)] overflow-hidden">
+              {/* faux browser chrome */}
+              <div className="flex items-center gap-1.5 px-4 py-3 border-b border-line/60 bg-bg-2/50">
+                <span className="h-2.5 w-2.5 rounded-full bg-red-500/60" />
+                <span className="h-2.5 w-2.5 rounded-full bg-amber-500/60" />
+                <span className="h-2.5 w-2.5 rounded-full bg-emerald-500/60" />
+                <div className="ml-4 text-[10px] text-neutral-500 font-mono">shortsmith.app / app</div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-4 min-h-[340px]">
+                {/* faux sidebar */}
+                <aside className="hidden md:block border-r border-line/60 bg-bg-2/30 p-3 space-y-0.5">
+                  {["Dashboard", "Create", "Channels", "Queue", "Library", "Reports", "Settings"].map((s, i) => (
+                    <div key={s}
+                         className={`px-3 py-2 rounded-md text-xs ${
+                           i === 2
+                             ? "bg-gradient-to-r from-accent/15 to-transparent text-white border-l-2 border-accent"
+                             : "text-neutral-500"
+                         }`}>
+                      {s}
                     </div>
                   ))}
-                </div>
-              </main>
+                </aside>
+                {/* faux main */}
+                <main className="md:col-span-3 p-5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm font-medium">Channels</div>
+                    <div className="text-[10px] px-2 py-0.5 rounded-full bg-accent/15 text-accent">4 active</div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {[
+                      { name: "Ghost Tales",    niche: "horror",  status: "running",  progress: 68 },
+                      { name: "Money Minute",   niche: "finance", status: "queued",   progress: 0  },
+                      { name: "Orbitarium",     niche: "science", status: "complete", progress: 100 },
+                      { name: "Ancient Wisdom", niche: "wisdom",  status: "running",  progress: 34 },
+                    ].map((ch) => (
+                      <div key={ch.name} className="rounded-lg border border-line bg-bg-2/60 p-3 space-y-2 hover:border-accent/40 transition">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <div className="text-sm font-medium">{ch.name}</div>
+                            <div className="text-[10px] text-neutral-500">{ch.niche}</div>
+                          </div>
+                          <div className={`text-[10px] px-1.5 py-0.5 rounded border ${
+                            ch.status === "running"  ? "border-amber-500/40 text-amber-300 bg-amber-500/10" :
+                            ch.status === "queued"   ? "border-sky-500/40 text-sky-300 bg-sky-500/10" :
+                                                        "border-emerald-500/40 text-emerald-300 bg-emerald-500/10"
+                          }`}>{ch.status}</div>
+                        </div>
+                        {ch.progress > 0 && (
+                          <div className="progress-track">
+                            <div className="progress-fill" style={{ width: `${ch.progress}%` }} />
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </main>
+              </div>
             </div>
           </div>
+        </Reveal>
+      </section>
+
+      {/* ── Trusted-by marquee (visual filler that reads as social proof) */}
+      <section className="relative z-10 py-8 border-y border-line/40 bg-bg-1/30 backdrop-blur-sm overflow-hidden">
+        <div className="text-center text-[10px] uppercase tracking-[0.2em] text-neutral-500 mb-4">
+          Built on the best of open-source AI
+        </div>
+        <div className="relative">
+          <div className="flex gap-14 animate-marquee whitespace-nowrap items-center opacity-60 hover:opacity-100 transition-opacity">
+            {[...Array(2)].flatMap((_, dup) =>
+              ["NVIDIA NIM", "Groq", "OpenRouter", "Cloudflare Workers AI", "Kaggle", "MinIO", "Flux 2", "Kokoro TTS"].map((n, i) => (
+                <div key={`${dup}-${i}`} className="text-neutral-400 text-sm font-medium tracking-wide">
+                  {n}
+                </div>
+              )),
+            )}
+          </div>
+          <div className="pointer-events-none absolute inset-y-0 left-0 w-24 bg-gradient-to-r from-bg to-transparent" />
+          <div className="pointer-events-none absolute inset-y-0 right-0 w-24 bg-gradient-to-l from-bg to-transparent" />
         </div>
       </section>
 
       {/* ── How it works ─────────────────────────────────────────── */}
-      <section id="how" className="relative z-10 px-6 py-16 md:py-24 border-t border-line/60">
+      <section id="how" className="relative z-10 px-6 py-20 md:py-28">
         <div className="mx-auto max-w-5xl">
-          <div className="text-center space-y-3 mb-14">
-            <div className="text-xs uppercase tracking-wider text-accent">How it works</div>
-            <h2 className="text-3xl md:text-4xl font-bold tracking-tight">Set up a channel once. Publish forever.</h2>
-            <p className="text-neutral-400 max-w-2xl mx-auto">Three steps, then the videos publish themselves on the cadence you pick.</p>
-          </div>
+          <Reveal>
+            <div className="text-center space-y-3 mb-14">
+              <div className="text-xs uppercase tracking-[0.2em] text-accent">How it works</div>
+              <h2 className="text-4xl md:text-5xl font-bold tracking-tight">
+                Set up once. <span className="text-gradient-static">Publish forever.</span>
+              </h2>
+              <p className="text-neutral-400 max-w-2xl mx-auto text-lg">Three steps, then the videos publish themselves on the cadence you pick.</p>
+            </div>
+          </Reveal>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {[
-              { n: "1", icon: Layers,  title: "Add a channel",  body: "Name it, pick a niche, connect a YouTube account, choose a voice and tone." },
-              { n: "2", icon: Wand2,   title: "Set a schedule", body: "Pick how many Shorts per day and what time to publish. That's it." },
-              { n: "3", icon: Rocket,  title: "Watch it publish", body: "Every video: researched, written, narrated, edited, uploaded. See the queue live." },
-            ].map(({ n, icon: Icon, title, body }) => (
-              <div key={n} className="relative rounded-xl border border-line-strong bg-bg-1/60 backdrop-blur p-6 space-y-3">
-                <div className="absolute -top-3 -left-3 h-10 w-10 rounded-full bg-gradient-to-br from-accent to-accent-glow flex items-center justify-center text-sm font-bold text-white shadow-glow">
-                  {n}
+              { n: "01", icon: Layers,  title: "Add a channel",   body: "Name it, pick a niche, connect a YouTube account, choose a voice and tone." },
+              { n: "02", icon: Wand2,   title: "Set a schedule",  body: "Pick how many Shorts per day and what time to publish. That's it." },
+              { n: "03", icon: Rocket,  title: "Watch it publish", body: "Every video: researched, written, narrated, edited, uploaded. See the queue live." },
+            ].map(({ n, icon: Icon, title, body }, i) => (
+              <Reveal key={n} delay={i * 100}>
+                <div className="relative rounded-2xl border border-line-strong bg-bg-1/60 backdrop-blur p-6 pt-10 h-full card-hover overflow-hidden group">
+                  <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity bg-gradient-to-br from-accent/[0.04] via-transparent to-transparent" />
+                  <div className="absolute top-4 right-4 text-5xl font-black text-white/[0.06] tabular-nums">
+                    {n}
+                  </div>
+                  <div className="relative">
+                    <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-accent/25 to-accent-glow/15 border border-accent/30 flex items-center justify-center mb-4">
+                      <Icon className="h-4 w-4 text-accent" />
+                    </div>
+                    <div className="font-semibold text-lg mb-1.5">{title}</div>
+                    <div className="text-sm text-neutral-400 leading-relaxed">{body}</div>
+                  </div>
                 </div>
-                <Icon className="h-5 w-5 text-accent mt-4" />
-                <div className="font-semibold">{title}</div>
-                <div className="text-sm text-neutral-400">{body}</div>
-              </div>
+              </Reveal>
             ))}
           </div>
         </div>
       </section>
 
       {/* ── Features grid ────────────────────────────────────────── */}
-      <section id="features" className="relative z-10 px-6 py-16 md:py-24 border-t border-line/60">
+      <section id="features" className="relative z-10 px-6 py-20 md:py-28 border-t border-line/40">
         <div className="mx-auto max-w-5xl">
-          <div className="text-center space-y-3 mb-14">
-            <div className="text-xs uppercase tracking-wider text-accent">Everything you need</div>
-            <h2 className="text-3xl md:text-4xl font-bold tracking-tight">Built for creators who publish daily</h2>
-            <p className="text-neutral-400 max-w-2xl mx-auto">No video editor. No script writer. No thumbnail designer. Just a channel that keeps growing.</p>
-          </div>
+          <Reveal>
+            <div className="text-center space-y-3 mb-14">
+              <div className="text-xs uppercase tracking-[0.2em] text-accent">Everything you need</div>
+              <h2 className="text-4xl md:text-5xl font-bold tracking-tight">
+                Built for creators who <span className="text-gradient-static">publish daily</span>
+              </h2>
+              <p className="text-neutral-400 max-w-2xl mx-auto text-lg">No video editor. No script writer. No thumbnail designer. Just a channel that keeps growing.</p>
+            </div>
+          </Reveal>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {c.features.map((f, i) => {
-              const icon = [Zap, Layers, Video, Mic, TrendingUp, Clock, Palette, Wand2][i % 8];
-              return <FeatureCard key={i} icon={icon} title={f.title} body={f.body} />;
+              const icons = [Zap, Layers, Video, Mic, TrendingUp, Clock, Palette, Wand2];
+              const Icon = icons[i % icons.length];
+              return (
+                <Reveal key={i} delay={(i % 3) * 100}>
+                  <FeatureCard icon={Icon} title={f.title} body={f.body} />
+                </Reveal>
+              );
             })}
           </div>
         </div>
       </section>
 
-      {/* ── Pricing (if superadmin published any tiers) ──────────── */}
+      {/* ── Pricing ──────────────────────────────────────────────── */}
       {c.pricing_tiers.length > 0 && (
-        <section id="pricing" className="relative z-10 px-6 py-16 md:py-24 border-t border-line/60">
+        <section id="pricing" className="relative z-10 px-6 py-20 md:py-28 border-t border-line/40">
           <div className="mx-auto max-w-5xl">
-            <div className="text-center space-y-3 mb-14">
-              <div className="text-xs uppercase tracking-wider text-accent">Pricing</div>
-              <h2 className="text-3xl md:text-4xl font-bold tracking-tight">Start free. Scale when you're ready.</h2>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <Reveal>
+              <div className="text-center space-y-3 mb-14">
+                <div className="text-xs uppercase tracking-[0.2em] text-accent">Pricing</div>
+                <h2 className="text-4xl md:text-5xl font-bold tracking-tight">
+                  Start free. <span className="text-gradient-static">Scale when you're ready.</span>
+                </h2>
+              </div>
+            </Reveal>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {c.pricing_tiers.map((t, i) => (
-                <div key={i}
-                     className={`relative rounded-xl border p-6 space-y-4 ${
+                <Reveal key={i} delay={i * 100}>
+                  <div className={`relative rounded-2xl border p-6 space-y-4 h-full card-hover ${
                        t.highlight
-                         ? "border-accent/60 bg-gradient-to-b from-accent/[0.08] to-transparent shadow-2xl shadow-accent/10"
-                         : "border-line bg-bg-1/60 backdrop-blur"
+                         ? "border-accent/60 bg-gradient-to-b from-accent/[0.08] to-transparent shadow-[var(--shadow-glow-lg)]"
+                         : "border-line-strong bg-bg-1/60 backdrop-blur"
                      }`}>
-                  {t.highlight && (
-                    <div className="absolute -top-3 left-1/2 -translate-x-1/2 text-[10px] uppercase tracking-wider bg-accent text-white px-2.5 py-0.5 rounded-full font-semibold">
-                      Most popular
-                    </div>
-                  )}
-                  <div className="text-sm font-medium text-neutral-400">{t.name}</div>
-                  <div className="text-3xl font-bold">{t.price}</div>
-                  {t.sub && <div className="text-sm text-neutral-500 -mt-2">{t.sub}</div>}
-                  {t.features && t.features.length > 0 && (
-                    <ul className="space-y-2 text-sm pt-3">
-                      {t.features.map((f, j) => (
-                        <li key={j} className="flex items-start gap-2">
-                          <Check className="h-4 w-4 text-accent mt-0.5 shrink-0" />
-                          <span className="text-neutral-300">{f}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  <Link href={c.hero_cta_href}
-                        className={`btn w-full h-10 mt-4 ${t.highlight ? "btn-primary" : ""}`}>
-                    {c.hero_cta_text}
-                  </Link>
-                </div>
+                    {t.highlight && (
+                      <div className="absolute -top-3 left-1/2 -translate-x-1/2 text-[10px] uppercase tracking-wider bg-gradient-to-r from-accent to-accent-glow text-white px-3 py-1 rounded-full font-semibold flex items-center gap-1">
+                        <Star className="h-3 w-3 fill-white" strokeWidth={0} /> Most popular
+                      </div>
+                    )}
+                    <div className="text-sm font-medium text-neutral-400">{t.name}</div>
+                    <div className="text-4xl font-bold">{t.price}</div>
+                    {t.sub && <div className="text-sm text-neutral-500 -mt-2">{t.sub}</div>}
+                    {t.features && t.features.length > 0 && (
+                      <ul className="space-y-2 text-sm pt-3">
+                        {t.features.map((f, j) => (
+                          <li key={j} className="flex items-start gap-2">
+                            <Check className="h-4 w-4 text-accent mt-0.5 shrink-0" />
+                            <span className="text-neutral-300">{f}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    <Link href={c.hero_cta_href}
+                          className={`btn w-full h-11 mt-4 ${t.highlight ? "btn-primary" : ""}`}>
+                      {c.hero_cta_text}
+                    </Link>
+                  </div>
+                </Reveal>
               ))}
             </div>
           </div>
@@ -299,45 +372,50 @@ export default async function LandingPage() {
       )}
 
       {/* ── Bottom CTA ────────────────────────────────────────────── */}
-      <section className="relative z-10 px-6 py-20 md:py-24 border-t border-line/60">
-        <div className="mx-auto max-w-3xl text-center space-y-6">
-          <h2 className="text-3xl md:text-5xl font-bold tracking-tight">
-            Your channel, publishing without you.
-          </h2>
-          <p className="text-lg text-neutral-400">
-            Stop touching the video editor. Start counting subscribers.
-          </p>
-          <div className="flex flex-wrap justify-center gap-3">
-            <Link href={c.hero_cta_href} className="btn btn-primary h-11 px-6 text-sm shadow-xl shadow-accent/25">
-              {c.hero_cta_text} <ArrowRight className="h-4 w-4" />
-            </Link>
-            <Link href="/login" className="btn h-11 px-6 text-sm border-line-strong">
-              Log in
-            </Link>
+      <section className="relative z-10 px-6 py-24 md:py-32 border-t border-line/40">
+        <Reveal>
+          <div className="mx-auto max-w-3xl text-center space-y-6 relative">
+            <div className="absolute -inset-x-16 -inset-y-8 -z-10 bg-gradient-to-r from-accent/10 via-accent-glow/10 to-accent-spark/10 blur-3xl opacity-60" />
+            <h2 className="text-4xl md:text-6xl font-bold tracking-tight leading-tight">
+              Your channel, <span className="text-gradient-static">publishing without you.</span>
+            </h2>
+            <p className="text-lg md:text-xl text-neutral-400">
+              Stop touching the video editor. Start counting subscribers.
+            </p>
+            <div className="flex flex-wrap justify-center gap-3 pt-2">
+              <Link href={c.hero_cta_href}
+                    className="btn btn-primary h-12 px-7 text-sm shadow-xl shadow-accent/30 group">
+                {c.hero_cta_text}
+                <ArrowRight className="h-4 w-4 group-hover:translate-x-0.5 transition-transform" />
+              </Link>
+              <Link href="/login" className="btn h-12 px-6 text-sm border-line-strong">
+                Log in
+              </Link>
+            </div>
           </div>
-        </div>
+        </Reveal>
       </section>
 
       {/* ── Footer ──────────────────────────────────────────────── */}
-      <footer className="relative z-10 border-t border-line/60 px-6 py-8 mt-auto">
+      <footer className="relative z-10 border-t border-line/40 px-6 py-10 mt-auto">
         <div className="mx-auto max-w-5xl flex flex-wrap items-center justify-between gap-4 text-xs text-neutral-500">
           <div className="flex items-center gap-2">
-            <div className="h-6 w-6 rounded bg-gradient-to-br from-accent to-accent-glow flex items-center justify-center">
-              <Play className="h-3 w-3 text-white fill-white" />
+            <div className="h-6 w-6 rounded-md bg-gradient-to-br from-accent to-accent-glow flex items-center justify-center">
+              <Play className="h-3 w-3 text-white fill-white" strokeWidth={0} />
             </div>
-            <span>Shortsmith</span>
+            <span className="font-medium text-neutral-300">Shortsmith</span>
             <span className="text-neutral-700">·</span>
             <span>© {new Date().getUTCFullYear()}</span>
           </div>
           <div className="flex flex-wrap gap-5">
             {c.footer_links.length > 0
               ? c.footer_links.map((l, i) => (
-                  <Link key={i} href={l.href} className="hover:text-neutral-300">{l.label}</Link>
+                  <Link key={i} href={l.href} className="hover:text-neutral-300 transition">{l.label}</Link>
                 ))
               : (
                 <>
-                  <Link href="/login" className="hover:text-neutral-300">Log in</Link>
-                  <Link href={c.hero_cta_href} className="hover:text-neutral-300">Get access</Link>
+                  <Link href="/login"       className="hover:text-neutral-300 transition">Log in</Link>
+                  <Link href={c.hero_cta_href} className="hover:text-neutral-300 transition">Get access</Link>
                 </>
               )}
           </div>
@@ -351,12 +429,15 @@ function FeatureCard({
   icon: Icon, title, body,
 }: { icon: React.ComponentType<{ className?: string }>; title: string; body: string }) {
   return (
-    <div className="group rounded-xl border border-line bg-bg-1/60 backdrop-blur p-5 space-y-2.5 hover:border-accent/40 hover:bg-bg-1/80 transition">
-      <div className="h-9 w-9 rounded-lg bg-gradient-to-br from-accent/25 to-accent-glow/20 border border-accent/30 flex items-center justify-center group-hover:shadow-glow transition">
-        <Icon className="h-4 w-4 text-accent" />
+    <div className="group relative rounded-2xl border border-line bg-bg-1/60 backdrop-blur p-6 space-y-3 h-full card-hover overflow-hidden">
+      <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 bg-gradient-to-br from-accent/[0.06] via-transparent to-accent-glow/[0.03]" />
+      <div className="relative">
+        <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-accent/25 to-accent-glow/15 border border-accent/30 flex items-center justify-center mb-3 group-hover:shadow-glow transition">
+          <Icon className="h-4 w-4 text-accent" />
+        </div>
+        <div className="font-semibold text-[15px] mb-1.5">{title}</div>
+        <div className="text-sm text-neutral-400 leading-relaxed">{body}</div>
       </div>
-      <div className="font-semibold text-[15px]">{title}</div>
-      <div className="text-sm text-neutral-400 leading-relaxed">{body}</div>
     </div>
   );
 }

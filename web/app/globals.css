@@ -1,101 +1,309 @@
 @import "tailwindcss";
 
 /* ──────────────────────────────────────────────────────────────────
-   Tailwind v4 design tokens — configured in CSS, not JS.
-   Anything declared in @theme becomes a Tailwind utility.
-   See: https://tailwindcss.com/docs/theme
+   Design system — Tailwind v4 tokens in CSS.
+   Palette inspired by Linear + Framer + Vercel: deep near-black
+   base, purple-fuchsia-orange accent trio, generous ambient glow.
+   Every token here becomes a Tailwind utility.
    ────────────────────────────────────────────────────────────────── */
 @theme {
-  --color-bg:           #0a0a0c;
-  --color-bg-1:         #101015;
-  --color-bg-2:         #15151c;
-  --color-bg-3:         #1c1c26;
+  /* Base surface — cool near-black with subtle indigo undertone.
+     Feels more modern than pure #000 or greyscale #0a0a0c. */
+  --color-bg:            #050510;
+  --color-bg-1:          #0b0b18;
+  --color-bg-2:          #12121f;
+  --color-bg-3:          #1a1a2b;
+  --color-bg-4:          #23233a;
 
-  --color-line:         color-mix(in oklab, white 8%, transparent);
-  --color-line-strong:  color-mix(in oklab, white 14%, transparent);
+  --color-line:          color-mix(in oklab, white 8%,  transparent);
+  --color-line-strong:   color-mix(in oklab, white 16%, transparent);
 
-  --color-accent:       #ff4b4b;
-  --color-accent-glow:  #ffb84b;
+  /* Accent trio — primary purple, glow fuchsia, spark orange.
+     Used as gradient stops throughout the marketing surfaces. */
+  --color-accent:        #8b5cf6;   /* violet-500 */
+  --color-accent-glow:   #ec4899;   /* fuchsia/pink-500 */
+  --color-accent-spark:  #f97316;   /* orange-500 */
 
+  /* Semantic accents kept for pills + status. */
+  --color-success:       #10b981;
+  --color-warn:          #f59e0b;
+  --color-danger:        #ef4444;
+  --color-info:          #3b82f6;
+
+  /* Typography — Inter for UI, JetBrains Mono for code / masked keys. */
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
                "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Menlo", "Monaco", monospace;
 
-  --shadow-glow: 0 0 0 1px color-mix(in oklab, var(--color-accent) 40%, transparent),
-                 0 0 28px color-mix(in oklab, var(--color-accent) 25%, transparent);
+  /* Shadows + glows. Layered — soft ambient + tight rim highlight. */
+  --shadow-glow:        0 0 0 1px color-mix(in oklab, var(--color-accent) 45%, transparent),
+                        0 0 32px  color-mix(in oklab, var(--color-accent) 32%, transparent);
+  --shadow-glow-lg:     0 0 0 1px color-mix(in oklab, var(--color-accent) 45%, transparent),
+                        0 8px 48px color-mix(in oklab, var(--color-accent) 40%, transparent);
+  --shadow-elev-1:      0 1px 2px  rgba(0, 0, 0, 0.4),
+                        0 2px 6px  rgba(0, 0, 0, 0.25);
+  --shadow-elev-2:      0 4px 8px  rgba(0, 0, 0, 0.35),
+                        0 12px 32px rgba(0, 0, 0, 0.3);
+  --shadow-elev-3:      0 8px 24px rgba(0, 0, 0, 0.45),
+                        0 24px 64px rgba(0, 0, 0, 0.4);
 
-  --animate-pulse-slow: pulse 2.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-}
-
-html,
-body {
-  background: var(--color-bg);
-  color: rgb(229 229 235);
-  font-family: var(--font-sans);
-  -webkit-font-smoothing: antialiased;
+  /* Motion tokens — become animation utilities. */
+  --animate-pulse-slow:   pulse             2.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  --animate-fade-up:      fadeUp            0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-fade-in:      fadeIn            0.5s ease-out both;
+  --animate-blob:         blob              14s  ease-in-out infinite;
+  --animate-blob-slow:    blob              28s  ease-in-out infinite;
+  --animate-shimmer:      shimmer           2.2s linear infinite;
+  --animate-gradient:     gradientShift     8s   ease-in-out infinite;
+  --animate-marquee:      marquee           40s  linear infinite;
+  --animate-float:        float             6s   ease-in-out infinite;
+  --animate-spin-slow:    spin              8s   linear infinite;
 }
 
 /* ──────────────────────────────────────────────────────────────────
-   Component classes. v4 lets us use @apply on arbitrary classes;
-   these are small reusable bundles for the rest of the app.
+   Keyframes. Registered inside @theme (--animate-*) get promoted
+   to Tailwind utilities like `animate-fade-up`. The @keyframes
+   blocks below have to exist at the top level so the CSS engine
+   knows what those utilities animate through.
+   ────────────────────────────────────────────────────────────────── */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes blob {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33%      { transform: translate(30px, -40px) scale(1.08); }
+  66%      { transform: translate(-25px, 20px)  scale(0.94); }
+}
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position:  200% 0; }
+}
+@keyframes gradientShift {
+  0%, 100% { background-position: 0% 50%; }
+  50%      { background-position: 100% 50%; }
+}
+@keyframes marquee {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-8px); }
+}
+/* Explicit — the --animate-pulse-slow token references this. Tailwind
+   registers its own `pulse` keyframe when `animate-pulse` is used,
+   but relying on side-effect registration is fragile. */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.5; }
+}
+
+/* Respect reduced-motion — kills all animations for users who ask. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001s !important;
+  }
+}
+
+/* ──────────────────────────────────────────────────────────────────
+   Base document. Grain + subtle radial glow on <body> establishes
+   the ambient tone before any page content mounts.
+   ────────────────────────────────────────────────────────────────── */
+html {
+  color-scheme: dark;
+}
+html, body {
+  background: var(--color-bg);
+  color: rgb(232 232 240);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+body {
+  position: relative;
+  background-image:
+    radial-gradient(1200px 800px at 85% -10%,
+                    color-mix(in oklab, var(--color-accent) 6%, transparent) 0%,
+                    transparent 60%),
+    radial-gradient(900px 700px at 5% 105%,
+                    color-mix(in oklab, var(--color-accent-glow) 5%, transparent) 0%,
+                    transparent 60%);
+  background-attachment: fixed;
+}
+/* Very-subtle noise/grain overlay — hides banding in gradients. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.025;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Selection — gradient-tinted so it feels intentional. */
+::selection {
+  background: color-mix(in oklab, var(--color-accent) 40%, transparent);
+  color: white;
+}
+
+/* ──────────────────────────────────────────────────────────────────
+   Component classes. Small reusable bundles the rest of the app
+   composes with. Every one now respects the new palette + supports
+   hover elevation + honours prefers-reduced-motion via the sitewide
+   media query above.
    ────────────────────────────────────────────────────────────────── */
 @layer components {
+  /* Surfaces */
   .card {
-    @apply rounded-xl border border-line bg-bg-1 p-5 shadow-sm;
+    @apply rounded-xl border border-line bg-bg-1/90 backdrop-blur-sm p-5
+           shadow-[var(--shadow-elev-1)] transition;
+  }
+  .card-hover {
+    @apply hover:border-line-strong hover:-translate-y-0.5 hover:shadow-[var(--shadow-elev-2)];
   }
   .card-tight {
-    @apply rounded-lg border border-line bg-bg-1 p-3;
+    @apply rounded-lg border border-line bg-bg-1/80 p-3;
+  }
+  .card-glow {
+    @apply rounded-xl border border-accent/30 bg-gradient-to-br from-accent/[0.06] to-transparent p-5
+           shadow-[var(--shadow-glow)];
   }
 
+  /* Buttons — every variant gets active-scale, focus ring, transition */
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-md
-           px-4 py-2 text-sm font-medium transition
-           border border-line bg-bg-2 hover:bg-bg-3 disabled:opacity-50
-           disabled:cursor-not-allowed;
+    @apply inline-flex items-center justify-center gap-2 rounded-lg
+           px-4 py-2 text-sm font-medium
+           border border-line bg-bg-2 hover:bg-bg-3 hover:border-line-strong
+           active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed
+           transition-all duration-150
+           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:ring-offset-2 focus-visible:ring-offset-bg;
   }
   .btn-primary {
-    @apply bg-accent hover:bg-accent/90 border-accent text-white;
+    @apply bg-gradient-to-r from-accent to-accent-glow border-transparent text-white
+           hover:brightness-110 hover:shadow-lg hover:shadow-accent/30
+           bg-[length:200%_100%] bg-left hover:bg-right transition-[background-position,filter,box-shadow] duration-500;
   }
   .btn-ghost {
-    @apply border-transparent bg-transparent hover:bg-bg-2;
+    @apply border-transparent bg-transparent hover:bg-white/[0.06];
   }
   .btn-danger {
-    @apply bg-red-600/90 hover:bg-red-600 border-red-600 text-white;
+    @apply bg-danger/90 hover:bg-danger border-danger text-white;
+  }
+  .btn-success {
+    @apply bg-success/90 hover:bg-success border-success text-white;
   }
 
-  .input,
-  .select,
-  .textarea {
-    @apply w-full rounded-md border border-line bg-bg-2 px-3 py-2 text-sm
-           placeholder:text-neutral-500
-           focus:outline-none focus:border-accent/60 focus:bg-bg-3;
+  /* Inputs */
+  .input, .select, .textarea {
+    @apply w-full rounded-lg border border-line bg-bg-2/70 px-3.5 py-2.5 text-sm
+           placeholder:text-neutral-500 transition-all duration-150
+           focus:outline-none focus:border-accent/60 focus:bg-bg-3
+           focus:ring-2 focus:ring-accent/20;
   }
-  .textarea {
-    @apply font-mono;
-  }
+  .textarea { @apply font-mono; }
 
   .label {
     @apply block text-xs font-medium uppercase tracking-wider text-neutral-400 mb-1.5;
   }
 
+  /* Pills */
   .pill {
     @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium;
   }
-  .pill-success { @apply bg-emerald-500/10 text-emerald-400 ring-1 ring-emerald-500/20; }
-  .pill-danger  { @apply bg-red-500/10 text-red-400 ring-1 ring-red-500/20; }
-  .pill-warn    { @apply bg-amber-500/10 text-amber-400 ring-1 ring-amber-500/20; }
-  .pill-info    { @apply bg-sky-500/10 text-sky-400 ring-1 ring-sky-500/20; }
+  .pill-success { @apply bg-success/10   text-success ring-1 ring-success/20; }
+  .pill-danger  { @apply bg-danger/10    text-red-300 ring-1 ring-danger/20; }
+  .pill-warn    { @apply bg-warn/10      text-amber-300 ring-1 ring-warn/20; }
+  .pill-info    { @apply bg-info/10      text-sky-300 ring-1 ring-info/20; }
   .pill-muted   { @apply bg-neutral-500/10 text-neutral-400 ring-1 ring-neutral-500/20; }
 
+  /* Progress */
   .progress-track { @apply h-2 w-full overflow-hidden rounded-full bg-bg-3; }
-  .progress-fill  { @apply h-full rounded-full bg-gradient-to-r from-accent to-accent-glow transition-all duration-500; }
+  .progress-fill  { @apply h-full rounded-full bg-gradient-to-r from-accent via-accent-glow to-accent-spark
+                          bg-[length:200%_100%] animate-[gradientShift_3s_ease-in-out_infinite]
+                          transition-all duration-500; }
 
-  .nav-item        { @apply flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium
-                            text-neutral-300 transition hover:bg-bg-2 hover:text-white; }
-  .nav-item-active { @apply bg-bg-3 text-white; }
+  /* Sidebar nav — restyled for the new palette + subtle hover glow. */
+  .nav-item {
+    @apply relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium
+           text-neutral-400 hover:text-white transition-all duration-150
+           hover:bg-white/[0.04];
+  }
+  .nav-item-active {
+    @apply text-white bg-gradient-to-r from-accent/15 to-transparent
+           before:absolute before:left-0 before:top-1/2 before:-translate-y-1/2
+           before:h-5 before:w-0.5 before:rounded-r-full
+           before:bg-gradient-to-b before:from-accent before:to-accent-glow;
+  }
+
+  /* Utility: gradient text (used for hero headlines). */
+  .text-gradient {
+    @apply bg-gradient-to-r from-accent via-accent-glow to-accent-spark bg-clip-text text-transparent;
+    background-size: 200% 100%;
+    animation: gradientShift 6s ease-in-out infinite;
+  }
+  .text-gradient-static {
+    @apply bg-gradient-to-r from-accent via-accent-glow to-accent-spark bg-clip-text text-transparent;
+  }
+
+  /* Utility: shimmer for skeletons + primary-CTA sheen. */
+  .shimmer {
+    background: linear-gradient(90deg,
+                                transparent 0%,
+                                color-mix(in oklab, white 8%, transparent) 50%,
+                                transparent 100%);
+    background-size: 200% 100%;
+    animation: shimmer 2.2s linear infinite;
+  }
+
+  /* Blob — ambient glowing background circles for marketing pages. */
+  .blob {
+    @apply absolute rounded-full blur-[100px] pointer-events-none;
+    animation: blob 14s ease-in-out infinite;
+  }
+
+  /* Dot-grid overlay used on marketing sections. */
+  .dot-grid {
+    background-image: radial-gradient(circle at 1px 1px, rgba(255,255,255,0.5) 1px, transparent 0);
+    background-size: 32px 32px;
+    opacity: 0.04;
+  }
+
+  /* Reveal on view — small helper for scroll-triggered fade-in.
+     Elements start hidden; JS toggles `.is-visible` to animate them in. */
+  .reveal {
+    opacity: 0;
+    transform: translateY(20px);
+    transition: opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1),
+                transform 0.7s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .reveal.is-visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
-/* Scrollbar */
-*::-webkit-scrollbar         { width: 8px; height: 8px; }
-*::-webkit-scrollbar-track   { background: transparent; }
-*::-webkit-scrollbar-thumb   { background: rgb(255 255 255 / 0.08); border-radius: 4px; }
-*::-webkit-scrollbar-thumb:hover { background: rgb(255 255 255 / 0.15); }
+/* ──────────────────────────────────────────────────────────────────
+   Scrollbar — matches the new palette.
+   ────────────────────────────────────────────────────────────────── */
+*::-webkit-scrollbar        { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track  { background: transparent; }
+*::-webkit-scrollbar-thumb  {
+  background: color-mix(in oklab, white 10%, transparent);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklab, var(--color-accent) 45%, white 8%);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+}

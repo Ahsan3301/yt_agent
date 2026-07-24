@@ -2,14 +2,14 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { UserPlus, Loader2, ArrowLeft, CheckCircle2, KeyRound, Mail } from "lucide-react";
+import {
+  Loader2, ArrowLeft, ArrowRight, CheckCircle2, KeyRound, Mail,
+  Play, Sparkles, UserPlus, Zap, Layers, Rocket,
+} from "lucide-react";
 
 /**
- * Public signup form. POSTs to /api/auth/register (gated by
- * `signup_open` feature flag — 403 when closed with a clear message).
- *
- * Success state shows a "pending approval" panel — no auto-login,
- * because the account isn't `active` until a superadmin approves it.
+ * Signup — two-panel like login. Left = brand + benefit list, right =
+ * form. Success state shows a full-panel "pending approval" screen.
  */
 export default function SignupPage() {
   const [email, setEmail] = useState("");
@@ -32,18 +32,14 @@ export default function SignupPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          email,
-          password,
+          email, password,
           kaggle_username: kaggleUser.trim(),
           kaggle_key: kaggleKey.trim(),
         }),
       });
       const j = await r.json().catch(() => ({}));
-      if (r.ok) {
-        setDone(true);
-      } else {
-        setError(j.error || `HTTP ${r.status}`);
-      }
+      if (r.ok) setDone(true);
+      else setError(j.error || `HTTP ${r.status}`);
     } catch (e) {
       setError(String(e));
     }
@@ -52,15 +48,28 @@ export default function SignupPage() {
 
   if (done) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-6">
-        <div className="card w-full max-w-md space-y-4 text-center">
-          <CheckCircle2 className="h-12 w-12 text-emerald-400 mx-auto" />
-          <div className="text-lg font-semibold">Account created</div>
-          <p className="text-sm text-neutral-400">
-            Your signup is pending admin approval. You&apos;ll be able to sign
-            in once an operator reviews and activates your account.
-          </p>
-          <Link href="/" className="btn btn-ghost inline-flex mt-2">
+      <div className="min-h-screen flex items-center justify-center p-6 relative overflow-hidden">
+        <div aria-hidden className="pointer-events-none absolute inset-0 -z-10">
+          <div className="blob top-[-8rem] left-[-8rem] h-[500px] w-[500px]"
+               style={{ background: "radial-gradient(circle, rgba(16,185,129,0.28) 0%, transparent 70%)" }} />
+          <div className="blob bottom-[-8rem] right-[-8rem] h-[500px] w-[500px] animate-[blob_28s_ease-in-out_infinite]"
+               style={{ background: "radial-gradient(circle, rgba(139,92,246,0.22) 0%, transparent 70%)" }} />
+          <div className="absolute inset-0 dot-grid" />
+        </div>
+        <div className="w-full max-w-md text-center space-y-6 animate-[fadeUp_0.6s_cubic-bezier(0.16,1,0.3,1)_both]">
+          <div className="relative mx-auto w-fit">
+            <div className="absolute inset-0 rounded-full bg-emerald-500/30 blur-2xl animate-pulse-slow" />
+            <div className="relative h-16 w-16 rounded-full bg-gradient-to-br from-emerald-400 to-emerald-600 flex items-center justify-center shadow-2xl shadow-emerald-500/30">
+              <CheckCircle2 className="h-8 w-8 text-white" strokeWidth={2.5} />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <h2 className="text-2xl font-semibold tracking-tight">You're on the list</h2>
+            <p className="text-sm text-neutral-400 max-w-sm mx-auto">
+              An operator will review your signup shortly. You'll be able to sign in once your account is approved.
+            </p>
+          </div>
+          <Link href="/" className="btn btn-ghost inline-flex">
             <ArrowLeft className="h-4 w-4" /> Back to home
           </Link>
         </div>
@@ -69,68 +78,143 @@ export default function SignupPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-6">
-      <form onSubmit={submit} className="card w-full max-w-md space-y-4">
-        <div className="flex items-center gap-2 text-lg font-semibold">
-          <UserPlus className="h-5 w-5 text-accent" />
-          Request access
-        </div>
-        <p className="text-sm text-neutral-400">
-          Signups are review-gated. After creating an account, an operator
-          approves it before you can sign in.
-        </p>
+    <div className="min-h-screen grid md:grid-cols-[1.05fr_1fr] relative overflow-hidden">
+      {/* Ambient blobs */}
+      <div aria-hidden className="pointer-events-none absolute inset-0 -z-10">
+        <div className="blob top-[-8rem] left-[-8rem] h-[500px] w-[500px]"
+             style={{ background: "radial-gradient(circle, rgba(139,92,246,0.28) 0%, transparent 70%)" }} />
+        <div className="blob bottom-[-8rem] right-[-8rem] h-[500px] w-[500px] animate-[blob_28s_ease-in-out_infinite]"
+             style={{ background: "radial-gradient(circle, rgba(249,115,22,0.22) 0%, transparent 70%)" }} />
+        <div className="absolute inset-0 dot-grid" />
+      </div>
 
-        <div>
-          <label className="label flex items-center gap-1"><Mail className="h-3 w-3" /> Email</label>
-          <input type="email" className="input" required autoComplete="email"
-                 value={email} onChange={(e) => setEmail(e.target.value)} autoFocus />
-        </div>
-
-        <div>
-          <label className="label flex items-center gap-1"><KeyRound className="h-3 w-3" /> Password (10+ chars)</label>
-          <input type="password" className="input font-mono" required autoComplete="new-password"
-                 value={password} onChange={(e) => setPassword(e.target.value)} />
-        </div>
-
-        <div>
-          <label className="label">Confirm password</label>
-          <input type="password" className="input font-mono" required autoComplete="new-password"
-                 value={confirm} onChange={(e) => setConfirm(e.target.value)} />
-        </div>
-
-        <div className="border-t border-line pt-3 space-y-2">
-          <div className="text-xs text-neutral-500 -mb-1">
-            Optional — bring your own Kaggle worker (skips shared queue). You can add these later.
+      {/* Left panel */}
+      <aside className="hidden md:flex flex-col justify-between p-12 relative border-r border-line/40 bg-bg-1/40 backdrop-blur">
+        <Link href="/" className="flex items-center gap-2.5 group w-fit">
+          <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-accent via-accent-glow to-accent-spark flex items-center justify-center shadow-glow group-hover:scale-105 transition-transform">
+            <Play className="h-4 w-4 text-white fill-white" strokeWidth={0} />
           </div>
-          <div>
-            <label className="label">Kaggle username</label>
-            <input type="text" className="input" placeholder="e.g. yourname"
-                   value={kaggleUser} onChange={(e) => setKaggleUser(e.target.value)} />
+          <span className="font-semibold tracking-tight">Shortsmith</span>
+        </Link>
+
+        <div className="space-y-8 max-w-md">
+          <div className="inline-flex items-center gap-2 rounded-full border border-line-strong bg-bg-1/70 px-3 py-1 text-xs text-neutral-300">
+            <Sparkles className="h-3 w-3 text-accent" />
+            Access is review-gated
           </div>
-          <div>
-            <label className="label">Kaggle API key</label>
-            <input type="password" className="input font-mono" placeholder="from kaggle.com/account"
-                   value={kaggleKey} onChange={(e) => setKaggleKey(e.target.value)} />
+          <h1 className="text-3xl md:text-4xl font-bold tracking-tight leading-tight">
+            Start shipping <span className="text-gradient-static">Shorts on autopilot.</span>
+          </h1>
+          <div className="space-y-4">
+            <BenefitRow icon={Zap}    title="One click to publish" body="Topic → script → voiceover → video → upload." />
+            <BenefitRow icon={Layers} title="Multi-channel"        body="Each channel gets its own tone, voice, and schedule." />
+            <BenefitRow icon={Rocket} title="Runs on cron"         body="Daily quotas, timezone-aware. Set once, publish forever." />
           </div>
         </div>
 
-        {error && (
-          <div className="text-sm text-red-300 border border-red-500/30 bg-red-500/5 rounded px-3 py-2">
-            {error}
-          </div>
-        )}
-
-        <button type="submit" disabled={busy || !email || !password}
-                className="btn btn-primary w-full">
-          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
-          {busy ? "Creating account…" : "Create account"}
-        </button>
-
-        <div className="flex items-center justify-between text-xs text-neutral-500 pt-1">
-          <Link href="/" className="underline hover:text-neutral-300">← Home</Link>
-          <Link href="/login" className="underline hover:text-neutral-300">Already have an account?</Link>
+        <div className="text-xs text-neutral-500 flex items-center justify-between">
+          <span>© {new Date().getUTCFullYear()} Shortsmith</span>
+          <Link href="/login" className="hover:text-neutral-300 transition">Already have an account? →</Link>
         </div>
-      </form>
+      </aside>
+
+      {/* Right panel — form */}
+      <main className="flex flex-col items-center justify-center p-6 md:p-12 relative">
+        <Link href="/" className="md:hidden absolute top-6 left-6 flex items-center gap-2">
+          <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-accent via-accent-glow to-accent-spark flex items-center justify-center shadow-glow">
+            <Play className="h-3.5 w-3.5 text-white fill-white" strokeWidth={0} />
+          </div>
+          <span className="font-semibold tracking-tight text-sm">Shortsmith</span>
+        </Link>
+
+        <div className="w-full max-w-sm animate-[fadeUp_0.6s_cubic-bezier(0.16,1,0.3,1)_both]">
+          <div className="space-y-2 mb-6">
+            <h2 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
+              <UserPlus className="h-5 w-5 text-accent" /> Request access
+            </h2>
+            <p className="text-sm text-neutral-400">
+              An operator reviews new signups before you can log in.
+            </p>
+          </div>
+
+          <form onSubmit={submit} className="space-y-4">
+            <div>
+              <label className="label flex items-center gap-1"><Mail className="h-3 w-3" /> Email</label>
+              <input type="email" required autoFocus autoComplete="email"
+                     placeholder="you@example.com"
+                     className="input h-11"
+                     value={email} onChange={(e) => setEmail(e.target.value)} />
+            </div>
+            <div>
+              <label className="label flex items-center gap-1"><KeyRound className="h-3 w-3" /> Password (10+ chars)</label>
+              <input type="password" required autoComplete="new-password"
+                     placeholder="••••••••••••"
+                     className="input h-11 font-mono"
+                     value={password} onChange={(e) => setPassword(e.target.value)} />
+            </div>
+            <div>
+              <label className="label">Confirm password</label>
+              <input type="password" required autoComplete="new-password"
+                     placeholder="••••••••••••"
+                     className="input h-11 font-mono"
+                     value={confirm} onChange={(e) => setConfirm(e.target.value)} />
+            </div>
+
+            <details className="group">
+              <summary className="cursor-pointer text-xs text-neutral-400 hover:text-neutral-200 flex items-center gap-1 select-none">
+                <span className="inline-block w-3 h-3 text-center leading-3 transition-transform group-open:rotate-90">›</span>
+                Optional — bring your own Kaggle worker
+              </summary>
+              <div className="mt-3 space-y-3 pl-4 border-l border-line">
+                <div>
+                  <label className="label">Kaggle username</label>
+                  <input type="text" className="input h-10" placeholder="yourname"
+                         value={kaggleUser} onChange={(e) => setKaggleUser(e.target.value)} />
+                </div>
+                <div>
+                  <label className="label">Kaggle API key</label>
+                  <input type="password" className="input h-10 font-mono" placeholder="from kaggle.com/account"
+                         value={kaggleKey} onChange={(e) => setKaggleKey(e.target.value)} />
+                </div>
+              </div>
+            </details>
+
+            {error && (
+              <div className="text-sm text-red-300 border border-red-500/30 bg-red-500/[0.06] rounded-lg px-3.5 py-2.5 animate-[fadeIn_0.2s_ease-out]">
+                {error}
+              </div>
+            )}
+
+            <button type="submit" disabled={busy || !email || !password}
+                    className="btn btn-primary w-full h-11 text-sm mt-2 group">
+              {busy
+                ? <><Loader2 className="h-4 w-4 animate-spin" /> Creating account…</>
+                : <>Create account <ArrowRight className="h-4 w-4 group-hover:translate-x-0.5 transition-transform" /></>}
+            </button>
+
+            <div className="flex items-center justify-between text-xs text-neutral-500 pt-3">
+              <Link href="/" className="hover:text-neutral-300 transition">← Home</Link>
+              <Link href="/login" className="hover:text-neutral-300 transition">Have an account? Sign in →</Link>
+            </div>
+          </form>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+function BenefitRow({
+  icon: Icon, title, body,
+}: { icon: React.ComponentType<{ className?: string }>; title: string; body: string }) {
+  return (
+    <div className="flex items-start gap-3">
+      <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-accent/25 to-accent-glow/15 border border-accent/30 flex items-center justify-center shrink-0">
+        <Icon className="h-4 w-4 text-accent" />
+      </div>
+      <div>
+        <div className="font-medium text-[15px]">{title}</div>
+        <div className="text-sm text-neutral-400">{body}</div>
+      </div>
     </div>
   );
 }

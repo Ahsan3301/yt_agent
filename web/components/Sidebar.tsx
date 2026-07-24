@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState, useEffect } from "react";
 import {
-  Clapperboard, Settings, History, KeyRound, LayoutDashboard, Activity,
+  Play, Settings, History, KeyRound, LayoutDashboard, Activity,
   ListChecks, Wand2, HeartPulse, Layers, Menu, X, HardDrive, BarChart3,
   Shield, Crown, Users, Flag, Package, LayoutTemplate, ScrollText,
 } from "lucide-react";
@@ -13,9 +13,6 @@ import clsx from "clsx";
 type NavItem = { href: string; label: string; icon: React.ComponentType<{ className?: string }> };
 type Role = "user" | "admin" | "superadmin";
 
-// User nav — shown to everyone (admins + superadmins also see this + their
-// own group below). Kept close to the original list so the day-to-day flow
-// (create → channels → queue → history) is unchanged, just under /app.
 const USER_NAV: NavItem[] = [
   { href: "/app",           label: "Dashboard",   icon: LayoutDashboard },
   { href: "/app/create",    label: "Create",      icon: Wand2           },
@@ -70,19 +67,31 @@ export default function Sidebar({ role = "user" }: { role?: Role }) {
     return pathname.startsWith(href);
   };
 
+  const brand = (
+    <Link href="/app" className="flex items-center gap-2.5 px-3 pb-5 mb-3 border-b border-line/60 group">
+      <div className="relative h-9 w-9 rounded-xl bg-gradient-to-br from-accent via-accent-glow to-accent-spark flex items-center justify-center shadow-glow group-hover:scale-105 transition-transform">
+        <Play className="h-4 w-4 text-white fill-white" strokeWidth={0} />
+      </div>
+      <div>
+        <div className="font-semibold leading-tight text-[15px] tracking-tight">Shortsmith</div>
+        <div className="text-[10px] text-neutral-500 uppercase tracking-wider">Studio</div>
+      </div>
+    </Link>
+  );
+
   const renderGroup = (label: string | null, items: NavItem[]) => {
     if (!items.length) return null;
     return (
-      <div className="flex flex-col gap-1">
+      <div className="flex flex-col gap-0.5">
         {label && (
-          <div className="px-3 pt-3 pb-1 text-[10px] uppercase tracking-wider text-neutral-500">
+          <div className="px-3 pt-4 pb-1 text-[10px] uppercase tracking-[0.15em] text-neutral-500">
             {label}
           </div>
         )}
         {items.map(({ href, label: text, icon: Icon }) => (
           <Link key={href} href={href}
                 className={clsx("nav-item", isActive(href) && "nav-item-active")}>
-            <Icon className="h-4 w-4" />
+            <Icon className={clsx("h-4 w-4 transition-colors", isActive(href) ? "text-accent" : "")} />
             {text}
           </Link>
         ))}
@@ -94,11 +103,13 @@ export default function Sidebar({ role = "user" }: { role?: Role }) {
     <>
       {/* Mobile top bar */}
       <header className="md:hidden fixed top-0 inset-x-0 z-30 flex items-center
-                          justify-between border-b border-line bg-bg-1/95
+                          justify-between border-b border-line/60 bg-bg-1/95
                           backdrop-blur px-4 py-3">
         <Link href="/app" className="flex items-center gap-2">
-          <Clapperboard className="h-6 w-6 text-accent" />
-          <span className="font-semibold text-sm">YT Agent</span>
+          <div className="h-7 w-7 rounded-lg bg-gradient-to-br from-accent via-accent-glow to-accent-spark flex items-center justify-center shadow-glow">
+            <Play className="h-3.5 w-3.5 text-white fill-white" strokeWidth={0} />
+          </div>
+          <span className="font-semibold text-sm tracking-tight">Shortsmith</span>
         </Link>
         <button onClick={() => setOpen(true)} className="btn-ghost p-2 rounded-md hover:bg-bg-2"
                 aria-label="Open menu">
@@ -106,20 +117,20 @@ export default function Sidebar({ role = "user" }: { role?: Role }) {
         </button>
       </header>
 
-      {/* Mobile slide-in drawer */}
+      {/* Mobile drawer */}
       {open && (
         <div className="md:hidden fixed inset-0 z-40 flex">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]"
                onClick={() => setOpen(false)} />
-          <aside className="relative w-72 max-w-[85vw] bg-bg-1 border-r border-line
-                            px-3 py-6 flex flex-col gap-1 overflow-y-auto animate-in slide-in-from-left">
-            <div className="flex items-center justify-between px-3 pb-5 mb-2 border-b border-line">
-              <Link href="/app" className="flex items-center gap-3" onClick={() => setOpen(false)}>
-                <Clapperboard className="h-7 w-7 text-accent" />
-                <div>
-                  <div className="font-semibold leading-tight">YT Agent</div>
-                  <div className="text-xs text-neutral-500">automation studio</div>
+          <aside className="relative w-72 max-w-[85vw] bg-bg-1/95 backdrop-blur border-r border-line/60
+                            px-3 py-6 flex flex-col gap-1 overflow-y-auto
+                            animate-[fadeUp_0.3s_cubic-bezier(0.16,1,0.3,1)_both]">
+            <div className="flex items-center justify-between px-1 pb-3 mb-2 border-b border-line/60">
+              <Link href="/app" className="flex items-center gap-2.5" onClick={() => setOpen(false)}>
+                <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-accent via-accent-glow to-accent-spark flex items-center justify-center shadow-glow">
+                  <Play className="h-4 w-4 text-white fill-white" strokeWidth={0} />
                 </div>
+                <span className="font-semibold tracking-tight">Shortsmith</span>
               </Link>
               <button onClick={() => setOpen(false)} className="p-2 rounded-md hover:bg-bg-2"
                       aria-label="Close menu">
@@ -134,14 +145,8 @@ export default function Sidebar({ role = "user" }: { role?: Role }) {
       )}
 
       {/* Desktop sidebar */}
-      <aside className="hidden md:flex md:w-64 flex-col gap-1 border-r border-line bg-bg-1 px-3 py-6 shrink-0 overflow-y-auto">
-        <Link href="/app" className="flex items-center gap-3 px-3 pb-5 mb-2 border-b border-line">
-          <Clapperboard className="h-7 w-7 text-accent" />
-          <div>
-            <div className="font-semibold leading-tight">YT Agent</div>
-            <div className="text-xs text-neutral-500">automation studio</div>
-          </div>
-        </Link>
+      <aside className="hidden md:flex md:w-64 flex-col gap-1 border-r border-line/60 bg-bg-1/60 backdrop-blur px-3 py-6 shrink-0 overflow-y-auto">
+        {brand}
         {renderGroup(null, groups.user)}
         {renderGroup("Admin", groups.admin)}
         {renderGroup("Superadmin", groups.superadmin)}
