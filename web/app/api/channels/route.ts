@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb, FieldValue } from "@/lib/firebase-admin";
 import { hashOraclePassword } from "@/lib/oracle_password";
+import { requireTenant, tenantWhereClauses, assertOwnership, stampUserId } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -152,14 +153,15 @@ function _sanitizeAllowedWorkers(v: unknown): string[] {
   return out;
 }
 
-/** GET /api/channels — list all channels. Sensitive fields stripped. */
-export async function GET() {
+/** GET /api/channels — list caller's channels (all when superadmin +
+ *  tenant filter enforced). Sensitive fields stripped. */
+export async function GET(req: NextRequest) {
+  const auth = await requireTenant(req);
+  if ("response" in auth) return auth.response;
   try {
-    const snap = await adminDb()
-      .collection("channels")
-      .orderBy("name", "asc")
-      .limit(200)
-      .get();
+    let q = adminDb().collection("channels").orderBy("name", "asc").limit(200);
+    for (const [f, op, v] of tenantWhereClauses(auth.tenant)) q = q.where(f, op, v);
+    const snap = await q.get();
     const out: unknown[] = [];
     snap.forEach((doc) => {
       const d = doc.data();
@@ -176,6 +178,9 @@ export async function GET() {
  * Oracle password is write-only and never returned.
  */
 export async function POST(req: NextRequest) {
+  const auth = await requireTenant(req);
+  if ("response" in auth) return auth.response;
+  const { tenant } = auth;
   try {
     const body = (await req.json()) as ChannelDoc;
     if (!body.name?.trim()) {
@@ -189,6 +194,14 @@ export async function POST(req: NextRequest) {
 
     const ref = adminDb().collection("channels").doc(id);
     const existing = await ref.get();
+    // Cross-tenant guard on edit: if the row exists but belongs to
+    // another user (only possible when tenant filter is enforced),
+    // pretend it doesn't exist so tenants can't overwrite each
+    // other's channels by guessing an id.
+    if (existing.exists) {
+      const ownErr = assertOwnership(existing.data() as Record<string, unknown>, tenant);
+      if (ownErr) return ownErr;
+    }
 
     // Oracle password action: set / clear / leave-alone. The client
     // NEVER receives the hash back — that's why the UI supports add
@@ -456,7 +469,11 @@ export async function POST(req: NextRequest) {
       updated_at: FieldValue.serverTimestamp(),
       ...(existing.exists ? {} : { created_at: FieldValue.serverTimestamp() }),
     };
-    await ref.set(payload, { merge: true });
+    // Stamp user_id on every write so this channel is discoverable
+    // per-tenant. Idempotent: won't overwrite an existing user_id on
+    // the row (only stamps when missing).
+    const stamped = stampUserId(payload, tenant);
+    await ref.set(stamped, { merge: true });
     // Return the sanitized public view so the client sees
     // has_oracle_password: bool but never the hash itself.
     const { oracle_password_hash: _drop, ...cleanPayload } = payload as Record<string, unknown>;
@@ -470,12 +487,20 @@ export async function POST(req: NextRequest) {
   }
 }
 
-/** DELETE /api/channels?id=<id> — remove a channel. */
+/** DELETE /api/channels?id=<id> — remove a channel. Cross-tenant
+ *  guard: rejects with 404 if the row belongs to another tenant. */
 export async function DELETE(req: NextRequest) {
+  const auth = await requireTenant(req);
+  if ("response" in auth) return auth.response;
   const id = req.nextUrl.searchParams.get("id");
   if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
   try {
-    await adminDb().collection("channels").doc(id).delete();
+    const ref = adminDb().collection("channels").doc(id);
+    const doc = await ref.get();
+    if (!doc.exists) return NextResponse.json({ ok: true, id, note: "already gone" });
+    const ownErr = assertOwnership(doc.data() as Record<string, unknown>, auth.tenant);
+    if (ownErr) return ownErr;
+    await ref.delete();
     return NextResponse.json({ ok: true, id });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });

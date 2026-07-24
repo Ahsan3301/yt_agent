@@ -1,8 +1,9 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase-admin";
 import { newRequestId, logRoute } from "@/app/api/_lib/orchestrator";
 import { toEpochMs } from "@/lib/timestamps";
 import { listStorageVideos } from "@/lib/storage-list";
+import { requireTenant, tenantWhereClauses } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -20,11 +21,18 @@ export const runtime = "nodejs";
  *  the fallback. Runs from a specific tier (Kaggle GPU / Oracle side
  *  worker / Colab) all land under the same `videos/<run_id>.mp4`
  *  key convention so this stays tier-agnostic. */
-export async function GET() {
+export async function GET(req: NextRequest) {
   const reqId = newRequestId();
+  const auth = await requireTenant(req);
+  if ("response" in auth) return auth.response;
   try {
+    let q = adminDb().collection("runs_index").orderBy("finished_at", "desc").limit(200);
+    for (const [f, op, v] of tenantWhereClauses(auth.tenant)) q = q.where(f, op, v);
     const [snap, storage] = await Promise.all([
-      adminDb().collection("runs_index").orderBy("finished_at", "desc").limit(200).get(),
+      q.get(),
+      // Storage-only synthesis stays global — it only surfaces bucket
+      // orphans without user metadata. When tenancy tightens further
+      // in Phase 2b, buckets will be per-user; for now this is fine.
       listStorageVideos().catch(() => []),
     ]);
     const out: Record<string, unknown>[] = [];

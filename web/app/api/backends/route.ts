@@ -1,6 +1,7 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase-admin";
 import { toEpochMs } from "@/lib/timestamps";
+import { requireTenant } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -16,9 +17,39 @@ export const runtime = "nodejs";
  *
  * Response shape matches RegistryEntry consumed by web/lib/api.ts.
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const auth = await requireTenant(req);
+  if ("response" in auth) return auth.response;
+  const { tenant } = auth;
   try {
-    const snap = await adminDb().collection("backends").limit(100).get();
+    // Build the doc list. When tenant filtering is enforced AND the
+    // caller isn't a superadmin, they see: (a) workers they OWN
+    // (owner_user_id == userId) PLUS (b) shared-pool workers
+    // (tier_scope == "shared"). Shared visibility is deliberate —
+    // knowing the shared queue is busy is useful UX even for users
+    // who can't claim on it. Two parallel queries + dedupe by id.
+    const collectDocs = async (): Promise<Array<{ id: string; data: () => Record<string, unknown> }>> => {
+      if (!tenant.enforce) {
+        const snap = await adminDb().collection("backends").limit(100).get();
+        const arr: Array<{ id: string; data: () => Record<string, unknown> }> = [];
+        snap.forEach((d) => arr.push(d));
+        return arr;
+      }
+      const [mine, shared] = await Promise.all([
+        adminDb().collection("backends").where("owner_user_id", "==", tenant.userId).limit(100).get(),
+        adminDb().collection("backends").where("tier_scope", "==", "shared").limit(100).get(),
+      ]);
+      const seen = new Set<string>();
+      const merged: Array<{ id: string; data: () => Record<string, unknown> }> = [];
+      mine.forEach((d) => { if (!seen.has(d.id)) { seen.add(d.id); merged.push(d); } });
+      shared.forEach((d) => { if (!seen.has(d.id)) { seen.add(d.id); merged.push(d); } });
+      return merged;
+    };
+    const docs = await collectDocs();
+    // Give downstream loops the same `forEach` shape they had before.
+    const snap = { forEach: (fn: (d: { id: string; data: () => Record<string, unknown> }) => void) => {
+      for (const d of docs) fn(d);
+    }};
     const now = Date.now();
     const out: Array<Record<string, unknown>> = [];
 

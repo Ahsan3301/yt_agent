@@ -22,18 +22,35 @@ LOCAL_SETTINGS_PATH = Path("config/settings.json")
 SETTINGS_DOC = ("settings", "default")
 
 
-def pull_into_local() -> bool:
+def _shadow_id(user_id: str) -> str:
+    """Composite id for the per-user shadow. Matches
+    web/app/api/settings/route.ts::_shadowId byte-for-byte."""
+    return f"{user_id}__default"
+
+
+def pull_into_local(user_id: str | None = None) -> bool:
     """Fetch settings from Firestore and overwrite local file.
 
+    user_id (Phase 2, 2026-07-24): when given, read the caller's
+    per-user shadow at settings/{user_id}__default first; missing
+    shadow falls back to the legacy singleton at settings/default.
+    Missing legacy singleton falls back to config/settings.json's
+    baked defaults.
+
     Returns True if the remote had data and we wrote it locally.
-    False if storage isn't configured / empty / unreadable — caller
-    falls back to DEFAULT_SETTINGS in modules.config.
     """
     if not db.is_configured():
         log.info("settings_sync: Firestore not configured — keeping local defaults")
         return False
     try:
-        snap = db.client().collection(SETTINGS_DOC[0]).document(SETTINGS_DOC[1]).get()
+        c = db.client()
+        snap = None
+        if user_id:
+            shadow = c.collection(SETTINGS_DOC[0]).document(_shadow_id(user_id)).get()
+            if shadow.exists:
+                snap = shadow
+        if snap is None:
+            snap = c.collection(SETTINGS_DOC[0]).document(SETTINGS_DOC[1]).get()
     except Exception as e:
         log.warning(f"settings_sync: Firestore read failed: {e}")
         return False
@@ -41,6 +58,13 @@ def pull_into_local() -> bool:
         log.info("settings_sync: no remote settings doc yet — using local defaults")
         return False
     data = (snap.to_dict() or {}).get("data")
+    # PB stores JSON as dict OR string depending on how the row was written.
+    if isinstance(data, str):
+        try:
+            import json as _json
+            data = _json.loads(data)
+        except Exception:
+            data = None
     if not isinstance(data, dict) or not data:
         log.info("settings_sync: remote doc has no data — using local defaults")
         return False

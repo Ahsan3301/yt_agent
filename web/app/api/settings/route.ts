@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb, FieldValue } from "@/lib/firebase-admin";
 import { newRequestId, logRoute } from "@/app/api/_lib/orchestrator";
+import { requireTenant } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const DOC = "default";
+// Per-user shadow — same pattern as /api/keys. Phase-1 migration
+// seeded the founder's shadow from the legacy singleton; new users
+// start with an empty shadow that falls back to DEFAULT_SETTINGS.
+const LEGACY_DOC = "default";
+function _shadowId(userId: string): string { return `${userId}__default`; }
 
 /**
  * Default settings returned when no persisted doc exists yet (fresh
@@ -31,38 +36,48 @@ const DEFAULT_SETTINGS = {
   providers: {} as Record<string, boolean>,
 };
 
-/** GET /api/settings — read the single settings doc. Returns sensible
- * defaults when no doc exists yet (fresh install). */
-export async function GET() {
+/** GET /api/settings — read the caller's settings doc (per-user
+ *  shadow); falls back to the legacy singleton when the shadow is
+ *  empty; falls back to DEFAULT_SETTINGS when neither exists. */
+export async function GET(req: NextRequest) {
   const reqId = newRequestId();
+  const auth = await requireTenant(req);
+  if ("response" in auth) return auth.response;
   try {
-    const snap = await adminDb().collection("settings").doc(DOC).get();
+    const shadow = await adminDb().collection("settings").doc(_shadowId(auth.tenant.userId)).get();
+    const snap = shadow.exists ? shadow :
+      await adminDb().collection("settings").doc(LEGACY_DOC).get();
     if (!snap.exists) {
       logRoute(reqId, "settings empty — returning defaults");
       return NextResponse.json(DEFAULT_SETTINGS);
     }
-    const d = snap.data() as { data?: Record<string, unknown> };
-    return NextResponse.json({ ...DEFAULT_SETTINGS, ...(d?.data || {}) });
+    const d = snap.data() as { data?: Record<string, unknown> | string };
+    const merged: Record<string, unknown> =
+      typeof d?.data === "string" ? JSON.parse(d.data) :
+      (d?.data as Record<string, unknown> | undefined) || {};
+    return NextResponse.json({ ...DEFAULT_SETTINGS, ...merged });
   } catch (e) {
     logRoute(reqId, "settings get failed", { err: String(e) });
-    // Still return defaults on backend error so the page is usable.
     return NextResponse.json(DEFAULT_SETTINGS);
   }
 }
 
-/** PUT /api/settings — overwrite the settings doc with the body. */
+/** PUT /api/settings — overwrite the caller's per-user shadow. */
 export async function PUT(req: NextRequest) {
   const reqId = newRequestId();
+  const auth = await requireTenant(req);
+  if ("response" in auth) return auth.response;
   try {
     const body = await req.json();
     if (!body || typeof body !== "object") {
       return NextResponse.json({ error: "expected object" }, { status: 400 });
     }
-    await adminDb().collection("settings").doc(DOC).set({
+    await adminDb().collection("settings").doc(_shadowId(auth.tenant.userId)).set({
       data: body,
       updated_at: FieldValue.serverTimestamp(),
+      user_id: auth.tenant.userId,
     });
-    logRoute(reqId, "settings put", { keys: Object.keys(body).length });
+    logRoute(reqId, "settings put", { user: auth.tenant.userId, keys: Object.keys(body).length });
     return NextResponse.json({ ok: true });
   } catch (e) {
     logRoute(reqId, "settings put failed", { err: String(e) });

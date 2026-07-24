@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb, FieldValue } from "@/lib/firebase-admin";
 import { newRequestId, logRoute } from "@/app/api/_lib/orchestrator";
+import { requireTenant, assertOwnership } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -25,6 +26,9 @@ export const runtime = "nodejs";
  */
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const reqId = newRequestId();
+  const auth = await requireTenant(req);
+  if ("response" in auth) return auth.response;
+  const { tenant } = auth;
   const { id } = await ctx.params;
   if (!id) return NextResponse.json({ error: "missing channel id" }, { status: 400 });
 
@@ -39,6 +43,10 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       return NextResponse.json({ error: "channel not found" }, { status: 404 });
     }
     const c = (doc.data() || {}) as Record<string, unknown>;
+    // Cross-tenant guard: rendering someone else's channel is a
+    // 404 (hides existence, avoids info leak).
+    const ownErr = assertOwnership(c, tenant);
+    if (ownErr) return ownErr;
     const niche = String(c.niche || "").trim();
     if (!niche) return NextResponse.json({ error: "channel has no niche" }, { status: 400 });
 
@@ -76,6 +84,11 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         status: "queued" as const,
         channel: niche,
         dry_run,
+        // Tenant stamps — both fields kept in sync. `user_id` is the
+        // primary; `owner_user_id` is the denormalized copy the claim
+        // route uses (see migration 0015 + Phase 2 claim filter).
+        user_id: tenant.userId,
+        owner_user_id: tenant.userId,
         // Space queued_at by ms so ordering in the /queue UI is stable.
         queued_at: now + i * 0.001,
         started_at: null,

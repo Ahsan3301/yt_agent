@@ -402,7 +402,12 @@ def _run_one(job: dict[str, Any]):
     # env vars snapshot from boot time.
     try:
         from backend import keys_sync
-        keys_sync.pull_into_env(override=True)
+        # Phase 2 (2026-07-24): pass job.user_id so the worker reads
+        # the per-user keys shadow. Falls back to legacy singleton
+        # when the shadow is missing (safety net for founder + any
+        # job created before Phase 2 stamping landed).
+        _uid = str(job.get("user_id") or "") or None
+        keys_sync.pull_into_env(override=True, user_id=_uid)
     except Exception as _e:
         log.warning(f"keys_sync.pull_into_env failed pre-job: {_e}")
 
@@ -710,7 +715,8 @@ def _run_side_job(job: dict[str, Any], kind: str):
 
     try:
         from backend import keys_sync
-        keys_sync.pull_into_env(override=True)
+        _uid = str(job.get("user_id") or "") or None
+        keys_sync.pull_into_env(override=True, user_id=_uid)
     except Exception as _e:
         log.warning(f"keys_sync.pull_into_env failed pre-side-job: {_e}")
 

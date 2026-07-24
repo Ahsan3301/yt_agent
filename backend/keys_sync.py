@@ -81,27 +81,55 @@ MANAGED_KEYS = [
 _BLOB_DOC_ID = "api_keys"
 
 
-def _read_all() -> dict[str, str]:
+def _shadow_id(user_id: str) -> str:
+    """Composite id for the per-user shadow of the api_keys blob.
+    Matches web/app/api/keys/route.ts::_shadowId byte-for-byte."""
+    return f"{user_id}__api_keys"
+
+
+def _read_all(user_id: str | None = None) -> dict[str, str]:
     """Return {key_name: value} from the central store.
 
-    Storage model: ONE record in the `settings` collection with id
-    "api_keys" and a `data` JSON field holding the full {KEY: value}
-    map. This sidesteps PB's 15-char doc-id requirement (and the
-    hash-collision read bug it caused for per-key records).
+    Storage model (Phase 2, 2026-07-24): the caller's per-user shadow
+    at settings/{user_id}__api_keys takes precedence when user_id is
+    given. Falls back to the legacy singleton at settings/api_keys —
+    which is what workers with no user_id (pre-Phase-2 jobs) or a
+    user whose shadow hasn't been seeded yet still read.
     """
     if not db.is_configured():
         return {}
     try:
         c = db.client()
-        # New blob path.
+        # Per-user shadow first.
+        if user_id:
+            shadow = c.collection("settings").document(_shadow_id(user_id)).get()
+            if shadow.exists:
+                data = shadow.to_dict() or {}
+                blob = data.get("data") or {}
+                # PB stores JSON as either dict (native) or string.
+                if isinstance(blob, str):
+                    try:
+                        import json as _json
+                        blob = _json.loads(blob)
+                    except Exception:
+                        blob = {}
+                if isinstance(blob, dict) and blob:
+                    return {k: str(v) for k, v in blob.items()
+                            if isinstance(v, str) and v}
+        # Legacy singleton path — untouched behaviour for backward compat.
         snap = c.collection("settings").document(_BLOB_DOC_ID).get()
         if snap.exists:
             data = snap.to_dict() or {}
             blob = data.get("data") or {}
+            if isinstance(blob, str):
+                try:
+                    import json as _json
+                    blob = _json.loads(blob)
+                except Exception:
+                    blob = {}
             if isinstance(blob, dict):
                 return {k: str(v) for k, v in blob.items() if isinstance(v, str) and v}
-        # Legacy fallback — old per-key records (still works on
-        # Firestore-shape deploys where doc ids ARE the key names).
+        # Legacy per-key fallback.
         out: dict[str, str] = {}
         for s in c.collection("api_keys").stream():
             d = s.to_dict() or {}
@@ -114,15 +142,19 @@ def _read_all() -> dict[str, str]:
         return {}
 
 
-def pull_into_env(override: bool = True) -> dict:
+def pull_into_env(override: bool = True, user_id: str | None = None) -> dict:
     """
     Fetch keys from Firestore and populate os.environ.
 
     override=True (default): the central store wins over any pre-set env
     var. Right behaviour on Colab/HF where the platform-level secrets are
     minimal and the central store should be authoritative.
+
+    user_id (Phase 2, 2026-07-24): when given, prefer this user's
+    per-tenant shadow at settings/{user_id}__api_keys. Missing shadow
+    falls back to the legacy singleton so old workers keep working.
     """
-    keys = _read_all()
+    keys = _read_all(user_id=user_id)
     if not keys:
         log.info("keys_sync: no central keys (or empty) — using local env only")
         return {}

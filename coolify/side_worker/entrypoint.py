@@ -195,13 +195,17 @@ def handle(job: dict) -> None:
     # NEXT render without a container restart. keys_sync writes to
     # os.environ; settings_sync writes to the local settings.json that
     # modules.config.load_settings() reads.
+    # Phase 2 (2026-07-24): pass job.user_id so both syncs read the
+    # per-user shadow. Falls back to the legacy singleton when the
+    # shadow doesn't exist (safety net for founder + pre-Phase-2 jobs).
+    _job_uid = str(job.get("user_id") or "") or None
     try:
-        keys_sync.pull_into_env(override=True)
+        keys_sync.pull_into_env(override=True, user_id=_job_uid)
     except Exception as e:
         log.warning(f"keys_sync failed: {e}")
     try:
         from backend import settings_sync as _settings_sync
-        _settings_sync.pull_into_local()
+        _settings_sync.pull_into_local(user_id=_job_uid)
     except Exception as e:
         log.warning(f"settings_sync failed: {e}")
 

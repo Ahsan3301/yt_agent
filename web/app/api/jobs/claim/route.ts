@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb, FieldValue } from "@/lib/firebase-admin";
 import { verifyOraclePassword } from "@/lib/oracle_password";
+import { getFlag } from "@/lib/flags";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -149,6 +150,25 @@ export async function POST(req: NextRequest) {
     const workerLabel = _canonicalLabel(body);
     const oraclePlain = String(body.oracle_password || "");
 
+    // Phase 2 tenant gate (2026-07-24): when tenant_filter_enforced=true,
+    // resolve this worker's owner_user_id + tier_scope (both set by
+    // the register route from the worker's registration payload) and
+    // reject jobs owned by a different user unless the worker is in
+    // the shared pool. Falls through untouched when the flag is off.
+    const tenantEnforced = await getFlag("tenant_filter_enforced");
+    let workerOwner = "";
+    let workerScope = "";
+    if (tenantEnforced) {
+      try {
+        const back = await db.collection("backends").doc(instance_id).get();
+        if (back.exists) {
+          const bd = back.data() as { owner_user_id?: string; tier_scope?: string };
+          workerOwner = String(bd.owner_user_id || "");
+          workerScope = String(bd.tier_scope || "");
+        }
+      } catch { /* soft-fail — treat as shared */ }
+    }
+
     // Priority set — only fetched if any candidate job actually has
     // allowed_workers set. Cached across the loop.
     let liveLabels: Set<string> | null = null;
@@ -158,6 +178,23 @@ export async function POST(req: NextRequest) {
     for (const doc of snap.docs) {
       const data = doc.data() as Record<string, unknown>;
       if (body.channel && data.channel !== body.channel) continue;
+
+      // Phase 2 tenant gate — reject cross-tenant jobs. Rules:
+      //   (a) job has no owner_user_id (pre-Phase-2 or manually
+      //       inserted row) => allow, backward compat.
+      //   (b) worker owner_user_id matches job's => allow.
+      //   (c) worker is in the shared pool (tier_scope="shared" AND
+      //       owner_user_id=""/null) => allow (Phase 5 will further
+      //       check the job owner's plan allows shared workers).
+      //   (d) otherwise reject.
+      if (tenantEnforced) {
+        const jobOwner = String(data.owner_user_id || data.user_id || "");
+        if (jobOwner) {
+          const workerIsShared = !workerOwner && (workerScope === "shared" || workerScope === "");
+          const workerMatches = workerOwner && workerOwner === jobOwner;
+          if (!workerMatches && !workerIsShared) continue;
+        }
+      }
 
       const runAt = Number(data.run_at ?? 0);
       if (runAt > 0 && runAt > now) continue;

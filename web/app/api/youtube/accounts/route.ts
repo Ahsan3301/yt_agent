@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase-admin";
 import { toEpochMs } from "@/lib/timestamps";
+import { requireTenant, tenantWhereClauses, assertOwnership } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -16,15 +17,13 @@ export const runtime = "nodejs";
  * Credentials JSON is NEVER returned by GET — only metadata. The
  * worker reads creds directly from Firestore.
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const auth = await requireTenant(req);
+  if ("response" in auth) return auth.response;
   try {
-    // Skip DB-side orderBy — PB v0.39 rejects `sort=-updated` on
-    // collections that don't declare the sort field in an index.
-    // The list is tiny (< 100 rows), so sort client-side.
-    const snap = await adminDb()
-      .collection("youtube_accounts")
-      .limit(100)
-      .get();
+    let q = adminDb().collection("youtube_accounts").limit(100);
+    for (const [f, op, v] of tenantWhereClauses(auth.tenant)) q = q.where(f, op, v);
+    const snap = await q.get();
     const out: Array<Record<string, unknown>> = [];
     snap.forEach((doc) => {
       const d = (doc.data() || {}) as Record<string, unknown>;
@@ -45,14 +44,22 @@ export async function GET() {
 
 /** DELETE /api/youtube/accounts?id=<youtube_channel_id> */
 export async function DELETE(req: NextRequest) {
+  const auth = await requireTenant(req);
+  if ("response" in auth) return auth.response;
   const id = req.nextUrl.searchParams.get("id");
   if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
   try {
-    // Also unbind any dashboard-channels that were pointing at this
-    // YouTube account — leaving a dangling youtube_account_id would
-    // cause future renders to 404 at the uploader.
-    const ref = adminDb().collection("channels");
-    const bound = await ref.where("youtube_account_id", "==", id).get();
+    // Cross-tenant guard — can't unbind someone else's account.
+    const acct = await adminDb().collection("youtube_accounts").doc(id).get();
+    if (!acct.exists) return NextResponse.json({ ok: true, id, note: "already gone" });
+    const ownErr = assertOwnership(acct.data() as Record<string, unknown>, auth.tenant);
+    if (ownErr) return ownErr;
+    // Only unbind channels owned by THIS user; a superadmin unbinding
+    // an account still only touches the account's own owner's channels
+    // (a shared YT account is a Phase 5+ concept).
+    let boundQ = adminDb().collection("channels").where("youtube_account_id", "==", id);
+    for (const [f, op, v] of tenantWhereClauses(auth.tenant)) boundQ = boundQ.where(f, op, v);
+    const bound = await boundQ.get();
     const batch = adminDb().batch();
     bound.forEach((doc) => batch.update(doc.ref, { youtube_account_id: null }));
     batch.delete(adminDb().collection("youtube_accounts").doc(id));

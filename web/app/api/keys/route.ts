@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb, FieldValue } from "@/lib/firebase-admin";
 import { newRequestId, logRoute } from "@/app/api/_lib/orchestrator";
+import { requireTenant } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -64,37 +65,56 @@ function _mask(v: string): string {
  */
 const BLOB_DOC_ID = "api_keys";
 
-async function _readBlob(): Promise<Record<string, string>> {
-  const snap = await adminDb().collection("settings").doc(BLOB_DOC_ID).get();
+/** Per-user shadow doc id — composite "{userId}__api_keys". Phase-1
+ *  migration seeded this for the founder. Phase-2 readers prefer the
+ *  shadow when the tenant flag is on, and fall through to the legacy
+ *  singleton when the shadow is missing (safety net for any user who
+ *  slipped through the Phase-1 backfill). */
+function _shadowId(userId: string): string { return `${userId}__api_keys`; }
+
+async function _readBlob(userId: string): Promise<Record<string, string>> {
+  // Try per-user shadow first. Missing shadow -> fall back to legacy
+  // global blob. Founder's shadow was seeded at Phase 1; new users
+  // get an empty {} until they set their first key.
+  const primary = await adminDb().collection("settings").doc(_shadowId(userId)).get();
+  const snap = primary.exists ? primary :
+    await adminDb().collection("settings").doc(BLOB_DOC_ID).get();
   if (!snap.exists) return {};
   const d = snap.data() as { data?: unknown } | undefined;
   const raw = (d?.data ?? {}) as Record<string, unknown>;
-  // Coerce to strings only — drops booleans/numbers/etc.
+  const parsed: Record<string, unknown> = typeof raw === "string"
+    ? (JSON.parse(raw as unknown as string) as Record<string, unknown>) : raw;
   const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(raw)) {
+  for (const [k, v] of Object.entries(parsed)) {
     if (typeof v === "string" && v) out[k] = v;
   }
   return out;
 }
 
-async function _writeBlob(values: Record<string, string>): Promise<void> {
-  await adminDb().collection("settings").doc(BLOB_DOC_ID).set(
-    { data: values, updated_at: FieldValue.serverTimestamp() },
-    { merge: false }, // overwrite so deletions actually delete
+async function _writeBlob(userId: string, values: Record<string, string>): Promise<void> {
+  // Always write to the per-user shadow. Workers (keys_sync.py) read
+  // the shadow first for their job's user_id, so this is what makes
+  // "change key → next job picks it up" work per-user.
+  await adminDb().collection("settings").doc(_shadowId(userId)).set(
+    { data: values, updated_at: FieldValue.serverTimestamp(), user_id: userId },
+    { merge: false },
   );
 }
 
 /** GET /api/keys — return masked status for every managed key. */
-export async function GET() {
+export async function GET(req: NextRequest) {
   const reqId = newRequestId();
+  const auth = await requireTenant(req);
+  if ("response" in auth) return auth.response;
   try {
-    const stored = await _readBlob();
+    const stored = await _readBlob(auth.tenant.userId);
     const out: Record<string, { set: boolean; masked: string; managed: true }> = {};
     for (const k of MANAGED_KEYS) {
       const v = stored[k] || "";
       out[k] = { set: !!v, masked: _mask(v), managed: true };
     }
     logRoute(reqId, "keys get", {
+      user: auth.tenant.userId,
       set_count: Object.values(out).filter((x) => x.set).length,
     });
     return NextResponse.json(out);
@@ -110,11 +130,13 @@ export async function GET() {
  */
 export async function PUT(req: NextRequest) {
   const reqId = newRequestId();
+  const auth = await requireTenant(req);
+  if ("response" in auth) return auth.response;
   try {
     const body = await req.json();
     const updates = (body?.updates || {}) as Record<string, string | null>;
 
-    const stored = await _readBlob();
+    const stored = await _readBlob(auth.tenant.userId);
     let changed = 0;
     for (const [name, value] of Object.entries(updates)) {
       if (!MANAGED_KEYS.includes(name)) continue;
@@ -130,8 +152,8 @@ export async function PUT(req: NextRequest) {
         }
       }
     }
-    if (changed > 0) await _writeBlob(stored);
-    logRoute(reqId, "keys put", { changed });
+    if (changed > 0) await _writeBlob(auth.tenant.userId, stored);
+    logRoute(reqId, "keys put", { user: auth.tenant.userId, changed });
     return NextResponse.json({ ok: true });
   } catch (e) {
     logRoute(reqId, "keys put failed", { err: String(e) });

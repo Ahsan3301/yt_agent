@@ -4,6 +4,7 @@ import {
   pickWorkers, newRequestId, logRoute, upsertJob,
   lookupIdempotent, storeIdempotent,
 } from "@/app/api/_lib/orchestrator";
+import { requireTenant, tenantWhereClauses, stampUserId } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";   // never cache; this is orchestration
 export const runtime = "nodejs";          // firebase-admin needs node runtime
@@ -25,28 +26,39 @@ const _CACHE_TTL_MS = 3000;
 const _LIST_LIMIT = 20;
 let _cachedList: { at: number; body: unknown[] } | null = null;
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const reqId = newRequestId();
-  // Cache hit?
-  if (_cachedList && Date.now() - _cachedList.at < _CACHE_TTL_MS) {
+  const auth = await requireTenant(req);
+  if ("response" in auth) return auth.response;
+  const { tenant } = auth;
+  // Cache is per-tenant because different users see different job
+  // sets. Include the userId in the cache key by scoping to a
+  // per-tenant module map keyed on userId — but since 99% of the
+  // installed base is one user (founder) for now, a coarser cache
+  // that drops when enforce=true is acceptable to keep the code
+  // small. Bypass the cache entirely under tenant enforcement.
+  if (!tenant.enforce && _cachedList && Date.now() - _cachedList.at < _CACHE_TTL_MS) {
     return NextResponse.json(_cachedList.body, {
       headers: { "X-Cache": "HIT", "Cache-Control": "no-store" },
     });
   }
   try {
-    // Two queries merged (2026-07-17): the newest-N page ALONE dropped
-    // ACTIVE jobs whose queued_at is old — e.g. a requeued job that a
-    // worker was actively rendering sat outside the newest-20 window,
-    // so the queue UI showed "0 running" while the Monitor showed the
-    // worker mid-render at 82%. Active rows (queued/claimed/running/
-    // needs_publish) are now ALWAYS included regardless of age.
+    // Compose tenant filter with the existing "active rows always
+    // included" merge. tenantWhereClauses returns [] when not
+    // enforcing, so behaviour is unchanged in that case.
+    const tenantFilters = tenantWhereClauses(tenant);
+    const withTenant = <Q extends { where: (a: string, b: "==", c: unknown) => Q }>(q: Q) => {
+      let r = q;
+      for (const [f, op, v] of tenantFilters) r = r.where(f, op, v);
+      return r;
+    };
     const [pageSnap, ...activeSnaps] = await Promise.all([
-      adminDb().collection("jobs")
+      withTenant(adminDb().collection("jobs")
         .orderBy("queued_at", "desc")
-        .limit(_LIST_LIMIT)
+        .limit(_LIST_LIMIT))
         .get(),
       ...["queued", "claimed", "running", "needs_publish"].map((st) =>
-        adminDb().collection("jobs").where("status", "==", st).limit(50).get(),
+        withTenant(adminDb().collection("jobs").where("status", "==", st).limit(50)).get(),
       ),
     ]);
     const seen = new Set<string>();
@@ -91,6 +103,9 @@ export function _bustJobsCache() {
 export async function POST(req: NextRequest) {
   _bustJobsCache();   // any new job invalidates the list cache
   const reqId = newRequestId();
+  const auth = await requireTenant(req);
+  if ("response" in auth) return auth.response;
+  const { tenant } = auth;
   try {
     const body = await req.json().catch(() => ({} as Record<string, unknown>));
     const channel = String(body.channel || "horror");
@@ -199,6 +214,10 @@ export async function POST(req: NextRequest) {
       status: "queued",
       channel,
       dry_run,
+      // Tenant stamps — user_id is primary; owner_user_id is the
+      // denormalized copy the claim route filters on.
+      user_id: tenant.userId,
+      owner_user_id: tenant.userId,
       queued_at: now,
       started_at: null,
       finished_at: null,
