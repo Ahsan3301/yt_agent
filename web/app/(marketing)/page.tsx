@@ -237,26 +237,6 @@ export default async function LandingPage() {
         </Reveal>
       </section>
 
-      {/* ── Trusted-by marquee (visual filler that reads as social proof) */}
-      <section className="relative z-10 py-8 border-y border-line/40 bg-bg-1/30 backdrop-blur-sm overflow-hidden">
-        <div className="text-center text-[10px] uppercase tracking-[0.2em] text-neutral-500 mb-4">
-          Built on the best of open-source AI
-        </div>
-        <div className="relative">
-          <div className="flex gap-14 animate-marquee whitespace-nowrap items-center opacity-60 hover:opacity-100 transition-opacity">
-            {[...Array(2)].flatMap((_, dup) =>
-              ["NVIDIA NIM", "Groq", "OpenRouter", "Cloudflare Workers AI", "Kaggle", "MinIO", "Flux 2", "Kokoro TTS"].map((n, i) => (
-                <div key={`${dup}-${i}`} className="text-neutral-400 text-sm font-medium tracking-wide">
-                  {n}
-                </div>
-              )),
-            )}
-          </div>
-          <div className="pointer-events-none absolute inset-y-0 left-0 w-24 bg-gradient-to-r from-bg to-transparent" />
-          <div className="pointer-events-none absolute inset-y-0 right-0 w-24 bg-gradient-to-l from-bg to-transparent" />
-        </div>
-      </section>
-
       {/* ── How it works ─────────────────────────────────────────── */}
       <section id="how" className="relative z-10 px-6 py-20 md:py-28">
         <div className="mx-auto max-w-5xl">
