@@ -298,10 +298,16 @@ export const getQueueStatus = () => call<QueueStatus>("/api/queue");
 export type Run = {
   run_id: string;
   ok?: boolean;
+  // Runtime shape includes a status field that the /api/runs route
+  // synthesises: "storage_only" for videos found in the bucket
+  // without a runs_index row, "failed"/"complete" from the DB row,
+  // etc. Absent on the older TS declaration; typed here so pages
+  // can filter by status without a cast.
+  status?: string;
   channel?: string;
   dry_run?: boolean;
-  started_at?: string;
-  finished_at?: string;
+  started_at?: number | string;
+  finished_at?: number | string;
   has_video?: boolean;
   steps?: Record<string, { ok: boolean; seconds: number; skipped?: boolean; error?: string }>;
   shots?: Array<{
