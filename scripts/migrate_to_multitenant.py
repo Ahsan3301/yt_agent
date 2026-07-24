@@ -5,15 +5,15 @@ SaaS refactor's data model:
   1. Inserts three plan rows: founder (unlimited, for me), free
      (BYO-Kaggle skeleton), pro (shared-worker skeleton). Free/pro are
      inactive placeholders until Phase 5 fills them in.
-  2. Inserts the founding user (id=u_founder, role=superadmin,
+  2. Inserts the founding user (id=ufounder0000000, role=superadmin,
      status=active, plan_id=founder). Password comes from the
      FOUNDER_PASSWORD env var on FIRST run; on re-runs the existing
      hash is preserved unless FOUNDER_PASSWORD_RESET=1 is set.
-  3. Backfills user_id="u_founder" onto every existing row of the 15
+  3. Backfills user_id="ufounder0000000" onto every existing row of the 15
      tenant collections that migration 0013 added the column to.
   4. Dual-writes the singleton settings/api_keys and settings/default
-     blobs into per-user shadows at settings/{u_founder}__api_keys
-     and settings/{u_founder}__default — Phase 2 readers will fall
+     blobs into per-user shadows at settings/{ufounder0000000}__api_keys
+     and settings/{ufounder0000000}__default — Phase 2 readers will fall
      back to the originals if the shadow is missing, so this write
      just primes the safety net.
   5. Flips settings/flags.auth_v2_enabled = true.
@@ -90,7 +90,7 @@ PB_URL = (os.environ.get("PB_URL_INTERNAL") or os.environ.get("PB_URL") or "").r
 ADMIN_EMAIL = os.environ.get("POCKETBASE_ADMIN_EMAIL", "")
 ADMIN_PW = os.environ.get("POCKETBASE_ADMIN_PASSWORD", "")
 
-FOUNDER_USER_ID = "u_founder"
+FOUNDER_USER_ID = "ufounder0000000"
 FOUNDER_EMAIL = os.environ.get("FOUNDER_EMAIL", "nick@gjequip.ca")
 FOUNDER_PLAN = "founder"
 
@@ -246,7 +246,7 @@ def step_founder_user() -> None:
 
 
 def step_backfill_user_id() -> None:
-    print("[3/5] backfilling user_id=u_founder on 15 tenant collections")
+    print("[3/5] backfilling user_id=ufounder0000000 on 15 tenant collections")
     for coll in TENANT_COLLECTIONS:
         # Paginate over rows where user_id is empty/null; PATCH each.
         # PB doesn't support UPDATE-WHERE via REST; we page + patch.

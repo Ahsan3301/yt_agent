@@ -101,12 +101,12 @@ export async function POST(req: NextRequest) {
   });
 }
 
-/** Short PB-valid user id: "u_" + 13 [a-z0-9]. Prefix marks the row
- *  provenance and keeps ids readable in logs. */
+/** Short PB-valid user id: "u" + 14 [a-z0-9] = 15 chars total.
+ *  PB rejects ids that aren't [a-z0-9]{15}+, so no underscore prefix. */
 function _shortUserId(): string {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-  let out = "u_";
-  for (let i = 0; i < 13; i++) out += chars[Math.floor(Math.random() * chars.length)];
+  let out = "u";
+  for (let i = 0; i < 14; i++) out += chars[Math.floor(Math.random() * chars.length)];
   return out;
 }
 

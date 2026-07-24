@@ -33,7 +33,7 @@ const COOKIE_TTL_DAYS = 30;
 export const COOKIE_MAX_AGE_SECONDS = COOKIE_TTL_DAYS * 24 * 3600;
 
 /** The synthetic user id every v1 cookie resolves to. */
-export const FOUNDER_USER_ID = "u_founder";
+export const FOUNDER_USER_ID = "ufounder0000000";
 
 export function sessionSecret(): string {
   return (process.env.SESSION_SECRET || process.env.DASHBOARD_PASSWORD || "").trim();
