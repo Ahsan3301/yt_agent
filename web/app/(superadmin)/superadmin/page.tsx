@@ -17,18 +17,19 @@ export default function SuperadminHome() {
         <code className="mx-1 px-1 rounded bg-bg-2 text-xs">audit_log</code>.
       </p>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <Card icon={LayoutTemplate} title="Landing content" body="Edit hero, features, pricing (Phase 4)." disabled />
-        <Card icon={Package} title="Plans" body="Create / edit paid tiers &amp; quotas (Phase 5)." disabled />
-        <Card icon={Flag} title="Feature flags" body="Toggle SaaS behaviours live (Phase 6)." disabled />
-        <Card icon={ScrollText} title="Audit log" body="Every superadmin action (Phase 4)." disabled />
+        <Card href="/superadmin/content" icon={LayoutTemplate} title="Landing content" body="Edit hero, features, pricing tiers." />
+        <Card href="/superadmin/plans" icon={Package} title="Plans" body="Create / edit paid tiers &amp; quotas (Phase 5)." disabled />
+        <Card href="/superadmin/flags" icon={Flag} title="Feature flags" body="Toggle SaaS behaviours live (Phase 6)." disabled />
+        <Card href="/superadmin/audit" icon={ScrollText} title="Audit log" body="Every superadmin action (later phase)." disabled />
       </div>
     </div>
   );
 }
 
 function Card({
-  icon: Icon, title, body, disabled,
+  href, icon: Icon, title, body, disabled,
 }: {
+  href: string;
   icon: React.ComponentType<{ className?: string }>;
   title: string; body: string; disabled?: boolean;
 }) {
@@ -39,5 +40,5 @@ function Card({
       <div className="text-xs text-neutral-500">{body}</div>
     </div>
   );
-  return disabled ? inner : <Link href="#">{inner}</Link>;
+  return disabled ? inner : <Link href={href}>{inner}</Link>;
 }

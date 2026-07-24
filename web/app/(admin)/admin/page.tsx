@@ -17,10 +17,10 @@ export default function AdminHome() {
         views are added in Phase 4; workers &amp; health are here today.
       </p>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <AdminCard href="/admin/users" icon={Users} title="Users" body="Approve / suspend signups (Phase 4)." disabled />
+        <AdminCard href="/admin/users" icon={Users} title="Users" body="Approve, suspend, and manage signups." />
         <AdminCard href="/admin/monitor" icon={Activity} title="Workers" body="CPU / RAM / GPU / disk per backend." />
         <AdminCard href="/admin/health" icon={HeartPulse} title="Health" body="Registry, error feed, uptime." />
-        <AdminCard href="/admin/queue" icon={ListChecks} title="Cross-tenant queue" body="All users' jobs (Phase 4)." disabled />
+        <AdminCard href="/admin/queue" icon={ListChecks} title="Cross-tenant queue" body="All users' jobs (later phase)." disabled />
       </div>
     </div>
   );
