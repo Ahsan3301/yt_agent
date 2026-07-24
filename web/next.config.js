@@ -39,6 +39,34 @@ const nextConfig = {
       { source: "/api/:path*", destination: "http://localhost:8000/api/:path*" },
     ];
   },
+
+  // Phase 3 (2026-07-24): all app pages moved from top-level (/channels,
+  // /queue, ...) into the (app) route group under /app/*. Redirect old
+  // bookmarks + in-flight browser tabs to their new homes. 308 = permanent
+  // preserves method (GET stays GET) — fine for pages that were only ever
+  // fetched via GET. Landing at `/` is now a public marketing page (see
+  // web/app/(marketing)/page.tsx).
+  async redirects() {
+    return [
+      { source: "/channels", destination: "/app/channels", permanent: true },
+      { source: "/channels/:path*", destination: "/app/channels/:path*", permanent: true },
+      { source: "/queue", destination: "/app/queue", permanent: true },
+      { source: "/queue/:path*", destination: "/app/queue/:path*", permanent: true },
+      { source: "/history", destination: "/app/history", permanent: true },
+      { source: "/history/:path*", destination: "/app/history/:path*", permanent: true },
+      { source: "/reports", destination: "/app/reports", permanent: true },
+      { source: "/keys", destination: "/app/keys", permanent: true },
+      { source: "/settings", destination: "/app/settings", permanent: true },
+      { source: "/storage", destination: "/app/storage", permanent: true },
+      { source: "/create", destination: "/app/create", permanent: true },
+      { source: "/create/:path*", destination: "/app/create/:path*", permanent: true },
+      // Monitor + health moved to /admin/*; only admins+ can access.
+      // Non-admin users hitting the old URL bounce to /admin (which
+      // itself bounces to /app for non-admins) — same net effect.
+      { source: "/monitor", destination: "/admin/monitor", permanent: true },
+      { source: "/health", destination: "/admin/health", permanent: true },
+    ];
+  },
 };
 
 module.exports = nextConfig;

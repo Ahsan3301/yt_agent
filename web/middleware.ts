@@ -24,8 +24,13 @@ import { verifySession, signSession, sessionSecret } from "@/lib/session";
  * public flow works. The route itself gates on the signup_open flag.
  */
 const PUBLIC_PATHS = new Set([
+  // Marketing pages — anyone can hit these.
+  "/",
+  "/pricing",
+  "/features",
   "/login",
   "/signup",
+  // Auth endpoints the login/signup forms POST to.
   "/api/auth/login",
   "/api/auth/logout",
   "/api/auth/register",
@@ -77,6 +82,21 @@ export async function middleware(req: NextRequest) {
       resHeaders.set("x-user-role", session.role);
       if (session.legacy) resHeaders.set("x-session-legacy", "1");
       if (session.impersonating) resHeaders.set("x-session-impersonating", "1");
+
+      // Role gates (Phase 3). Layouts also enforce these via a
+      // server-side check, but the middleware bounce is friendlier —
+      // gives a clean redirect instead of a mid-render throw.
+      if (pathname.startsWith("/admin") &&
+          session.role !== "admin" && session.role !== "superadmin") {
+        const url = req.nextUrl.clone();
+        url.pathname = "/app";
+        return NextResponse.redirect(url);
+      }
+      if (pathname.startsWith("/superadmin") && session.role !== "superadmin") {
+        const url = req.nextUrl.clone();
+        url.pathname = "/app";
+        return NextResponse.redirect(url);
+      }
     }
   }
 
