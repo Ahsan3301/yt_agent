@@ -28,12 +28,16 @@ export async function GET(req: NextRequest) {
   try {
     let q = adminDb().collection("runs_index").orderBy("finished_at", "desc").limit(200);
     for (const [f, op, v] of tenantWhereClauses(auth.tenant)) q = q.where(f, op, v);
+    // Storage-only synthesis: bucket lists have no per-user metadata,
+    // so under tenant enforcement they'd leak every user's orphan
+    // videos to every other user. Only surface them for the founder /
+    // superadmin (who owns the shared bucket) — non-super users see
+    // only their DB-backed rows. Buckets become per-user in Phase 7.
     const [snap, storage] = await Promise.all([
       q.get(),
-      // Storage-only synthesis stays global — it only surfaces bucket
-      // orphans without user metadata. When tenancy tightens further
-      // in Phase 2b, buckets will be per-user; for now this is fine.
-      listStorageVideos().catch(() => []),
+      auth.tenant.isSuper
+        ? listStorageVideos().catch(() => [])
+        : Promise.resolve([]),
     ]);
     const out: Record<string, unknown>[] = [];
     const seen = new Set<string>();

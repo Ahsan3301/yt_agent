@@ -66,19 +66,23 @@ function _mask(v: string): string {
 const BLOB_DOC_ID = "api_keys";
 
 /** Per-user shadow doc id — composite "{userId}__api_keys". Phase-1
- *  migration seeded this for the founder. Phase-2 readers prefer the
- *  shadow when the tenant flag is on, and fall through to the legacy
- *  singleton when the shadow is missing (safety net for any user who
- *  slipped through the Phase-1 backfill). */
+ *  migration seeded this for the founder. */
 function _shadowId(userId: string): string { return `${userId}__api_keys`; }
 
+const FOUNDER_ID = "ufounder0000000";
+
 async function _readBlob(userId: string): Promise<Record<string, string>> {
-  // Try per-user shadow first. Missing shadow -> fall back to legacy
-  // global blob. Founder's shadow was seeded at Phase 1; new users
-  // get an empty {} until they set their first key.
+  // Per-user shadow first. Fallback to the legacy singleton is
+  // FOUNDER-ONLY — Phase-1 seeded the founder's shadow with the
+  // singleton's contents, so both should match. If the founder's
+  // shadow is somehow missing/empty, the legacy is a safety net.
+  // Any OTHER user must never see the legacy singleton (which
+  // contains the founder's keys — cross-tenant leak).
   const primary = await adminDb().collection("settings").doc(_shadowId(userId)).get();
-  const snap = primary.exists ? primary :
-    await adminDb().collection("settings").doc(BLOB_DOC_ID).get();
+  let snap = primary;
+  if (!primary.exists && userId === FOUNDER_ID) {
+    snap = await adminDb().collection("settings").doc(BLOB_DOC_ID).get();
+  }
   if (!snap.exists) return {};
   const d = snap.data() as { data?: unknown } | undefined;
   const raw = (d?.data ?? {}) as Record<string, unknown>;

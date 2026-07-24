@@ -116,7 +116,14 @@ def _read_all(user_id: str | None = None) -> dict[str, str]:
                 if isinstance(blob, dict) and blob:
                     return {k: str(v) for k, v in blob.items()
                             if isinstance(v, str) and v}
-        # Legacy singleton path — untouched behaviour for backward compat.
+            # Missing shadow for a NON-founder user is intentional —
+            # they haven't set any keys yet. Return {} so their render
+            # uses ONLY the keys they've supplied (never the founder's).
+            # Otherwise a paid tier user's job would silently burn my
+            # global Groq/NIM/CF quota. Founder falls through to legacy.
+            if user_id != "ufounder0000000":
+                return {}
+        # Legacy singleton path — founder only, or no user context.
         snap = c.collection("settings").document(_BLOB_DOC_ID).get()
         if snap.exists:
             data = snap.to_dict() or {}

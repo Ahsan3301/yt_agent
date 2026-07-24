@@ -49,6 +49,14 @@ def pull_into_local(user_id: str | None = None) -> bool:
             shadow = c.collection(SETTINGS_DOC[0]).document(_shadow_id(user_id)).get()
             if shadow.exists:
                 snap = shadow
+            elif user_id != "ufounder0000000":
+                # Non-founder user with no shadow uses baked defaults
+                # (loaded from disk). NEVER read the founder's global
+                # settings row — it contains their custom niches +
+                # provider toggles + narration preferences that
+                # shouldn't apply to a fresh tenant.
+                log.info(f"settings_sync: no shadow for user_id={user_id}, using local defaults")
+                return False
         if snap is None:
             snap = c.collection(SETTINGS_DOC[0]).document(SETTINGS_DOC[1]).get()
     except Exception as e:

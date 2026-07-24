@@ -6,10 +6,11 @@ import { requireTenant } from "@/lib/tenant";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-// Per-user shadow — same pattern as /api/keys. Phase-1 migration
-// seeded the founder's shadow from the legacy singleton; new users
-// start with an empty shadow that falls back to DEFAULT_SETTINGS.
+// Per-user shadow — same pattern as /api/keys. Legacy fallback is
+// FOUNDER-ONLY (cross-tenant leak otherwise); new users get
+// DEFAULT_SETTINGS if their shadow is empty.
 const LEGACY_DOC = "default";
+const FOUNDER_ID = "ufounder0000000";
 function _shadowId(userId: string): string { return `${userId}__default`; }
 
 /**
@@ -46,7 +47,9 @@ export async function GET(req: NextRequest) {
   try {
     const shadow = await adminDb().collection("settings").doc(_shadowId(auth.tenant.userId)).get();
     const snap = shadow.exists ? shadow :
-      await adminDb().collection("settings").doc(LEGACY_DOC).get();
+      (auth.tenant.userId === FOUNDER_ID
+        ? await adminDb().collection("settings").doc(LEGACY_DOC).get()
+        : shadow);
     if (!snap.exists) {
       logRoute(reqId, "settings empty — returning defaults");
       return NextResponse.json(DEFAULT_SETTINGS);
