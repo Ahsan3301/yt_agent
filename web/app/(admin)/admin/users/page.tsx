@@ -22,6 +22,7 @@ type Filter = "pending" | "active" | "suspended" | "all";
 
 export default function AdminUsersPage() {
   const [users, setUsers] = useState<AppUser[]>([]);
+  const [plans, setPlans] = useState<{ slug: string; name: string }[]>([]);
   const [filter, setFilter] = useState<Filter>("pending");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
@@ -30,14 +31,32 @@ export default function AdminUsersPage() {
     setLoading(true);
     try {
       const url = filter === "all" ? "/api/admin/users" : `/api/admin/users?status=${filter}`;
-      const r = await fetch(url);
-      if (r.ok) setUsers(await r.json());
+      const [ru, rp] = await Promise.all([
+        fetch(url),
+        fetch("/api/superadmin/plans"),  // 403s harmlessly for non-superadmin
+      ]);
+      if (ru.ok) setUsers(await ru.json());
+      if (rp.ok) setPlans(await rp.json());
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [filter]);
+
+  const changePlan = async (u: AppUser, planId: string) => {
+    if (planId === u.plan_id) return;
+    setBusy(u.id);
+    try {
+      const r = await fetch(`/api/admin/users/${u.id}/plan`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan_id: planId }),
+      });
+      if (r.ok) await load();
+      else { const j = await r.json().catch(() => ({})); alert(`Failed: ${j.error || `HTTP ${r.status}`}`); }
+    } finally { setBusy(null); }
+  };
 
   const doAction = async (u: AppUser, action: "approve" | "suspend" | "reject") => {
     setBusy(u.id);
@@ -118,7 +137,23 @@ export default function AdminUsersPage() {
                   <td className="px-2 py-2">
                     <StatusPill status={u.status} />
                   </td>
-                  <td className="px-2 py-2 text-xs">{u.plan_id || "—"}</td>
+                  <td className="px-2 py-2 text-xs">
+                    {plans.length > 0 ? (
+                      <select value={u.plan_id || ""}
+                              disabled={busy === u.id || u.role === "superadmin"}
+                              onChange={(e) => changePlan(u, e.target.value)}
+                              className="input h-7 text-xs py-0 w-24">
+                        {!plans.some((p) => p.slug === u.plan_id) && u.plan_id && (
+                          <option value={u.plan_id}>{u.plan_id}</option>
+                        )}
+                        {plans.map((p) => (
+                          <option key={p.slug} value={p.slug}>{p.name || p.slug}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span>{u.plan_id || "—"}</span>
+                    )}
+                  </td>
                   <td className="px-2 py-2 text-xs">
                     {u.has_kaggle_key ? (
                       <span className="text-emerald-300">{u.kaggle_username}</span>

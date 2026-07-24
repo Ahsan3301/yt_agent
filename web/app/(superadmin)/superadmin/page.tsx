@@ -18,7 +18,7 @@ export default function SuperadminHome() {
       </p>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Card href="/superadmin/content" icon={LayoutTemplate} title="Landing content" body="Edit hero, features, pricing tiers." />
-        <Card href="/superadmin/plans" icon={Package} title="Plans" body="Create / edit paid tiers &amp; quotas (Phase 5)." disabled />
+        <Card href="/superadmin/plans" icon={Package} title="Plans" body="Create / edit paid tiers &amp; quotas." />
         <Card href="/superadmin/flags" icon={Flag} title="Feature flags" body="Toggle SaaS behaviours live (Phase 6)." disabled />
         <Card href="/superadmin/audit" icon={ScrollText} title="Audit log" body="Every superadmin action (later phase)." disabled />
       </div>

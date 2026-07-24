@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminDb, FieldValue } from "@/lib/firebase-admin";
 import { hashOraclePassword } from "@/lib/oracle_password";
 import { requireTenant, tenantWhereClauses, assertOwnership, stampUserId } from "@/lib/tenant";
+import { requirePlanQuota, bustQuotaCache } from "@/lib/quota";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -201,6 +202,11 @@ export async function POST(req: NextRequest) {
     if (existing.exists) {
       const ownErr = assertOwnership(existing.data() as Record<string, unknown>, tenant);
       if (ownErr) return ownErr;
+    } else {
+      // Plan quota only applies to CREATE (new channel). Edits of an
+      // existing channel never trip the cap.
+      const q = await requirePlanQuota(tenant, "channels");
+      if (q) return q;
     }
 
     // Oracle password action: set / clear / leave-alone. The client
@@ -474,6 +480,9 @@ export async function POST(req: NextRequest) {
     // the row (only stamps when missing).
     const stamped = stampUserId(payload, tenant);
     await ref.set(stamped, { merge: true });
+    // Bust the channels quota cache so a rapid follow-up POST sees
+    // this new row and enforces correctly.
+    if (!existing.exists) bustQuotaCache(tenant.userId, "channels");
     // Return the sanitized public view so the client sees
     // has_oracle_password: bool but never the hash itself.
     const { oracle_password_hash: _drop, ...cleanPayload } = payload as Record<string, unknown>;

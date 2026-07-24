@@ -5,6 +5,7 @@ import {
   lookupIdempotent, storeIdempotent,
 } from "@/app/api/_lib/orchestrator";
 import { requireTenant, tenantWhereClauses, stampUserId } from "@/lib/tenant";
+import { requirePlanQuota, bustQuotaCache } from "@/lib/quota";
 
 export const dynamic = "force-dynamic";   // never cache; this is orchestration
 export const runtime = "nodejs";          // firebase-admin needs node runtime
@@ -106,6 +107,11 @@ export async function POST(req: NextRequest) {
   const auth = await requireTenant(req);
   if ("response" in auth) return auth.response;
   const { tenant } = auth;
+  // Plan quota — one job per POST here (no batch shape on this route),
+  // so the check + bust is straightforward. Superadmin + founder plan
+  // + quotas_enforced=false all bypass inside requirePlanQuota.
+  const q = await requirePlanQuota(tenant, "renders_month");
+  if (q) return q;
   try {
     const body = await req.json().catch(() => ({} as Record<string, unknown>));
     const channel = String(body.channel || "horror");
@@ -341,6 +347,7 @@ export async function POST(req: NextRequest) {
             backend_url: target.url,
             req_id: reqId,
           });
+          bustQuotaCache(tenant.userId, "renders_month");
           if (idempKey) await storeIdempotent(idempKey, finalId);
           // CRITICAL: await the wake call BEFORE returning the response.
           // Vercel kills the function context the moment we send the
@@ -365,6 +372,7 @@ export async function POST(req: NextRequest) {
       ...base,
       updated_at: FieldValue.serverTimestamp(),
     });
+    bustQuotaCache(tenant.userId, "renders_month");
     if (idempKey) await storeIdempotent(idempKey, jobId);
     logRoute(reqId, "queued (no worker)", { job_id: jobId });
 

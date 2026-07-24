@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminDb, FieldValue } from "@/lib/firebase-admin";
 import { newRequestId, logRoute } from "@/app/api/_lib/orchestrator";
 import { requireTenant, assertOwnership } from "@/lib/tenant";
+import { requirePlanQuota, bustQuotaCache } from "@/lib/quota";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -47,6 +48,13 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     // 404 (hides existence, avoids info leak).
     const ownErr = assertOwnership(c, tenant);
     if (ownErr) return ownErr;
+    // Plan quota — user must have monthly render headroom for the
+    // requested count. Checked once with count=1 for simplicity; if
+    // they blow past the cap partway through a batch of N, later
+    // jobs land as "queued" but the claim/registry path will fail
+    // them cleanly. Refining to check the full batch is a Phase 5b.
+    const q = await requirePlanQuota(tenant, "renders_month");
+    if (q) return q;
     const niche = String(c.niche || "").trim();
     if (!niche) return NextResponse.json({ error: "channel has no niche" }, { status: 400 });
 
@@ -158,6 +166,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       await adminDb().collection("jobs").doc(jobId).set(job);
       jobIds.push(jobId);
     }
+    bustQuotaCache(tenant.userId, "renders_month");
     const jobId = jobIds[0];   // legacy field for the toast
     logRoute(reqId, "run-now queued", { channel_id: id, niche, count, job_ids: jobIds, dry_run });
 
