@@ -1,6 +1,6 @@
 import Link from "next/link";
 import {
-  Sparkles, ArrowRight, Play, Check, Zap, Mic, Youtube, Layers,
+  Sparkles, ArrowRight, Play, Check, Zap, Mic, Video, Layers,
   Clock, Palette, Wand2, Rocket, TrendingUp,
 } from "lucide-react";
 import { headers } from "next/headers";
@@ -246,7 +246,7 @@ export default async function LandingPage() {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {c.features.map((f, i) => {
-              const icon = [Zap, Layers, Youtube, Mic, TrendingUp, Clock, Palette, Wand2][i % 8];
+              const icon = [Zap, Layers, Video, Mic, TrendingUp, Clock, Palette, Wand2][i % 8];
               return <FeatureCard key={i} icon={icon} title={f.title} body={f.body} />;
             })}
           </div>
