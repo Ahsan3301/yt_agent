@@ -206,6 +206,16 @@ def handle(job: dict) -> None:
         log.warning(f"settings_sync failed: {e}")
 
     ok, msg = False, "no result"
+    # `res` MUST be defined before the render branch so the needs_publish
+    # detection at end-of-handle can inspect it safely on EVERY code path.
+    # Without this initialization, side-jobs (publish_youtube/copy_storage),
+    # ImportError branches, and outer-exception paths all fall through to
+    # the `isinstance(res, dict)` checks with `res` undefined →
+    # UnboundLocalError → the final _update_job never runs → the job stays
+    # `running`/`claimed` in PB forever. That's exactly the ghost-job
+    # class commit 238549a set out to eliminate; independent audit
+    # 2026-07-21 caught the initialisation was missing from that fix.
+    res = None
     try:
         if kind in ("publish_youtube", "copy_storage"):
             from backend import side_jobs

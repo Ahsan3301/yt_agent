@@ -1800,10 +1800,18 @@ def _agnes_ok(path: str) -> bool:
             return False
         # Normalise to JPG so the editor pipeline (which globs *.jpg for
         # some paths) + storage stay consistent with other providers.
-        if not path.lower().endswith(".jpg"):
-            return True
-        with _Img.open(path) as im:
-            im.convert("RGB").save(path, "JPEG", quality=92)
+        # We're always downloading raw response bytes into a `.jpg`-
+        # named file — those bytes may actually be PNG/WebP. Re-open
+        # + save as JPEG to make the file's contents match its
+        # extension. 2026-07-21: this branch previously had `if not
+        # path.lower().endswith(".jpg"): return True` which was
+        # inverted (it skipped the re-encode for non-jpg paths, when
+        # non-jpg paths are exactly the ones that NEED it). Today
+        # dest is always .jpg so the bug was latent; fixing so the
+        # intent matches the behaviour.
+        if path.lower().endswith(".jpg"):
+            with _Img.open(path) as im:
+                im.convert("RGB").save(path, "JPEG", quality=92)
         return True
     except Exception:
         # If PIL isn't available or the check errored, accept the file
