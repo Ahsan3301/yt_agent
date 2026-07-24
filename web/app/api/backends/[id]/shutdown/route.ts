@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase-admin";
 import { toEpochMs } from "@/lib/timestamps";
+import { requireTenant } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -17,17 +18,34 @@ export const runtime = "nodejs";
  * 1-sec delay so this HTTP call gets to return.
  */
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
+  const auth = await requireTenant(req);
+  if ("response" in auth) return auth.response;
+  // Shutting down a worker is an operator action — admin+ only.
+  // Free-tier users can't kill your Kaggle box, and one user can't
+  // kill another user's personal worker (would also be blocked by
+  // owner check below, but role gate is a cheap first line).
+  if (auth.tenant.role !== "admin" && auth.tenant.role !== "superadmin") {
+    return NextResponse.json({ error: "admin role required to shut down workers" }, { status: 403 });
+  }
   try {
     const snap = await adminDb().collection("backends").doc(id).get();
     if (!snap.exists) {
       // Already gone — treat as success (idempotent).
       return NextResponse.json({ ok: true, note: "backend doc already absent" });
     }
-    const data = snap.data() as { url?: string; last_seen_at?: unknown; last_seen?: unknown };
+    const data = snap.data() as { url?: string; last_seen_at?: unknown; last_seen?: unknown; owner_user_id?: string };
+    // Ownership guard (only under enforcement): non-superadmin admins
+    // can only shut down workers they own OR shared-pool workers.
+    if (auth.tenant.enforce && auth.tenant.role !== "superadmin") {
+      const owner = String(data.owner_user_id || "");
+      if (owner && owner !== auth.tenant.userId) {
+        return NextResponse.json({ error: "not found" }, { status: 404 });
+      }
+    }
     const url = data.url || "";
 
     if (!url) {

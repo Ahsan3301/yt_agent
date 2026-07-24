@@ -3,6 +3,7 @@ import { adminDb } from "@/lib/firebase-admin";
 import { toEpochMs } from "@/lib/timestamps";
 import { newRequestId, logRoute } from "@/app/api/_lib/orchestrator";
 import { deleteOneRun } from "@/app/api/runs/[id]/route";
+import { requireTenant, tenantWhereClauses } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -20,6 +21,8 @@ export const runtime = "nodejs";
  */
 export async function POST(req: NextRequest) {
   const reqId = newRequestId();
+  const auth = await requireTenant(req);
+  if ("response" in auth) return auth.response;
   try {
     const body = await req.json().catch(() => ({}));
     const days = Number(body?.older_than_days || 0);
@@ -32,8 +35,10 @@ export async function POST(req: NextRequest) {
     }
     const cutoff = (Date.now() - days * 86_400_000) / 1000;
 
-    // Enumerate runs by finished_at older than cutoff.
-    const snap = await adminDb().collection("runs_index").limit(500).get();
+    // Enumerate OWNED runs older than cutoff. Superadmin sees all.
+    let q = adminDb().collection("runs_index").limit(500);
+    for (const [f, op, v] of tenantWhereClauses(auth.tenant)) q = q.where(f, op, v);
+    const snap = await q.get();
     const target: string[] = [];
     snap.forEach((doc) => {
       const d = doc.data() as { run_id?: string; finished_at?: unknown };

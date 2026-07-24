@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminDb, FieldValue } from "@/lib/firebase-admin";
 import { newRequestId, logRoute } from "@/app/api/_lib/orchestrator";
 import { _bustJobsCache } from "@/app/api/jobs/route";
+import { requireTenant, assertOwnership, stampUserId } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -35,17 +36,21 @@ const NON_INHERITED = new Set([
 ]);
 
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
   const reqId = newRequestId();
+  const auth = await requireTenant(req);
+  if ("response" in auth) return auth.response;
   try {
     const snap = await adminDb().collection("jobs").doc(id).get();
     if (!snap.exists) {
       return NextResponse.json({ error: "job not found" }, { status: 404 });
     }
     const orig = snap.data() as Record<string, unknown>;
+    const ownErr = assertOwnership(orig, auth.tenant);
+    if (ownErr) return ownErr;
     const kind = String(orig.kind || "render");
     if (!RESUMABLE_KINDS.has(kind)) {
       return NextResponse.json(
@@ -89,7 +94,10 @@ export async function POST(
       updated_at:     FieldValue.serverTimestamp(),
     };
 
-    await adminDb().collection("jobs").doc(newId).set(newJob);
+    // Stamp caller's user_id + owner_user_id even when tenant filter
+    // isn't yet enforced, so the resumed job is discoverable per-user.
+    const stamped = stampUserId({ ...newJob, owner_user_id: auth.tenant.userId }, auth.tenant);
+    await adminDb().collection("jobs").doc(newId).set(stamped);
     _bustJobsCache();
     logRoute(reqId, "resume side-job", { original: id, new_id: newId, kind });
     return NextResponse.json({

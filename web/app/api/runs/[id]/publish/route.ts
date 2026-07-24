@@ -3,6 +3,7 @@ import { adminDb, FieldValue } from "@/lib/firebase-admin";
 import { newRequestId, logRoute } from "@/app/api/_lib/orchestrator";
 import { customAlphabet } from "nanoid";
 import { listStorageVideos } from "@/lib/storage-list";
+import { requireTenant, assertOwnership } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -23,17 +24,21 @@ const _shortId = customAlphabet("abcdefghijklmnopqrstuvwxyz0123456789", 15);
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
   const reqId = newRequestId();
+  const auth = await requireTenant(req);
+  if ("response" in auth) return auth.response;
   try {
     const body = await req.json().catch(() => ({}));
     const youtube_account_id = String(body?.youtube_account_id || "").trim();
     if (!youtube_account_id) {
       return NextResponse.json({ error: "youtube_account_id required" }, { status: 400 });
     }
-    // Verify the account exists.
+    // Verify the account exists and belongs to this user.
     const yt = await adminDb().collection("youtube_accounts").doc(youtube_account_id).get();
     if (!yt.exists) {
       return NextResponse.json({ error: `youtube account ${youtube_account_id} not found` }, { status: 404 });
     }
+    const ytOwn = assertOwnership(yt.data() as Record<string, unknown>, auth.tenant);
+    if (ytOwn) return ytOwn;
     // Verify the run has a video. Look in three places, any one is enough:
     //   1. runs_index by doc id (the PB doc's own id)
     //   2. runs_index by run_id field (worker-written rows use timestamp ids)
@@ -44,11 +49,19 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     const runSnap = await adminDb().collection("runs_index").doc(id).get();
     let hasVideo = runSnap.exists;
     let source = "runs_index:doc";
+    if (hasVideo) {
+      const runOwn = assertOwnership(runSnap.data() as Record<string, unknown>, auth.tenant);
+      if (runOwn) return runOwn;
+    }
     if (!hasVideo) {
       const hits = await adminDb().collection("runs_index")
         .where("run_id", "==", id).limit(1).get();
       hasVideo = !hits.empty;
-      if (hasVideo) source = "runs_index:field";
+      if (hasVideo) {
+        source = "runs_index:field";
+        const runOwn = assertOwnership(hits.docs[0].data() as Record<string, unknown>, auth.tenant);
+        if (runOwn) return runOwn;
+      }
     }
     if (!hasVideo) {
       // Storage fallback — synthesise-a-row check. If MinIO has the
@@ -79,6 +92,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       id:            jobId,
       kind:          "publish_youtube",
       status:        "queued",
+      user_id:       auth.tenant.userId,
+      owner_user_id: auth.tenant.userId,
       run_id:        id,
       youtube_account_id,
       title:         String(body?.title || ""),

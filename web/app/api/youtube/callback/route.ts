@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb, FieldValue } from "@/lib/firebase-admin";
 import { publicOrigin } from "@/app/api/_lib/public-origin";
+import { getTenant, FOUNDER } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -150,6 +151,14 @@ export async function GET(req: NextRequest) {
   };
   const credsJson = JSON.stringify(credsForWorker);
 
+  // Resolve the calling tenant so we stamp user_id on the youtube
+  // account row and write the OAuth token into the per-user shadow.
+  // Missing session (rare — the OAuth flow always originates from an
+  // authed dashboard click) falls back to the founder so we never
+  // orphan a credential.
+  const tenant = await getTenant(req);
+  const ownerUserId = tenant?.userId || FOUNDER;
+
   try {
     // PRIMARY storage: per-account, keyed by YouTube channel id.
     await adminDb()
@@ -160,19 +169,43 @@ export async function GET(req: NextRequest) {
         title: ytChannelTitle,
         thumbnail: ytChannelThumb,
         credentials: credsJson,
+        user_id: ownerUserId,
         updated_at: FieldValue.serverTimestamp(),
         created_at: FieldValue.serverTimestamp(),
       }, { merge: true });
 
+    // Per-user shadow of the api_keys blob — same pattern as
+    // /api/keys. Workers reading the caller's shadow get the fresh
+    // refresh token immediately. The legacy singleton write below
+    // stays as a fallback.
+    try {
+      const shadowRef = adminDb().collection("settings").doc(`${ownerUserId}__api_keys`);
+      const cur = await shadowRef.get();
+      const blob = cur.exists ? (cur.data() as { data?: unknown }).data : {};
+      const parsed: Record<string, string> =
+        typeof blob === "string" ? JSON.parse(blob) :
+        blob && typeof blob === "object" ? (blob as Record<string, string>) : {};
+      parsed.YOUTUBE_REFRESH_TOKEN = credsJson;
+      await shadowRef.set({
+        data: parsed,
+        user_id: ownerUserId,
+        updated_at: FieldValue.serverTimestamp(),
+      }, { merge: false });
+    } catch (e) {
+      console.error("youtube per-user shadow write failed:", e);
+    }
+
     // LEGACY mirror: keep the old single-doc location populated with
     // the most-recently-connected account so older workers + dry-run
-    // dev paths still find a credential.
+    // dev paths still find a credential. Removed in Phase 7 cleanup
+    // once every reader hits the per-user shadow.
     await adminDb()
       .collection("api_keys")
       .doc("YOUTUBE_REFRESH_TOKEN")
       .set({
         value: credsJson,
         youtube_channel_id: ytChannelId,
+        user_id: ownerUserId,
         updated_at: FieldValue.serverTimestamp(),
       });
 

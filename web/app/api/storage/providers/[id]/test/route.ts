@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb, FieldValue } from "@/lib/firebase-admin";
 import { decryptSecret } from "@/lib/storage-crypto";
+import { requireTenant, assertOwnership } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -18,7 +19,9 @@ export const runtime = "nodejs";
  * Records the result on the provider doc so the /storage page can
  * surface a green/red pill without re-probing.
  */
-export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const auth = await requireTenant(req);
+  if ("response" in auth) return auth.response;
   const { id } = await ctx.params;
   try {
     const ref = adminDb().collection("storage_providers").doc(id);
@@ -27,6 +30,8 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
       return NextResponse.json({ error: "not found" }, { status: 404 });
     }
     const data = snap.data() || {};
+    const ownErr = assertOwnership(data as Record<string, unknown>, auth.tenant);
+    if (ownErr) return ownErr;
 
     const kind = String(data.kind || "");
     let ok = false;

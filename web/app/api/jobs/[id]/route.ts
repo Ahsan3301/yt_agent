@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase-admin";
 import { newRequestId, logRoute } from "@/app/api/_lib/orchestrator";
+import { requireTenant, assertOwnership } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -14,11 +15,13 @@ export const runtime = "nodejs";
  * terminal and self-sufficient.
  */
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
   const reqId = newRequestId();
+  const auth = await requireTenant(req);
+  if ("response" in auth) return auth.response;
   try {
     const snap = await adminDb().collection("jobs").doc(id).get();
     if (!snap.exists) {
@@ -26,6 +29,8 @@ export async function GET(
       return NextResponse.json({ error: "job not found" }, { status: 404 });
     }
     const data = snap.data();
+    const ownErr = assertOwnership(data as Record<string, unknown>, auth.tenant);
+    if (ownErr) return ownErr;
     logRoute(reqId, "job get", { job_id: id, status: data?.status });
     return NextResponse.json({ ...data, id: data?.id || id });
   } catch (e) {
@@ -41,17 +46,21 @@ export async function GET(
  * request to that worker. Terminal jobs are no-ops (return ok).
  */
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
   const reqId = newRequestId();
+  const auth = await requireTenant(req);
+  if ("response" in auth) return auth.response;
   try {
     const snap = await adminDb().collection("jobs").doc(id).get();
     if (!snap.exists) {
       return NextResponse.json({ error: "job not found" }, { status: 404 });
     }
     const data = snap.data() as Record<string, unknown> | undefined;
+    const ownErr = assertOwnership(data, auth.tenant);
+    if (ownErr) return ownErr;
     const status = String(data?.status || "");
     if (["complete", "failed", "cancelled"].includes(status)) {
       logRoute(reqId, "cancel noop (terminal)", { job_id: id, status });

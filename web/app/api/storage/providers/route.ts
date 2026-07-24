@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb, FieldValue } from "@/lib/firebase-admin";
 import { encryptSecret, maskSecret } from "@/lib/storage-crypto";
+import { requireTenant, tenantWhereClauses, assertOwnership, stampUserId } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -51,13 +52,16 @@ const KINDS: ProviderKind[] = ["minio", "r2", "aws_s3", "wasabi", "b2", "hosting
 
 /** GET — list providers. Secrets are returned MASKED only. The
  * plaintext secret never leaves the server. */
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const auth = await requireTenant(req);
+  if ("response" in auth) return auth.response;
   try {
-    const snap = await adminDb()
+    let q = adminDb()
       .collection("storage_providers")
       .orderBy("name", "asc")
-      .limit(100)
-      .get();
+      .limit(100);
+    for (const [f, op, v] of tenantWhereClauses(auth.tenant)) q = q.where(f, op, v);
+    const snap = await q.get();
     const out: unknown[] = [];
     snap.forEach((doc) => {
       const d = doc.data() || {};
@@ -99,6 +103,8 @@ export async function GET() {
  * the user can edit non-secret fields without re-pasting credentials).
  */
 export async function POST(req: NextRequest) {
+  const auth = await requireTenant(req);
+  if ("response" in auth) return auth.response;
   try {
     const body = (await req.json()) as ProviderDoc;
     if (!body.name?.trim()) {
@@ -116,6 +122,10 @@ export async function POST(req: NextRequest) {
 
     const ref = adminDb().collection("storage_providers").doc(id);
     const existing = await ref.get();
+    if (existing.exists) {
+      const ownErr = assertOwnership(existing.data() as Record<string, unknown>, auth.tenant);
+      if (ownErr) return ownErr;
+    }
     const existingData = existing.exists ? (existing.data() || {}) : {};
 
     // Encrypt newly-supplied secrets. Empty string → keep existing.
@@ -179,7 +189,7 @@ export async function POST(req: NextRequest) {
       await batch.commit();
     }
 
-    await ref.set(payload, { merge: true });
+    await ref.set(stampUserId(payload as Record<string, unknown>, auth.tenant), { merge: true });
 
     // Strip secrets from the response.
     const safe = { ...payload };
@@ -194,6 +204,8 @@ export async function POST(req: NextRequest) {
 /** DELETE — remove. Refuses if the provider is currently primary
  * (operator should promote a different one first). */
 export async function DELETE(req: NextRequest) {
+  const auth = await requireTenant(req);
+  if ("response" in auth) return auth.response;
   const id = req.nextUrl.searchParams.get("id");
   if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
   try {
@@ -201,6 +213,8 @@ export async function DELETE(req: NextRequest) {
     const doc = await ref.get();
     if (!doc.exists) return NextResponse.json({ ok: true, id, missing: true });
     const data = doc.data() || {};
+    const ownErr = assertOwnership(data as Record<string, unknown>, auth.tenant);
+    if (ownErr) return ownErr;
     if (data.is_primary) {
       return NextResponse.json(
         { error: "cannot delete: this is the primary provider. Promote a different provider first." },

@@ -3,6 +3,7 @@ import { adminDb, FieldValue } from "@/lib/firebase-admin";
 import { newRequestId, logRoute } from "@/app/api/_lib/orchestrator";
 import { customAlphabet } from "nanoid";
 import { listStorageVideos } from "@/lib/storage-list";
+import { requireTenant, assertOwnership } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -21,6 +22,8 @@ const _shortId = customAlphabet("abcdefghijklmnopqrstuvwxyz0123456789", 15);
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
   const reqId = newRequestId();
+  const auth = await requireTenant(req);
+  if ("response" in auth) return auth.response;
   try {
     const body = await req.json().catch(() => ({}));
     const provider_id = String(body?.provider_id || "").trim();
@@ -28,26 +31,34 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     if (!provider_id) {
       return NextResponse.json({ error: "provider_id required" }, { status: 400 });
     }
-    // Verify the provider exists + enabled.
+    // Verify the provider exists + enabled + owned by this caller.
     const p = await adminDb().collection("storage_providers").doc(provider_id).get();
     if (!p.exists) {
       return NextResponse.json({ error: `provider ${provider_id} not found` }, { status: 404 });
     }
     const pd = p.data() as { enabled?: boolean };
+    const pOwn = assertOwnership(pd as Record<string, unknown>, auth.tenant);
+    if (pOwn) return pOwn;
     if (pd.enabled === false) {
       return NextResponse.json({ error: `provider ${provider_id} is disabled` }, { status: 400 });
     }
-    // Verify the run has a video. Same 3-place fallback as publish:
-    // runs_index by doc id, runs_index by run_id field, or the primary
-    // MinIO bucket (for storage_only orphans the Library synthesises).
+    // Verify the run belongs to this caller.
     const runSnap = await adminDb().collection("runs_index").doc(id).get();
     let hasVideo = runSnap.exists;
     let source = "runs_index:doc";
+    if (hasVideo) {
+      const rOwn = assertOwnership(runSnap.data() as Record<string, unknown>, auth.tenant);
+      if (rOwn) return rOwn;
+    }
     if (!hasVideo) {
       const hits = await adminDb().collection("runs_index")
         .where("run_id", "==", id).limit(1).get();
       hasVideo = !hits.empty;
-      if (hasVideo) source = "runs_index:field";
+      if (hasVideo) {
+        source = "runs_index:field";
+        const rOwn = assertOwnership(hits.docs[0].data() as Record<string, unknown>, auth.tenant);
+        if (rOwn) return rOwn;
+      }
     }
     if (!hasVideo) {
       try {
@@ -73,6 +84,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       id:            jobId,
       kind:          "copy_storage",
       status:        "queued",
+      user_id:       auth.tenant.userId,
+      owner_user_id: auth.tenant.userId,
       run_id:        id,
       provider_id,
       move,

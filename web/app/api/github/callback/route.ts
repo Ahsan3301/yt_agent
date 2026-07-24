@@ -96,9 +96,30 @@ export async function GET(req: NextRequest) {
   }
 
   // Store the access token so we can re-sync later when keys change.
+  // Write to BOTH the per-user shadow AND the legacy singleton — the
+  // legacy read path is still active until Phase 7 cleanup, and other
+  // OAuth-token consumers (github/sync) haven't been migrated yet.
   try {
+    const { getTenant, FOUNDER } = await import("@/lib/tenant");
+    const t = await getTenant(req);
+    const uid = t?.userId || FOUNDER;
+    try {
+      const shadowRef = adminDb().collection("settings").doc(`${uid}__api_keys`);
+      const cur = await shadowRef.get();
+      const blob = cur.exists ? (cur.data() as { data?: unknown }).data : {};
+      const parsed: Record<string, string> =
+        typeof blob === "string" ? JSON.parse(blob) :
+        blob && typeof blob === "object" ? (blob as Record<string, string>) : {};
+      parsed.GITHUB_ACCESS_TOKEN = accessToken;
+      await shadowRef.set({
+        data: parsed,
+        user_id: uid,
+        updated_at: FieldValue.serverTimestamp(),
+      }, { merge: false });
+    } catch { /* soft */ }
     await adminDb().collection("api_keys").doc("GITHUB_ACCESS_TOKEN").set({
       value: accessToken,
+      user_id: uid,
       updated_at: FieldValue.serverTimestamp(),
     });
   } catch {

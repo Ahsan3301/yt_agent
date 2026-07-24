@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase-admin";
+import { requireTenant, tenantWhereClauses } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -34,6 +35,8 @@ function _dayKey(epoch: number): string {
 }
 
 export async function GET(req: NextRequest) {
+  const auth = await requireTenant(req);
+  if ("response" in auth) return auth.response;
   const url = req.nextUrl;
   const days = Math.max(1, Math.min(180, Number(url.searchParams.get("days") ?? 30)));
   const channelFilter = url.searchParams.get("channel") || "";
@@ -55,7 +58,9 @@ export async function GET(req: NextRequest) {
 
   // ── Jobs ────────────────────────────────────────────────
   try {
-    const snap = await adminDb().collection("jobs").get();
+    let q = adminDb().collection("jobs").limit(2000);
+    for (const [f, op, v] of tenantWhereClauses(auth.tenant)) q = q.where(f, op, v);
+    const snap = await q.get();
     snap.forEach((doc) => {
       const d = doc.data() as Record<string, unknown>;
       const ts = _epoch(d.finished_at) ?? _epoch(d.queued_at);
@@ -85,8 +90,10 @@ export async function GET(req: NextRequest) {
   // ── Published videos (runs_index has richer metadata) ───
   const videos: Array<Record<string, unknown>> = [];
   try {
-    const snap = await adminDb().collection("runs_index")
-      .orderBy("finished_at", "desc").limit(200).get();
+    let q = adminDb().collection("runs_index")
+      .orderBy("finished_at", "desc").limit(200);
+    for (const [f, op, v] of tenantWhereClauses(auth.tenant)) q = q.where(f, op, v);
+    const snap = await q.get();
     snap.forEach((doc) => {
       const d = doc.data() as Record<string, unknown>;
       const fin = _epoch(d.finished_at);
@@ -112,8 +119,10 @@ export async function GET(req: NextRequest) {
   const errorsRecent: Array<Record<string, unknown>> = [];
   let errorsLast24h = 0;
   try {
-    const snap = await adminDb().collection("errors")
-      .orderBy("ts", "desc").limit(50).get();
+    let q = adminDb().collection("errors")
+      .orderBy("ts", "desc").limit(50);
+    for (const [f, op, v] of tenantWhereClauses(auth.tenant)) q = q.where(f, op, v);
+    const snap = await q.get();
     const yesterday = now - 86400;
     snap.forEach((doc) => {
       const d = doc.data() as Record<string, unknown>;

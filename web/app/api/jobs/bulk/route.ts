@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase-admin";
 import { newRequestId, logRoute } from "@/app/api/_lib/orchestrator";
 import { _bustJobsCache } from "@/app/api/jobs/route";
+import { requireTenant, tenantWhereClauses } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -26,6 +27,9 @@ type BulkBody = {
 
 export async function POST(req: NextRequest) {
   const reqId = newRequestId();
+  const auth = await requireTenant(req);
+  if ("response" in auth) return auth.response;
+  const { tenant } = auth;
   try {
     const body = (await req.json().catch(() => ({}))) as BulkBody;
     const action = body.action;
@@ -36,14 +40,29 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Resolve the target set.
-    let targetIds: string[] = body.ids || [];
-    if (!targetIds.length && body.filter) {
-      const snap = await adminDb()
-        .collection("jobs")
-        .where("status", "==", body.filter)
-        .limit(200)
-        .get();
+    // Resolve the target set — always tenant-filtered.
+    let targetIds: string[] = [];
+    if (body.ids && body.ids.length > 0) {
+      // Filter caller-supplied ids to only those they own. Under
+      // tenant enforcement we do the ownership check per-id.
+      if (tenant.enforce) {
+        for (const id of body.ids) {
+          try {
+            const d = await adminDb().collection("jobs").doc(id).get();
+            if (!d.exists) continue;
+            if (String((d.data() as { user_id?: string }).user_id || "") === tenant.userId) {
+              targetIds.push(id);
+            }
+          } catch { /* skip */ }
+        }
+      } else {
+        targetIds = body.ids;
+      }
+    } else if (body.filter) {
+      let q = adminDb().collection("jobs")
+        .where("status", "==", body.filter).limit(200);
+      for (const [f, op, v] of tenantWhereClauses(tenant)) q = q.where(f, op, v);
+      const snap = await q.get();
       targetIds = snap.docs.map((d) => d.id);
     }
 

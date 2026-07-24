@@ -61,10 +61,28 @@ export async function GET(req: NextRequest) {
   const accessToken = String(tokenJson.access_token || "");
   if (!accessToken) return back("huggingface=error&reason=no_access_token");
 
-  // Store as HF_TOKEN.
+  // Store as HF_TOKEN — per-user shadow + legacy singleton.
   try {
+    const { getTenant, FOUNDER } = await import("@/lib/tenant");
+    const t = await getTenant(req);
+    const uid = t?.userId || FOUNDER;
+    try {
+      const shadowRef = adminDb().collection("settings").doc(`${uid}__api_keys`);
+      const cur = await shadowRef.get();
+      const blob = cur.exists ? (cur.data() as { data?: unknown }).data : {};
+      const parsed: Record<string, string> =
+        typeof blob === "string" ? JSON.parse(blob) :
+        blob && typeof blob === "object" ? (blob as Record<string, string>) : {};
+      parsed.HF_TOKEN = accessToken;
+      await shadowRef.set({
+        data: parsed,
+        user_id: uid,
+        updated_at: FieldValue.serverTimestamp(),
+      }, { merge: false });
+    } catch { /* soft */ }
     await adminDb().collection("api_keys").doc("HF_TOKEN").set({
       value: accessToken,
+      user_id: uid,
       updated_at: FieldValue.serverTimestamp(),
     });
   } catch (e) {

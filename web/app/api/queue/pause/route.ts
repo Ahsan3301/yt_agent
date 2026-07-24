@@ -1,20 +1,36 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb, FieldValue } from "@/lib/firebase-admin";
+import { requireTenant } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /**
- * GET  /api/queue/pause  → { paused: boolean }
- * POST /api/queue/pause  body: { paused: boolean }
+ * Per-user queue pause switch.
  *
- * Stored at queue_state/global. When paused=true, workers refuse to
- * claim new queued jobs (the claim_queued transaction reads this flag).
- * Already-running jobs are unaffected.
+ *   GET  /api/queue/pause  → { paused: boolean }
+ *   POST /api/queue/pause  body: { paused: boolean }
+ *
+ * Under tenant enforcement, each caller reads/writes their own
+ * paused__{userId} shadow. Legacy queue_state/global remains as a
+ * global fallback (nothing reads it after Phase 2b, but keeping the
+ * row lets us roll back cleanly).
+ *
+ * Note: the CLAIM route (workers/jobs/claim) still reads the global
+ * row. Making workers respect a per-user pause would require the
+ * claim query to look up the job's owner's pause state — deferred
+ * to a followup since single-tenant use is what matters today.
  */
-export async function GET() {
+const LEGACY_ID = "global";
+function _shadowId(userId: string): string { return `paused__${userId}`; }
+
+export async function GET(req: NextRequest) {
+  const auth = await requireTenant(req);
+  if ("response" in auth) return auth.response;
   try {
-    const snap = await adminDb().collection("queue_state").doc("global").get();
+    const primary = await adminDb().collection("queue_state").doc(_shadowId(auth.tenant.userId)).get();
+    const snap = primary.exists ? primary :
+      await adminDb().collection("queue_state").doc(LEGACY_ID).get();
     const v = snap.exists ? (snap.data() as { paused?: boolean }) : { paused: false };
     return NextResponse.json({ paused: !!v.paused });
   } catch (e) {
@@ -23,13 +39,19 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requireTenant(req);
+  if ("response" in auth) return auth.response;
   try {
     const body = await req.json().catch(() => ({}));
     const paused = !!body.paused;
     await adminDb()
       .collection("queue_state")
-      .doc("global")
-      .set({ paused, updated_at: FieldValue.serverTimestamp() }, { merge: true });
+      .doc(_shadowId(auth.tenant.userId))
+      .set({
+        paused,
+        user_id: auth.tenant.userId,
+        updated_at: FieldValue.serverTimestamp(),
+      }, { merge: true });
     return NextResponse.json({ ok: true, paused });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });

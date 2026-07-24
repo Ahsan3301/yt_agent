@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb, FieldValue } from "@/lib/firebase-admin";
+import { requireTenant, tenantWhereClauses, assertOwnership } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -17,6 +18,8 @@ export const runtime = "nodejs";
  * ok=true with no writes — idempotent.
  */
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const auth = await requireTenant(req);
+  if ("response" in auth) return auth.response;
   const { id } = await ctx.params;
   const role = (req.nextUrl.searchParams.get("role") || "primary").toLowerCase();
   if (role !== "primary" && role !== "mirror") {
@@ -33,6 +36,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     if (!snap.exists) {
       return NextResponse.json({ error: "not found" }, { status: 404 });
     }
+    const ownErr = assertOwnership(snap.data() as Record<string, unknown>, auth.tenant);
+    if (ownErr) return ownErr;
     if ((snap.data() || {}).enabled === false) {
       return NextResponse.json(
         { error: "provider is disabled — enable it before promoting" },
@@ -40,11 +45,14 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       );
     }
 
-    // Demote whichever other provider currently holds the flag.
-    const holders = await adminDb()
+    // Demote whichever other provider currently OWNED by this tenant
+    // holds the flag. Scoped so one user promoting their MinIO doesn't
+    // demote another user's MinIO.
+    let holdersQ = adminDb()
       .collection("storage_providers")
-      .where(flagField, "==", true)
-      .get();
+      .where(flagField, "==", true);
+    for (const [f, op, v] of tenantWhereClauses(auth.tenant)) holdersQ = holdersQ.where(f, op, v);
+    const holders = await holdersQ.get();
 
     const batch = adminDb().batch();
     holders.forEach((doc) => {

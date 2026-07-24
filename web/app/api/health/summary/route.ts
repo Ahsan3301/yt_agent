@@ -1,6 +1,7 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase-admin";
 import { toEpochMs } from "@/lib/timestamps";
+import { requireTenant } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -26,7 +27,15 @@ let _cached: { at: number; body: unknown } | null = null;
  *
  * Cached server-side for 15 sec.
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
+  // /health is under (admin) route group — mount + middleware already
+  // role-gate the page. The API stays admin+ only too so hostile scripts
+  // can't scrape cross-tenant errors.
+  const auth = await requireTenant(req);
+  if ("response" in auth) return auth.response;
+  if (auth.tenant.role !== "admin" && auth.tenant.role !== "superadmin") {
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
   if (_cached && Date.now() - _cached.at < _CACHE_TTL_MS) {
     return NextResponse.json(_cached.body, {
       headers: { "X-Cache": "HIT", "Cache-Control": "no-store" },

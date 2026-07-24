@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { randomUUID } from "crypto";
+import { requireTenant } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -57,6 +58,8 @@ function _s3Client() {
  * cron already prunes after 7 days.
  */
 export async function POST(req: NextRequest) {
+  const auth = await requireTenant(req);
+  if ("response" in auth) return auth.response;
   const bucket    = process.env.S3_BUCKET || "yt-agent-videos";
   const accessKey = process.env.S3_ACCESS_KEY_ID    || process.env.MINIO_ROOT_USER     || "";
   const secretKey = process.env.S3_SECRET_ACCESS_KEY || process.env.MINIO_ROOT_PASSWORD || "";

@@ -1,23 +1,28 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase-admin";
 import { pickWorkers, newRequestId, logRoute } from "@/app/api/_lib/orchestrator";
+import { requireTenant, assertOwnership } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /** GET /api/runs/<id> — full run summary from Firestore. */
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
   const reqId = newRequestId();
+  const auth = await requireTenant(req);
+  if ("response" in auth) return auth.response;
   try {
     const snap = await adminDb().collection("run_summaries").doc(id).get();
     if (!snap.exists) {
       return NextResponse.json({ error: "run not found" }, { status: 404 });
     }
     const d = snap.data() || {};
+    const ownErr = assertOwnership(d as Record<string, unknown>, auth.tenant);
+    if (ownErr) return ownErr;
     const data = (d as { data?: unknown }).data;
     if (!data) return NextResponse.json({ error: "empty summary" }, { status: 404 });
     logRoute(reqId, "run get", { run_id: id });
@@ -45,11 +50,31 @@ export async function GET(
  * partial success so the caller can tell what to retry.
  */
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
   const reqId = newRequestId();
+  const auth = await requireTenant(req);
+  if ("response" in auth) return auth.response;
+  // Cross-tenant guard: verify the run summary belongs to this user
+  // before allowing the delete cascade. Fetch both summary + index row
+  // and reject if either resolves ownership to a different tenant.
+  try {
+    const summary = await adminDb().collection("run_summaries").doc(id).get();
+    if (summary.exists) {
+      const ownErr = assertOwnership(summary.data() as Record<string, unknown>, auth.tenant);
+      if (ownErr) return ownErr;
+    } else {
+      // No summary — check runs_index by run_id field.
+      const idxHits = await adminDb().collection("runs_index")
+        .where("run_id", "==", id).limit(1).get();
+      if (!idxHits.empty) {
+        const ownErr = assertOwnership(idxHits.docs[0].data() as Record<string, unknown>, auth.tenant);
+        if (ownErr) return ownErr;
+      }
+    }
+  } catch { /* soft — fall through to delete which will 200 with per-step results */ }
   const result = await deleteOneRun(id, reqId);
   logRoute(reqId, "run delete", { run_id: id, ...result });
   const anyFailed = Object.values(result).some((v) => v === false);
