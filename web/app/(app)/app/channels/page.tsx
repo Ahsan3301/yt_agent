@@ -6,7 +6,7 @@ import clsx from "clsx";
 import {
   Layers, Plus, Trash2, Globe, Loader2, Save, X as XIcon,
   PauseCircle, PlayCircle, Edit3, Wand2, Tv, Link2, AlertTriangle,
-  ArrowUp, ArrowDown, Server, Cpu, Cloud, Lock, KeyRound,
+  ArrowUp, ArrowDown, Server, Cpu, Cloud, Lock, KeyRound, RefreshCw,
 } from "lucide-react";
 import { PRESET_CHANNELS } from "@/lib/channels";
 import { useToast } from "@/components/Toast";
@@ -351,6 +351,13 @@ export default function ChannelsPage() {
                   <div className="text-sm font-medium truncate">{acc.title || "(unnamed)"}</div>
                   <code className="text-[10px] text-neutral-500">{acc.id}</code>
                 </div>
+                <button
+                  onClick={() => connectYouTube(null)}
+                  className="btn btn-ghost h-6 text-xs text-neutral-400 hover:text-accent"
+                  title="Reconnect — refresh this account's OAuth token. Sign in with the SAME Google account to update the token in place; a different account will create a new entry."
+                >
+                  <RefreshCw className="h-3 w-3" />
+                </button>
                 <button
                   onClick={() => removeYouTubeAccount(acc)}
                   className="btn btn-ghost h-6 text-xs text-neutral-400 hover:text-red-300"
