@@ -38,6 +38,11 @@ type Channel = {
   voice?: string | null;
   youtube_account_id?: string | null;
   run_at_hour?: number | null;
+  // "YYYY-MM-DD" in the channel's own timezone, stamped by
+  // scheduled-render after it queues. Absent = has never run. Surfaced
+  // in the card so a channel that has silently stopped producing is
+  // visible without digging through the queue.
+  last_scheduled_day?: string | null;
   // IANA timezone (e.g. "America/Toronto", "Europe/Berlin"). Empty/null =
   // UTC. Interpreted by the scheduled-render cron when checking run_at_hour.
   timezone?: string | null;
@@ -351,9 +356,10 @@ export default function ChannelsPage() {
           <p className="text-sm text-neutral-400 max-w-2xl mt-1">
             Every YouTube channel you publish to. Each one maps to a
             niche and picks how many videos it queues per day. The
-            scheduler at 09:00 UTC reads this list and queues
+            scheduler runs every hour and queues each channel at its own
+            hour —
             <span className="font-semibold text-neutral-200"> {totalDaily} job{totalDaily === 1 ? "" : "s"} </span>
-            today across all enabled channels.
+            per day across all enabled channels.
           </p>
         </div>
         {!showNew && !editing && (
@@ -495,11 +501,48 @@ export default function ChannelsPage() {
           and picks its own publish frequency.
         </p>
         <p>
-          The scheduled-render workflow (GitHub Actions cron, 09:00 UTC) iterates
-          this collection and queues jobs accordingly. Paused channels are
-          skipped — their daily_count doesn&apos;t matter while paused.
+          An in-cluster cron runs scheduled-render every hour. A channel is
+          queued once its own hour has arrived and it hasn&apos;t already run
+          that day, so a tick missed during a deploy is picked up on the next
+          hour instead of losing the day. Catch-up gives up after 6 hours and
+          waits for tomorrow&apos;s slot. Paused channels are skipped — their
+          daily_count doesn&apos;t matter while paused.
         </p>
       </div>
+    </div>
+  );
+}
+
+/**
+ * "Last queued" freshness for one channel.
+ *
+ * Deliberately compares against the channel's own last_scheduled_day
+ * rather than showing a raw date: the useful question is not "when did
+ * this run" but "has it stopped", and a bare date makes the reader do
+ * that arithmetic. Days are UTC-ish (the stamp is written in the
+ * channel's timezone) — close enough for a staleness chip, and not
+ * worth a timezone library to be exact about.
+ */
+function ScheduleFreshness({ day, enabled }: { day?: string | null; enabled: boolean }) {
+  if (!enabled) return null;
+  if (!day) {
+    return (
+      <div className="text-[10px] text-neutral-500 mt-0.5" title="The scheduler has not queued this channel yet. Normal for a new channel; if it persists past its next scheduled hour, the scheduler isn't reaching it.">
+        never queued
+      </div>
+    );
+  }
+  const today = new Date().toISOString().slice(0, 10);
+  const daysAgo = Math.round(
+    (Date.parse(`${today}T00:00:00Z`) - Date.parse(`${day}T00:00:00Z`)) / 86_400_000,
+  );
+  const label = daysAgo <= 0 ? "queued today" : daysAgo === 1 ? "queued yesterday" : `${daysAgo}d since queued`;
+  // 2+ days without a queue on an enabled daily channel means something
+  // is wrong, not that the operator got unlucky.
+  const tone = daysAgo <= 1 ? "text-neutral-500" : daysAgo < 3 ? "text-amber-400" : "text-red-400";
+  return (
+    <div className={`text-[10px] mt-0.5 ${tone}`} title={`Scheduler last queued this channel on ${day}.`}>
+      {label}
     </div>
   );
 }
@@ -582,6 +625,11 @@ function ChannelCard({
         <div className="text-[10px] text-neutral-500 uppercase tracking-wider">
           videos/day
         </div>
+        {/* Last time the scheduler actually queued this channel. A
+            channel that has quietly stopped producing looks identical
+            to a healthy one without this — which is how six channels
+            went from 2026-07-26 to 2026-08-01 unnoticed. */}
+        <ScheduleFreshness day={c.last_scheduled_day} enabled={c.enabled !== false} />
       </div>
       <div className="flex items-center gap-1.5">
         <button
