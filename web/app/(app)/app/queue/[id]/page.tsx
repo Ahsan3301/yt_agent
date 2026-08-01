@@ -293,7 +293,7 @@ export default function JobDetailPage({
             <div className="card space-y-3">
               <div className="font-medium text-sm">Manual inputs</div>
               {job.manual_topic && (
-                <Field label="Topic seed" value={job.manual_topic} />
+                <Field label="Give me an idea" value={job.manual_topic} />
               )}
               {job.manual_script && (
                 <Field label="User script" value={job.manual_script} multiline />
@@ -323,7 +323,7 @@ export default function JobDetailPage({
             </div>
           )}
 
-          {/* Live logs */}
+          {/* Activity */}
           {job.run_id && (
             <LogsPanel
               runId={job.run_id}

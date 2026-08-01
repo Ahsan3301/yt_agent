@@ -15,6 +15,7 @@ import {
 import VideoPlayer from "@/components/VideoPlayer";
 import LogsPanel from "@/components/LogsPanel";
 import { PageHeader } from "@/components/PageHeader";
+import { SetupChecklist, SetupChecklistSkeleton } from "@/components/SetupChecklist";
 
 /**
  * Dashboard home — the "studio overview" page.
@@ -56,6 +57,12 @@ export default function Dashboard() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [preflight, setPreflight] = useState<{ ok: boolean; error?: string } | null>(null);
+  // Preflight talks about workers, Colab and Kaggle — operator
+  // concerns. A customer can do nothing about them, so it's gated on
+  // role rather than shown to everyone.
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [ytCount, setYtCount] = useState<number | null>(null);
+  const [brokenConnections, setBrokenConnections] = useState(0);
 
   const refresh = useCallback(async () => {
     try { setRuns(await listRuns()); } catch {}
@@ -69,6 +76,21 @@ export default function Dashboard() {
   useEffect(() => {
     refresh();
     getPreflight().then(setPreflight).catch(() => {});
+    // Role decides whether operator-facing warnings render at all.
+    fetch("/api/auth/me", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setIsAdmin(!!d?.is_admin))
+      .catch(() => setIsAdmin(false));
+    // Drives the setup checklist, and warns about a dead connection
+    // BEFORE a render is spent discovering it.
+    fetch("/api/youtube/health", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d) { setYtCount(0); return; }
+        setYtCount((d.items || []).length);
+        setBrokenConnections(Number(d.broken || 0));
+      })
+      .catch(() => setYtCount(0));
   }, [refresh]);
 
   // Poll run state — 3s while running, 10s when idle.
@@ -126,7 +148,7 @@ export default function Dashboard() {
       />
 
       {/* Preflight — only appears when something's wrong */}
-      {preflight && !preflight.ok && (
+      {isAdmin && preflight && !preflight.ok && (
         <div className="card border-amber-500/30 bg-amber-500/[0.04] animate-[fadeUp_0.4s_cubic-bezier(0.16,1,0.3,1)_both]">
           <div className="flex items-start gap-3">
             <AlertTriangle className="h-5 w-5 text-amber-400 mt-0.5" />
@@ -136,6 +158,20 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
+      )}
+
+      {ytCount === null ? (
+        <SetupChecklistSkeleton />
+      ) : (
+        <SetupChecklist
+          s={{
+            hasYouTube: ytCount > 0,
+            hasChannel: channels.length > 0,
+            hasRun: runs.length > 0,
+            brokenConnections,
+            loading: false,
+          }}
+        />
       )}
 
       {/* Stat cards */}
@@ -163,7 +199,7 @@ export default function Dashboard() {
         />
         <StatCard
           icon={Clock}
-          label="Latest render"
+          label="Last video"
           value={latestFinishedAt ? fmtAgeShort(now - latestFinishedAt) : "—"}
           hint={runs[0]?.channel || (runs.length ? "channel unknown" : "no runs yet")}
           href={runs[0]?.run_id ? `/app/queue/${runs[0].run_id}` : "/app/history"}
@@ -276,17 +312,17 @@ export default function Dashboard() {
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <ActionTile href="/app/create/wizard" icon={Sparkles} title="New Short"     body="Guided 5-step flow" primary />
-          <ActionTile href="/app/create"        icon={Wand2}    title="Custom render" body="Topic seed, script, images" />
+          <ActionTile href="/app/create"        icon={Wand2}    title="Write it yourself" body="Use your own script or images" />
           <ActionTile href="/app/channels"      icon={Layers}   title="Channels"      body="Manage niches + schedules" />
           <ActionTile href="/app/history"       icon={History}  title="Library"       body="Browse past renders" />
         </div>
       </section>
 
-      {/* Recent renders */}
+      {/* Recent videos */}
       {runs.length > 0 && (
         <section className="space-y-3">
           <div className="flex items-center justify-between px-1">
-            <div className="text-[10px] uppercase tracking-[0.18em] text-neutral-500">Recent renders</div>
+            <div className="text-[10px] uppercase tracking-[0.18em] text-neutral-500">Recent videos</div>
             <Link href="/app/history" className="text-xs text-neutral-400 hover:text-white transition">
               View all →
             </Link>
@@ -297,11 +333,11 @@ export default function Dashboard() {
         </section>
       )}
 
-      {/* Live logs — only render when there's a run to attach to */}
+      {/* Activity — only render when there's a run to attach to */}
       {(isRunning || state.run_id || runs[0]?.run_id) && (
         <section className="space-y-3">
           <div className="flex items-center justify-between px-1">
-            <div className="text-[10px] uppercase tracking-[0.18em] text-neutral-500">Live logs</div>
+            <div className="text-[10px] uppercase tracking-[0.18em] text-neutral-500">Activity</div>
             {state.run_id && (
               <Link href={`/app/queue/${state.run_id}`} className="text-xs text-neutral-400 hover:text-white transition">
                 Open run →
@@ -312,28 +348,6 @@ export default function Dashboard() {
         </section>
       )}
 
-      {/* Empty state — no runs, no channels */}
-      {!isRunning && runs.length === 0 && channels.length === 0 && (
-        <div className="card text-center py-14 space-y-4">
-          <div className="mx-auto h-14 w-14 rounded-2xl bg-gradient-to-br from-accent/25 to-accent-glow/15 border border-accent/30 flex items-center justify-center">
-            <Sparkles className="h-6 w-6 text-accent" />
-          </div>
-          <div className="space-y-1.5 max-w-md mx-auto">
-            <div className="text-lg font-semibold">Publish your first Short</div>
-            <div className="text-sm text-neutral-400">
-              Set up a channel with a niche, tone, and voice — then let the studio write, narrate, edit and upload.
-            </div>
-          </div>
-          <div className="flex flex-wrap justify-center gap-2 pt-2">
-            <Link href="/app/channels" className="btn btn-primary h-10 text-sm">
-              <Layers className="h-4 w-4" /> Add a channel
-            </Link>
-            <Link href="/app/keys" className="btn h-10 text-sm">
-              <KeyRound className="h-4 w-4" /> Add API keys
-            </Link>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

@@ -61,6 +61,24 @@ const STATUS_STYLES: Record<string, string> = {
   cancelled:     "border-neutral-500/30 bg-neutral-500/10 text-neutral-300",
 };
 
+/**
+ * Raw job statuses are internal state-machine values. A customer
+ * seeing "needs_publish" has no idea whether that's their problem or
+ * ours, so they're mapped to plain outcomes.
+ */
+const STATUS_LABELS: Record<string, string> = {
+  queued:        "Waiting to start",
+  claimed:       "Starting",
+  running:       "Making your video",
+  needs_publish: "Ready — couldn't post to YouTube",
+  complete:      "Published",
+  done:          "Published",
+  failed:        "Didn't finish",
+  error:         "Didn't finish",
+  cancelled:     "Cancelled",
+};
+const humanStatus = (s: string) => STATUS_LABELS[s] || s.replace(/_/g, " ");
+
 export default function QueuePage() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [filter, setFilter] = useState<Filter>("all");
@@ -480,7 +498,7 @@ function JobRow({
             ↺ retry of {job.resumed_from.slice(0, 8)}
           </div>
         )}
-        {job.status === "failed" && job.error && (
+        {(job.status === "failed" || job.status === "needs_publish") && job.error && (
           <div className="text-[10px] text-red-300 mt-0.5 max-w-[240px] truncate" title={job.error}>
             {job.error}
           </div>
@@ -630,9 +648,10 @@ function StatusPill({ status }: { status: string }) {
     status === "queued"   ? Clock :
     X;
   return (
-    <span className={clsx("inline-flex items-center gap-1 px-2 h-6 rounded-md border text-xs", cls)}>
+    <span className={clsx("inline-flex items-center gap-1 px-2 h-6 rounded-md border text-xs", cls)}
+          title={status}>
       <Icon className="h-3 w-3" />
-      {status}
+      {humanStatus(status)}
     </span>
   );
 }

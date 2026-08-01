@@ -16,7 +16,7 @@ type Role = "user" | "admin" | "superadmin";
 
 const USER_NAV: NavItem[] = [
   { href: "/app",           label: "Dashboard",   icon: LayoutDashboard },
-  { href: "/app/create",    label: "Create",      icon: Wand2           },
+  { href: "/app/create/wizard", label: "Create", icon: Wand2 },
   { href: "/app/channels",  label: "Channels",    icon: Layers          },
   { href: "/app/queue",     label: "Job queue",   icon: ListChecks      },
   { href: "/app/storage",   label: "Storage",     icon: HardDrive       },

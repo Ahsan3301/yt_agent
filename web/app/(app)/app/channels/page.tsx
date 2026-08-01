@@ -1004,7 +1004,7 @@ function ChannelForm({
           <textarea
             className="input w-full"
             rows={2}
-            placeholder="Brief description of the channel's voice + visuals. NIM uses this to build a full preset on the fly."
+            placeholder="Brief description of the channel's voice + visuals. We'll use this to set the channel's style."
             value={description}
             onChange={(e) => setDescription(e.target.value)}
           />
@@ -1099,7 +1099,7 @@ function ChannelForm({
       </div>
 
       <div>
-        <label className="label">Web research (NIM browser agent)</label>
+        <label className="label">Look things up online</label>
         <div className="flex gap-1">
           {(["default", "on", "off"] as const).map((v) => (
             <button

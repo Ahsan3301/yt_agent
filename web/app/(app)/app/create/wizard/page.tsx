@@ -9,7 +9,7 @@ import {
   Layers, Mic, Globe,
 } from "lucide-react";
 import {
-  PRESET_CHANNELS, loadCustomChannels, type ChannelPreset,
+  PRESET_CHANNELS, loadCustomChannels, addCustomChannel, type ChannelPreset,
 } from "@/lib/channels";
 import { useToast } from "@/components/Toast";
 
@@ -121,6 +121,8 @@ export default function WizardPage() {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [customs, setCustoms] = useState<ChannelPreset[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [showCustom, setShowCustom] = useState(false);
+  const [customName, setCustomName] = useState("");
 
   // Load channels list (Firestore) + localStorage custom niches.
   useEffect(() => {
@@ -187,6 +189,53 @@ export default function WizardPage() {
             </button>
           ))}
         </div>
+        <div className="mt-3">
+          {!showCustom ? (
+            <button
+              onClick={() => setShowCustom(true)}
+              className="text-xs text-accent hover:underline"
+            >
+              + Something else
+            </button>
+          ) : (
+            <div className="rounded-lg border border-line p-3 space-y-2">
+              <div className="text-xs font-medium">Describe your own topic</div>
+              <input
+                className="input h-9"
+                placeholder="e.g. vintage watches"
+                value={customName}
+                onChange={(e) => setCustomName(e.target.value)}
+              />
+              <textarea
+                className="input"
+                rows={2}
+                placeholder="What should the videos be about? One or two sentences is enough."
+                value={state.customNicheDesc}
+                onChange={(e) => setState({ ...state, customNicheDesc: e.target.value })}
+              />
+              <div className="flex gap-2">
+                <button
+                  className="btn btn-primary h-8 text-xs"
+                  disabled={!customName.trim()}
+                  onClick={() => {
+                    const name = customName.trim();
+                    addCustomChannel({ name, description: state.customNicheDesc.trim() });
+                    setCustoms(loadCustomChannels());
+                    setState((st) => ({ ...st, niche: name }));
+                    setCustomName("");
+                    setShowCustom(false);
+                  }}
+                >
+                  Save topic
+                </button>
+                <button className="btn h-8 text-xs" onClick={() => setShowCustom(false)}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
         {customs.length > 0 && (
           <div className="mt-3">
             <div className="text-[10px] uppercase tracking-wider text-neutral-500 mb-1">
@@ -225,7 +274,7 @@ export default function WizardPage() {
         </select>
         <div className="text-[10px] text-neutral-500 mt-1">
           Picks the script-writing language AND a matching neural voice.
-          Non-English uses edge-tts (kokoro is English-only).
+          
         </div>
       </div>
     </div>
@@ -248,7 +297,7 @@ export default function WizardPage() {
               : "border-line text-neutral-400 hover:text-neutral-200",
           )}
         >
-          <Sparkles className="h-3.5 w-3.5 inline mr-1" /> Topic seed
+          <Sparkles className="h-3.5 w-3.5 inline mr-1" /> Give me an idea
         </button>
         <button
           onClick={() => setState({ ...state, mode: "script" })}
@@ -259,7 +308,7 @@ export default function WizardPage() {
               : "border-line text-neutral-400 hover:text-neutral-200",
           )}
         >
-          <FileText className="h-3.5 w-3.5 inline mr-1" /> Full script
+          <FileText className="h-3.5 w-3.5 inline mr-1" /> I have a script
         </button>
       </div>
 
@@ -282,7 +331,7 @@ export default function WizardPage() {
       ) : (
         <div>
           <label className="label">
-            Full script — pasted narration; LLM polishes + adds hook
+            I have a script — pasted narration; LLM polishes + adds hook
           </label>
           <textarea
             className="input w-full font-mono text-xs"
@@ -424,7 +473,7 @@ export default function WizardPage() {
           <Globe className="h-4 w-4 text-accent" /> Web research
         </div>
         <div className="text-xs text-neutral-500">
-          When ON, NIM controls a headless Chromium to fact-check + grab hero
+          When ON, Adds about a minute, and makes facts more accurate + grab hero
           images. Adds ~30-60 sec per render. Default depends on niche.
         </div>
         <div className="flex gap-1">
@@ -481,7 +530,7 @@ export default function WizardPage() {
           ))}
         </select>
         <div className="text-[10px] text-neutral-500 mt-1">
-          Voices are Microsoft Edge neural TTS. Music is set per-niche in
+           Music is set per-niche in
           <Link href="/app/settings" className="text-accent hover:underline ml-1">Settings → Voice</Link>.
         </div>
       </div>
@@ -550,7 +599,7 @@ export default function WizardPage() {
         <Row k="Channel"  v={selectedChannel?.name || "(none — niche-only)"} />
         <Row k="Niche"    v={state.niche} />
         <Row k="Language" v={WIZARD_LANGUAGES.find(l => l.code === state.language)?.label || state.language} />
-        <Row k="Mode"     v={state.mode === "topic" ? "Topic seed (AI writes script)" : "Full script (AI polishes)"} />
+        <Row k="Mode"     v={state.mode === "topic" ? "Give me an idea (AI writes script)" : "I have a script (AI polishes)"} />
         {state.mode === "topic" && (
           <Row k="Topic"  v={state.topic.slice(0, 80) + (state.topic.length > 80 ? "…" : "") || "(empty)"} />
         )}
@@ -663,7 +712,7 @@ export default function WizardPage() {
             className="btn btn-primary"
           >
             {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-            Queue render
+            Create my video
           </button>
         )}
       </div>
