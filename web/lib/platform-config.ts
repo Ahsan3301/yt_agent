@@ -129,6 +129,8 @@ export const CONFIG_SCHEMA: Array<{
   key: string; category: string; label: string; help: string; secret?: boolean;
 }> = [
   // ── Backups ────────────────────────────────────────────────────
+  { key: "BACKUP_STORAGE_PROVIDER_ID", category: "backup", label: "Use an existing storage provider",
+    help: "Provider id from the Storage page. Preferred over re-entering keys below — the credential then lives in one place, so rotating it there updates backups too. Leave blank to use the explicit fields instead." },
   { key: "BACKUP_S3_ENDPOINT",   category: "backup", label: "Backup endpoint",
     help: "S3-compatible URL, e.g. https://<account>.r2.cloudflarestorage.com" },
   { key: "BACKUP_S3_BUCKET",     category: "backup", label: "Backup bucket",

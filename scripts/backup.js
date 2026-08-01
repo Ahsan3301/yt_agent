@@ -36,6 +36,9 @@
  * environment second, so a destination can be changed or a credential
  * rotated without a redeploy.
  *
+ *   BACKUP_STORAGE_PROVIDER_ID   preferred — reuse a provider already
+ *                                configured on the Storage page, so the
+ *                                credential lives in exactly one place
  *   BACKUP_S3_ENDPOINT     e.g. https://<account>.r2.cloudflarestorage.com
  *   BACKUP_S3_BUCKET       destination bucket name
  *   BACKUP_S3_ACCESS_KEY
@@ -52,6 +55,7 @@ const {
   S3Client, PutObjectCommand, ListObjectsV2Command,
   GetObjectCommand, DeleteObjectCommand, HeadObjectCommand,
 } = require("@aws-sdk/client-s3");
+const crypto = require("node:crypto");
 
 const PB_URL      = process.env.PB_INTERNAL_URL || "http://pocketbase:8090";
 const MINIO_URL   = process.env.MINIO_INTERNAL_URL || "http://minio:9000";
@@ -85,6 +89,26 @@ async function loadConfig(token) {
     log("platform_config unreadable, falling back to environment:", e.message);
   }
   const get = (k, d = "") => fromDb[k] || process.env[k] || d;
+
+  // A referenced storage provider wins over copied BACKUP_S3_* keys,
+  // so the credential has a single home.
+  const providerId = get("BACKUP_STORAGE_PROVIDER_ID");
+  if (providerId) {
+    try {
+      const p = await loadFromStorageProvider(token, providerId);
+      if (p.endpoint && p.bucket && p.accessKey && p.secretKey) {
+        return {
+          ...p,
+          retainDays: Number(get("BACKUP_RETENTION_DAYS", "")) || RETAIN_DAYS,
+          source: `storage provider "${p.label}"`,
+        };
+      }
+      log(`storage provider ${providerId} incomplete — falling back`);
+    } catch (e) {
+      log(`storage provider ${providerId} unusable: ${e.message} — falling back`);
+    }
+  }
+
   return {
     endpoint:  get("BACKUP_S3_ENDPOINT"),
     bucket:    get("BACKUP_S3_BUCKET"),
@@ -93,6 +117,63 @@ async function loadConfig(token) {
     region:    get("BACKUP_S3_REGION", "auto"),
     retainDays: Number(get("BACKUP_RETENTION_DAYS", "")) || RETAIN_DAYS,
     source: Object.keys(fromDb).some((k) => k.startsWith("BACKUP_S3_")) ? "dashboard" : "environment",
+  };
+}
+
+/**
+ * Decrypt a storage-provider secret.
+ *
+ * Mirrors web/lib/storage-crypto.ts byte-for-byte: AES-GCM, 32-byte
+ * key from STORAGE_PROVIDERS_ENC_KEY (hex or base64), ciphertext
+ * formatted as "v1:" + base64(nonce[12] || ct). The "b64:" and
+ * unprefixed legacy forms are handled the same way it does.
+ */
+function decryptSecret(ciphertext) {
+  if (!ciphertext) return "";
+  if (ciphertext.startsWith("b64:")) {
+    return Buffer.from(ciphertext.slice(4), "base64").toString("utf-8");
+  }
+  if (!ciphertext.startsWith("v1:")) return ciphertext;   // legacy plaintext
+
+  const raw = (process.env.STORAGE_PROVIDERS_ENC_KEY || "").trim();
+  if (!raw) throw new Error("STORAGE_PROVIDERS_ENC_KEY not set");
+  const kb = /^[0-9a-fA-F]+$/.test(raw)
+    ? Buffer.from(raw, "hex")
+    : Buffer.from(raw, "base64");
+  if (kb.length !== 32) throw new Error(`enc key must be 32 bytes, got ${kb.length}`);
+
+  const blob  = Buffer.from(ciphertext.slice(3), "base64");
+  const nonce = blob.subarray(0, 12);
+  const rest  = blob.subarray(12);
+  // WebCrypto appends the 16-byte GCM tag to the ciphertext; node's
+  // crypto wants it supplied separately.
+  const tag = rest.subarray(rest.length - 16);
+  const ct  = rest.subarray(0, rest.length - 16);
+  const d = crypto.createDecipheriv("aes-256-gcm", kb, nonce);
+  d.setAuthTag(tag);
+  return Buffer.concat([d.update(ct), d.final()]).toString("utf-8");
+}
+
+/**
+ * Resolve backup credentials from an existing storage provider.
+ *
+ * Preferred over copying keys into BACKUP_S3_*: the credential then
+ * lives in exactly one place, so rotating it on the Storage page
+ * updates backups too, and there's no second copy to drift or leak.
+ */
+async function loadFromStorageProvider(token, providerId) {
+  const r = await fetch(
+    `${PB_URL}/api/collections/storage_providers/records/${providerId}`,
+    { headers: { Authorization: token } });
+  if (!r.ok) throw new Error(`storage provider ${providerId}: HTTP ${r.status}`);
+  const p = await r.json();
+  return {
+    endpoint:  String(p.endpoint || ""),
+    bucket:    String(p.bucket || ""),
+    region:    String(p.region || "auto"),
+    accessKey: decryptSecret(String(p.access_key_id || "")),
+    secretKey: decryptSecret(String(p.secret_access_key || "")),
+    label:     String(p.label || p.kind || providerId),
   };
 }
 
