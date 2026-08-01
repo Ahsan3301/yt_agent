@@ -233,6 +233,12 @@ services:
     # that fills the disk within a week.
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      # Nightly backup payload. run-backup.sh does `docker cp` of
+      # backup.js into whichever dashboard container is current, and
+      # docker cp resolves the SOURCE path on the client filesystem —
+      # so the script has to be visible in here, not just on the host.
+      # Read-only: this container never writes it.
+      - /opt/yven:/opt/yven:ro
     depends_on:
       - dashboard
     networks: [yt_agent_net]

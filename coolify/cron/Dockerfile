@@ -11,7 +11,11 @@ FROM alpine:3.20
 # host daemon via the bind-mounted /var/run/docker.sock (see the
 # side-worker's compose entry). Without it we'd have to shell out to
 # SSH which needs a key baked in.
-RUN apk add --no-cache curl tzdata docker-cli && \
+# bash is for the nightly backup: run-backup.sh is `#!/usr/bin/env bash`
+# and uses `set -o pipefail`, which Alpine's busybox ash does not
+# reliably provide. Cheaper to add the shell than to rewrite a working
+# backup script into POSIX sh and risk changing its error handling.
+RUN apk add --no-cache curl tzdata docker-cli bash && \
     ln -sf /usr/share/zoneinfo/UTC /etc/localtime
 
 # crontab format: m h dom mon dow command

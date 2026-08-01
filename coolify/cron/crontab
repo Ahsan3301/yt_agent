@@ -54,6 +54,25 @@
 # (No '#' characters inside this command - see the gateway-heal note.)
 */20 * * * * curl -fsS -X POST -H "X-API-Key: $RENDER_TRIGGER_KEY" "$DASHBOARD_INTERNAL_URL/api/maintenance/retry-publish" >> /proc/1/fd/1 2>&1
 
+# 03:15 UTC - nightly offsite backup to R2.
+#
+# This lived only as a comment inside scripts/run-backup.sh saying to
+# install it in the VPS host crontab. It never was, and it could not
+# have been: the host has no cron daemon at all - no crontab binary,
+# cron and crond both inactive. So "nightly offsite backups" ran
+# exactly once, by hand. The database was the only copy the whole time.
+#
+# Runs here instead of on the host because this is the only scheduler
+# that actually exists, it is version-controlled, and it already has
+# the docker socket. Needs /opt/yven mounted (see docker-compose.yml):
+# run-backup.sh does `docker cp` and docker resolves the source path
+# on the CLIENT, so the payload must be visible inside this container.
+#
+# run-backup.sh already posts to Discord on failure, so a broken
+# backup announces itself rather than dying in a log nobody reads.
+# 03:15 sits before the 03:30 docker prune so the two never overlap.
+15 3 * * * /opt/yven/run-backup.sh >> /proc/1/fd/1 2>&1
+
 
 # Probe the SHARED credential pool every 4 hours. More frequent than
 # the per-tenant connection sweep because these keys are a single
