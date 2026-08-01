@@ -121,6 +121,11 @@ export async function POST(req: NextRequest) {
     // account. This closes a gap where scheduled runs from the legacy
     // daily_targets map always shipped null bindings.
     const bindingByNiche: Record<string, string> = {};
+    // Channels that passed the due check this tick. Stamped only AFTER
+    // their jobs are actually queued — stamping earlier would mark a
+    // channel "done for today" even if queuing then failed, turning a
+    // transient error into a silently skipped day.
+    const pendingDayStamp: Array<{ id: string; day: string }> = [];
     try {
       const channelsSnap = await adminDb().collection("channels").get();
       channelsSnap.forEach((doc) => {
@@ -171,7 +176,43 @@ export async function POST(req: NextRequest) {
             });
           }
         }
-        if (!forceAll && channelHour !== currentHourInTz) return;
+        // Level-triggered, not edge-triggered.
+        //
+        // This used to be `channelHour !== currentHourInTz → skip`,
+        // which meant the channel had exactly one chance per day: if
+        // the hourly tick didn't happen at that precise hour, the
+        // video was silently lost for the day. busybox crond has no
+        // catch-up, and every deploy restarts the cron sidecar — so
+        // any channel whose hour fell inside a deploy window simply
+        // didn't publish, with nothing reported. Observed live:
+        // Nightflinch (hour 20) lost 2026-08-01 because a deploy had
+        // the sidecar down from 20:44.
+        //
+        // Now the condition is "is it due, and has it not run yet
+        // today" — so a missed tick self-heals on the next hourly one,
+        // an hour late instead of a day lost. The day stamp also makes
+        // the route idempotent: two ticks in the same hour (a restart
+        // mid-hour) can no longer double-queue.
+        const todayInTz = channelTz
+          ? (() => {
+              try {
+                return new Intl.DateTimeFormat("en-CA", {
+                  timeZone: channelTz, year: "numeric", month: "2-digit", day: "2-digit",
+                }).format(new Date());               // en-CA gives YYYY-MM-DD
+              } catch { return new Date().toISOString().slice(0, 10); }
+            })()
+          : new Date().toISOString().slice(0, 10);
+        const lastDay = typeof c.last_scheduled_day === "string" ? c.last_scheduled_day : "";
+        if (!forceAll) {
+          if (lastDay === todayInTz) return;          // already ran today
+          if (currentHourInTz < channelHour) return;  // not due yet today
+        }
+        pendingDayStamp.push({ id: doc.id, day: todayInTz });
+        if (channelHour !== currentHourInTz) {
+          logRoute(reqId, "scheduled-render catch-up", {
+            channel: c.name, scheduled_hour: channelHour, current_hour: currentHourInTz,
+          });
+        }
         const allowedWorkers = Array.isArray(c.allowed_workers)
           ? (c.allowed_workers as unknown[]).filter((x): x is string => typeof x === "string")
           : [];
@@ -439,11 +480,31 @@ export async function POST(req: NextRequest) {
       queued.push({ job_id: jobId, channel: cleanChannel, backend_url: targetWorker?.url || null });
     }
 
-    logRoute(reqId, "scheduled-render queued", { count: queued.length, skipped: skipped.length });
+    // Mark channels as done for today, now that their jobs exist.
+    // Best-effort per channel: a failed stamp means at worst a second
+    // queue attempt on the next tick, which is a far better failure
+    // than a channel that never publishes.
+    const stamped: string[] = [];
+    if (queued.length > 0) {
+      for (const s of pendingDayStamp) {
+        try {
+          await adminDb().collection("channels").doc(s.id).update({
+            last_scheduled_day: s.day,
+            updated_at: FieldValue.serverTimestamp(),
+          });
+          stamped.push(s.id);
+        } catch (e) {
+          logRoute(reqId, "scheduled-render: day stamp failed", { channel: s.id, err: String(e) });
+        }
+      }
+    }
+
+    logRoute(reqId, "scheduled-render queued", { count: queued.length, skipped: skipped.length, stamped: stamped.length });
     return NextResponse.json({
       ok: true,
       queued,
       skipped,
+      stamped,
       worker_available: !!targetWorker,
       req_id: reqId,
     });
