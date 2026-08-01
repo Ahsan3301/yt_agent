@@ -7,6 +7,12 @@ import { getSettings, putSettings, getEdgeVoices, type Settings } from "@/lib/ap
 import { PRESET_CHANNELS, loadCustomChannels, type ChannelPreset } from "@/lib/channels";
 
 const TABS = ["Content", "Voice", "Video", "Upload", "Keywords", "Automation"] as const;
+/** Tabs that are pure operator tuning — hidden from customers.
+ *  Video: encoder CRF/preset/bitrate, image-provider ordering, local
+ *         model ids, VRAM-bound shot parallelism.
+ *  Keywords: per-niche fallback keyword pools, a content-team concern
+ *         that duplicates what the channel editor already sets. */
+const OPERATOR_TABS: readonly string[] = ["Video", "Keywords"];
 type Tab = typeof TABS[number];
 
 const TONES = [
@@ -33,9 +39,29 @@ const PROVIDERS = [
 export default function SettingsPage() {
   const [s, setS] = useState<Settings | null>(null);
   const [tab, setTab] = useState<Tab>("Content");
+  // Most of this page is operator capacity tuning — encoder quality,
+  // GPU model selection, shot parallelism, image-provider ordering.
+  // A customer can neither understand nor safely change those, and
+  // several would let one tenant degrade the shared render pool. Tabs
+  // are filtered by role rather than merely relabelled.
+  const [isAdmin, setIsAdmin] = useState(false);
   const [voices, setVoices] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
+
+  useEffect(() => {
+    fetch("/api/auth/me", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setIsAdmin(!!d?.is_admin))
+      .catch(() => setIsAdmin(false));
+  }, []);
+
+  // Role resolves after first paint. If the active tab turns out to be
+  // operator-only, move the user somewhere they're allowed to be —
+  // done in an effect, not during render, so it can't loop.
+  useEffect(() => {
+    if (!isAdmin && OPERATOR_TABS.includes(tab)) setTab("Content");
+  }, [isAdmin, tab]);
 
   useEffect(() => {
     getSettings().then(setS).catch(() => {});
@@ -77,7 +103,7 @@ export default function SettingsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
-          <p className="text-sm text-neutral-400">Tunable knobs — saved to <code>config/settings.json</code>.</p>
+          <p className="text-sm text-neutral-400">Defaults for every video you make. Individual channels can override these.</p>
         </div>
         <button className="btn btn-primary" onClick={save} disabled={saving}>
           {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
@@ -87,7 +113,7 @@ export default function SettingsPage() {
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-line">
-        {TABS.map((t) => (
+        {TABS.filter((t) => isAdmin || !OPERATOR_TABS.includes(t)).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -139,13 +165,13 @@ export default function SettingsPage() {
                      onChange={(e) => setContent("target_word_max", parseInt(e.target.value || "0"))} />
             </div>
             <div>
-              <label className="label">Videos per run</label>
+              <label className="label">Videos to make at once</label>
               <input type="number" className="input" min={1} value={s.content.videos_per_run}
                      onChange={(e) => setContent("videos_per_run", parseInt(e.target.value || "1"))} />
             </div>
           </div>
           <div>
-            <label className="label">Manual premise override (optional)</label>
+            <label className="label">Always start from this idea (optional)</label>
             <textarea className="textarea h-24" value={s.content.manual_premise}
                       onChange={(e) => setContent("manual_premise", e.target.value)}
                       placeholder='e.g. "Someone realizes every photo on their phone is dated tomorrow."' />
@@ -166,7 +192,7 @@ export default function SettingsPage() {
           </div>
           <p className="text-xs text-neutral-500">
             Per-channel voice settings. Leave blank to use the channel&apos;s default
-            from <code className="font-mono">modules/channels.py</code>.
+            from the channel's preset.
           </p>
           {[...PRESET_CHANNELS, ...loadCustomChannels()].map((cc) => {
             const ch = cc.name;
@@ -386,7 +412,7 @@ export default function SettingsPage() {
               <input type="checkbox" className="h-4 w-4 accent-accent"
                      checked={!!s.upload.made_for_kids}
                      onChange={(e) => setUpload("made_for_kids", e.target.checked)} />
-              Made for kids (COPPA)
+              Made for kids
             </label>
             <div>
               <label className="label">Category ID — horror</label>
@@ -407,7 +433,7 @@ export default function SettingsPage() {
         <div className="space-y-4">
           <p className="text-xs text-neutral-500">
             Per-channel keyword + music overrides. Leave blank to use the
-            channel&apos;s defaults from <code className="font-mono">modules/channels.py</code>.
+            channel&apos;s defaults from the channel's preset.
           </p>
           {[...PRESET_CHANNELS, ...loadCustomChannels()].map((cc) => {
             const ch = cc.name;
@@ -813,7 +839,7 @@ function AutomationTab() {
           <div>
             <div className="font-semibold">Scheduled renders</div>
             <div className="text-xs text-neutral-500">
-              The cron sidecar (or GitHub Actions) fires daily at 09:00 UTC and calls the dashboard
+              Yven checks once an hour and publishes when a channel's scheduled time comes around
               gateway. Toggle on to start daily renders.
             </div>
           </div>
