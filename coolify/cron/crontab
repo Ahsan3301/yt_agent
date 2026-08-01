@@ -38,6 +38,14 @@
 # the publish step. Alerts only on transitions into a broken state.
 30 6 * * * curl -fsS -X POST -H "X-API-Key: $RENDER_TRIGGER_KEY" "$DASHBOARD_INTERNAL_URL/api/maintenance/check-connections" >> /proc/1/fd/1 2>&1
 
+# Probe the SHARED credential pool every 4 hours. More frequent than
+# the per-tenant connection sweep because these keys are a single
+# point of failure: one expiring breaks every customer's renders at
+# once, and an expired API key produces no event — the provider just
+# starts returning 401 mid-render. Alerts only on transitions.
+17 */4 * * * curl -fsS -X POST -H "X-API-Key: $RENDER_TRIGGER_KEY" "$DASHBOARD_INTERNAL_URL/api/maintenance/check-pool" >> /proc/1/fd/1 2>&1
+
+
 
 # 03:30 UTC daily — reclaim Docker build cache + dangling images on
 # the host. Frequent image rebuilds (dashboard + side-worker) leave

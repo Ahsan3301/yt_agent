@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import {
-  Loader2, Save, Layers, CheckCircle2, AlertTriangle, Trash2, Info,
+  Loader2, Save, Layers, CheckCircle2, AlertTriangle, Trash2, Info, Activity,
 } from "lucide-react";
 
 /**
@@ -23,19 +23,58 @@ type Item = {
   has_value: boolean; preview: string;
 };
 
+type Health = {
+  key: string; status: "ok" | "bad" | "error" | "unset";
+  detail: string; working?: number; total?: number;
+};
+
 export default function PoolPage() {
   const [items, setItems] = useState<Item[]>([]);
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  // Liveness of each pooled credential. Every tenant renders on these,
+  // so one expiring breaks the whole platform at once — and an expired
+  // API key produces no event, the provider just starts 401ing.
+  const [health, setHealth] = useState<Record<string, Health>>({});
+  const [healthAt, setHealthAt] = useState(0);
+  const [checking, setChecking] = useState(false);
+
+  const applyHealth = (d: { items?: Health[]; checked_at?: number }) => {
+    const m: Record<string, Health> = {};
+    for (const h of d.items || []) m[h.key] = h;
+    setHealth(m);
+    setHealthAt(Number(d.checked_at || 0));
+  };
 
   const load = async () => {
     try {
-      const r = await fetch("/api/superadmin/pool", { cache: "no-store" });
+      const [r, h] = await Promise.all([
+        fetch("/api/superadmin/pool", { cache: "no-store" }),
+        fetch("/api/superadmin/pool/health", { cache: "no-store" }),
+      ]);
       if (r.ok) setItems((await r.json()).items || []);
+      if (h.ok) applyHealth(await h.json().catch(() => ({})));
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Explicit rather than automatic: this costs one round trip per
+  // provider, and the daily sweep keeps the stored status fresh.
+  const runCheck = async () => {
+    setChecking(true);
+    try {
+      const r = await fetch("/api/superadmin/pool/health", { method: "POST" });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { setMsg({ kind: "err", text: d.error || `HTTP ${r.status}` }); return; }
+      applyHealth(d);
+      setMsg(d.broken > 0
+        ? { kind: "err", text: `${d.broken} pooled credential${d.broken === 1 ? " is" : "s are"} failing — every customer is affected.` }
+        : { kind: "ok", text: `All ${d.items?.length || 0} pooled credentials verified.` });
+    } finally {
+      setChecking(false);
     }
   };
   useEffect(() => { load(); }, []);
@@ -89,10 +128,16 @@ export default function PoolPage() {
             publish after connecting only their YouTube account.
           </p>
         </div>
-        <button onClick={save} disabled={busy || dirty === 0} className="btn btn-primary h-9 text-xs">
-          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-          Save{dirty > 0 ? ` (${dirty})` : ""}
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={runCheck} disabled={checking} className="btn h-9 text-xs">
+            {checking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Activity className="h-3.5 w-3.5" />}
+            Test all keys
+          </button>
+          <button onClick={save} disabled={busy || dirty === 0} className="btn btn-primary h-9 text-xs">
+            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+            Save{dirty > 0 ? ` (${dirty})` : ""}
+          </button>
+        </div>
       </div>
 
       {msg && (
@@ -127,6 +172,11 @@ export default function PoolPage() {
               <b>{setCount} credential{setCount === 1 ? "" : "s"} pooled.</b>{" "}
               A tenant who sets the same key in their own Connections page
               overrides the pooled one for their renders only.
+              {healthAt > 0 && (
+                <span className="block mt-1 text-neutral-500">
+                  Liveness last verified {_ago(healthAt)}. Checked automatically each morning.
+                </span>
+              )}
             </>
           )}
         </div>
@@ -143,6 +193,7 @@ export default function PoolPage() {
                 {it.has_value
                   ? <span className="pill pill-success">pooled</span>
                   : <span className="pill pill-muted">not set</span>}
+                <HealthPill h={health[it.key]} />
               </label>
               <div className="flex gap-2">
                 <input
@@ -164,6 +215,9 @@ export default function PoolPage() {
                   </button>
                 )}
               </div>
+              {health[it.key] && health[it.key].status !== "ok" && health[it.key].status !== "unset" && (
+                <p className="text-[11px] text-red-300 mt-1">{health[it.key].detail}</p>
+              )}
               {it.help && <p className="text-[11px] text-neutral-500 mt-1">{it.help}</p>}
               {edits[it.key] === "__CLEAR__" && (
                 <p className="text-[11px] text-red-300 mt-1">
@@ -181,4 +235,31 @@ export default function PoolPage() {
       ))}
     </div>
   );
+}
+
+/** Liveness of one pooled credential. Silent on "unset" — the
+ *  pooled/not-set pill already says that. */
+function HealthPill({ h }: { h?: Health }) {
+  if (!h || h.status === "unset") return null;
+  if (h.status === "ok") {
+    return <span className="pill pill-success" title={h.detail}>working</span>;
+  }
+  if (h.status === "bad") {
+    return <span className="pill pill-danger" title={h.detail}>failing</span>;
+  }
+  return (
+    <span className="pill pill-warn" title={h.detail}>
+      {h.working !== undefined && h.total !== undefined ? `${h.working}/${h.total}` : "degraded"}
+    </span>
+  );
+}
+
+function _ago(unixSeconds: number): string {
+  const s = Math.max(0, Math.floor(Date.now() / 1000) - unixSeconds);
+  if (s < 90) return "just now";
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} minutes ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} hour${h === 1 ? "" : "s"} ago`;
+  return `${Math.floor(h / 24)} day(s) ago`;
 }
