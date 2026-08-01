@@ -125,6 +125,31 @@ async function probeOne(key: string, value: string): Promise<KeyHealth> {
         return { key, status: "error", detail: `Unreachable (${String(e).slice(0, 50)}).` };
       }
 
+    case "YOUTUBE_API_KEY":
+      // videos.list on a known-good id costs 1 quota unit, vs 100 for a
+      // search — cheap enough to run on every sweep without eating into
+      // the same 10,000/day budget renders draw from.
+      //
+      // 403 is deliberately NOT treated as "bad" here: the Data API
+      // returns it both for a revoked key and for a merely exhausted
+      // daily quota, and those need opposite responses. Reported as
+      // "error" so it surfaces without claiming the key is dead.
+      try {
+        const r = await get(
+          "https://www.googleapis.com/youtube/v3/videos" +
+          `?part=id&id=dQw4w9WgXcQ&key=${encodeURIComponent(value)}`, {});
+        if (r.status === 403) {
+          return { key, status: "error",
+            detail: "403 — daily quota exhausted or key revoked. SEO falls back to writing metadata blind." };
+        }
+        if (r.status === 400) {
+          return { key, status: "bad", detail: "Rejected as malformed by Google." };
+        }
+        return { key, ...classify(r.status) };
+      } catch (e) {
+        return { key, status: "error", detail: `Unreachable (${String(e).slice(0, 50)}).` };
+      }
+
     case "PEXELS_API_KEY":
       try {
         const r = await get("https://api.pexels.com/v1/curated?per_page=1", { Authorization: value });

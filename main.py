@@ -768,6 +768,7 @@ def run_pipeline(
             from modules import seo_writer
             # Optional: borrow top-ranking peer title(s) to inform tone.
             borrowed_titles = None
+            borrowed_tags = None
             try:
                 from modules.config import load_settings as _ls
                 _seo_cfg = (_ls().get("seo") or {})
@@ -776,11 +777,22 @@ def run_pipeline(
                     topic_seed = (content or {}).get("raw_title") or script.get("youtube_title") or ""
                     if topic_seed:
                         try:
-                            viral = _sb.find_viral(topic_seed)
-                            if viral and viral.get("title"):
-                                borrowed_titles = [viral["title"]]
+                            # Use the whole qualifying pool, not just the
+                            # winner. The API call already paid to fetch
+                            # metadata for TOP_N videos; taking one title
+                            # off the top discarded the peer tags entirely,
+                            # which are the strongest keyword signal we get.
+                            _lang = (channel_cfg.get("language") or "en") if isinstance(channel_cfg, dict) else "en"
+                            pool = _sb.find_viral_pool(topic_seed, language=_lang)
+                            if pool:
+                                borrowed_titles = [m["title"] for m in pool if m.get("title")]
+                                borrowed_tags = _sb.pool_tags(pool, language=_lang)
+                                log.info(
+                                    "seo_borrower: %d peer title(s), %d distinct peer tag(s)",
+                                    len(borrowed_titles), len(borrowed_tags or []),
+                                )
                         except Exception as _sb_e:
-                            log.debug(f"seo_borrower.find_viral skipped: {_sb_e}")
+                            log.debug(f"seo_borrower.find_viral_pool skipped: {_sb_e}")
             except Exception:
                 pass
             publish_ready = _step(summary, "seo", lambda: seo_writer.write_seo_metadata(
@@ -789,6 +801,7 @@ def run_pipeline(
                 channel_cfg=channel_cfg,
                 research_data=content,
                 borrowed_titles=borrowed_titles,
+                borrowed_tags=borrowed_tags,
             ), run_id=run_id)
         except Exception as _seo_err:
             log.warning(f"SEO writer failed hard, using script metadata only: {_seo_err}")

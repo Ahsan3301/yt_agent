@@ -52,6 +52,7 @@ def write_seo_metadata(
     channel_cfg: dict,
     research_data: Optional[dict] = None,
     borrowed_titles: Optional[list[str]] = None,
+    borrowed_tags: Optional[list[str]] = None,
 ) -> dict:
     """Build the publish-ready metadata block for one run.
 
@@ -63,6 +64,10 @@ def write_seo_metadata(
               Must include `viral_seo` — falls back to preset defaults if not.
       research_data: optional research dict (topic, facts, sources).
       borrowed_titles: optional list of top-ranking peer titles to inform tone.
+      borrowed_tags: optional tags shared by top-ranking peers, most-common
+              first. These are the keywords YouTube already associates with
+              the topic, so echoing the relevant ones is what puts this
+              video into the same suggestion graph.
 
     Returns:
       dict — always populated, never raises.
@@ -73,7 +78,7 @@ def write_seo_metadata(
     # Try NIM first (up to 2 attempts with error feedback), then regex fallback.
     problems = []
     for attempt in range(1, 3):
-        raw = _call_llm(narration, script, channel_cfg, viral, research_data, borrowed_titles, problems)
+        raw = _call_llm(narration, script, channel_cfg, viral, research_data, borrowed_titles, problems, borrowed_tags)
         if not raw:
             break
         try:
@@ -106,7 +111,7 @@ def write_seo_metadata(
 
 # ── NIM path ──────────────────────────────────────────────────────
 
-def _call_llm(narration, script, channel_cfg, viral, research_data, borrowed_titles, problems):
+def _call_llm(narration, script, channel_cfg, viral, research_data, borrowed_titles, problems, borrowed_tags=None):
     """Single call. Returns raw model text on success, None on failure."""
     try:
         from modules import nim
@@ -115,7 +120,7 @@ def _call_llm(narration, script, channel_cfg, viral, research_data, borrowed_tit
     if not nim.is_available():
         return None
 
-    prompt = _build_prompt(narration, script, channel_cfg, viral, research_data, borrowed_titles, problems)
+    prompt = _build_prompt(narration, script, channel_cfg, viral, research_data, borrowed_titles, problems, borrowed_tags)
     try:
         return nim.chat(
             [
@@ -146,7 +151,7 @@ _LANG_NAMES = {
 }
 
 
-def _build_prompt(narration, script, channel_cfg, viral, research_data, borrowed_titles, problems):
+def _build_prompt(narration, script, channel_cfg, viral, research_data, borrowed_titles, problems, borrowed_tags=None):
     niche = channel_cfg.get("display_name") or channel_cfg.get("name") or "content"
     tone = channel_cfg.get("tone") or "engaging"
     language = channel_cfg.get("language") or "en"
@@ -188,6 +193,22 @@ def _build_prompt(narration, script, channel_cfg, viral, research_data, borrowed
         borrowed = "\nTOP-RANKING PEER TITLES for tone reference (do NOT copy — match the style):\n" \
             + "\n".join(f"- {x}" for x in borrowed_titles[:5])
 
+    # Competitor tags are the one signal here that isn't a style hint:
+    # they are the exact keywords YouTube already associates with this
+    # topic, so reusing the relevant ones is what puts the video into
+    # the same suggestion graph as the videos already ranking for it.
+    # Deliberately permissive about copying (unlike titles) — tags are
+    # keywords, not creative work, and divergence is what costs reach.
+    borrowed_tag_block = ""
+    if borrowed_tags:
+        borrowed_tag_block = (
+            "\nKEYWORDS THE TOP-RANKING PEERS ALREADY RANK FOR (most-shared first).\n"
+            "Reuse every one that genuinely fits this narration — these are\n"
+            "search terms, so matching them is the point. Skip any that don't\n"
+            "describe THIS video; an irrelevant tag hurts more than it helps:\n"
+            + "\n".join(f"- {x}" for x in borrowed_tags[:25])
+        )
+
     problem_block = ""
     if problems:
         problem_block = "\nFIX these problems from your previous attempt:\n" + "\n".join(f"- {p}" for p in problems)
@@ -212,7 +233,7 @@ HASHTAG SEEDS (return exactly {_HASHTAGS_COUNT}, may swap for niche-relevant one
 DESCRIPTION FIRST-2-LINES STYLE: {first_two}
 
 ENGAGEMENT CTA style: {cta}
-{facts}{borrowed}
+{facts}{borrowed}{borrowed_tag_block}
 NARRATION (this is the ACTUAL video — every metadata field must be tied to this content):
 \"\"\"{narration.strip()}\"\"\"
 {problem_block}

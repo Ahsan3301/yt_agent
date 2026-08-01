@@ -61,6 +61,11 @@ MANAGED_KEYS = [
     "OPENROUTER_MODEL",          # Optional model override (default llama-3.3-70b-instruct:free)
     "DISCORD_WEBHOOK_URL",       # alerting channel for renders + cleanup
     "YOUTUBE_REFRESH_TOKEN",     # auto-publish to YouTube
+    "YOUTUBE_API_KEY",           # Data API v3 — competitor keyword lookup in
+                                 # seo_borrower (search.list + videos.list).
+                                 # Was missing here, so a key saved in the
+                                 # dashboard never reached the worker env and
+                                 # the feature stayed silently off.
     "RENDER_TRIGGER_KEY",        # shared secret for GitHub Actions → Vercel
     # Storage credentials — moved here so Kaggle only needs one platform
     # secret (the Firebase service account).
@@ -229,6 +234,29 @@ def pull_into_env(override: bool = True, user_id: str | None = None) -> dict:
         log.info(f"keys_sync: applied {len(applied)} key(s) from central store: "
                  + ", ".join(applied.keys()))
     return applied
+
+
+def get_key(name: str, user_id: str | None = None) -> str | None:
+    """Read a single key straight from the central store.
+
+    pull_into_env is the normal path — it runs before each job and puts
+    every MANAGED_KEYS entry into os.environ. This is the direct lookup
+    for callers that may run outside that flow, so a missing
+    pull_into_env doesn't silently disable a feature. Resolves through
+    the same pool-then-tenant merge, so an unconfigured customer still
+    gets the operator's pooled credential.
+
+    Returns None (never raises) — every caller treats an absent key as
+    "feature off", not as an error.
+    """
+    if not name:
+        return None
+    try:
+        v = (_read_all(user_id=user_id) or {}).get(name)
+        return str(v).strip() or None if v else None
+    except Exception as e:
+        log.debug(f"keys_sync.get_key({name}) failed: {e}")
+        return None
 
 
 def push_from_payload(updates: dict) -> dict:

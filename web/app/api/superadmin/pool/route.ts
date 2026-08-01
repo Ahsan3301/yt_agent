@@ -52,6 +52,10 @@ export const POOL_SCHEMA: Array<{
   { key: "PIXABAY_API_KEY", group: "Visuals", label: "Pixabay",
     help: "Additional stock source." },
 
+  // Search/ranking research.
+  { key: "YOUTUBE_API_KEY", group: "SEO research", label: "YouTube Data API key",
+    help: "Looks up the videos already ranking for each topic and feeds their keywords to the SEO writer. Without it, metadata is written blind. ~103 quota units per render against a 10,000/day default." },
+
   // Where rendered videos land.
   { key: "S3_ENDPOINT", group: "Storage", label: "S3 endpoint",
     help: "Leave blank to use the platform's own MinIO." },

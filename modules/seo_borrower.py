@@ -57,12 +57,18 @@ def _api_key() -> Optional[str]:
     if k:
         return k
     try:
-        # Lazy import to avoid forcing firestore on environments that
+        # Lazy import to avoid forcing the DB layer on environments that
         # don't need this module (e.g. local dry-runs).
-        from backend import keys
-        k = keys.get("YOUTUBE_API_KEY") or ""
-        return k.strip() or None
-    except Exception:
+        #
+        # This used to import `backend.keys`, which does not exist — the
+        # module is `backend.keys_sync`. ImportError was swallowed by the
+        # except below, so the fallback silently never ran and the only
+        # working path was a pre-set env var.
+        from backend import keys_sync
+        k = (keys_sync.get_key("YOUTUBE_API_KEY") or "").strip()
+        return k or None
+    except Exception as e:
+        log.debug(f"seo_borrower: central key lookup failed: {e}")
         return None
 
 
@@ -145,26 +151,166 @@ def fetch_metadata(video_ids: list[str]) -> list[dict]:
             "description": sn.get("description") or "",
             "tags":        sn.get("tags") or [],
             "views":       int(st.get("viewCount") or 0),
+            # Declared language, when the uploader set one. search.list's
+            # relevanceLanguage is only a ranking hint, not a filter, so
+            # this is the sole reliable language signal available.
+            "language":    (sn.get("defaultAudioLanguage")
+                            or sn.get("defaultLanguage") or "").strip(),
         })
     return out
 
 
-def find_viral(topic: str) -> Optional[dict]:
-    """End-to-end: find the highest-viewed recent Shorts video matching
-    the topic. Returns None if nothing meets MIN_VIEWS."""
+# Unicode script buckets, keyed by the language codes channels use.
+# Only needs to be right about which SCRIPT a language is written in —
+# not about the language itself.
+_SCRIPT_RANGES = {
+    "latin":      [(0x0041, 0x024F), (0x1E00, 0x1EFF)],
+    "cyrillic":   [(0x0400, 0x04FF)],
+    "greek":      [(0x0370, 0x03FF)],
+    "arabic":     [(0x0600, 0x06FF), (0x0750, 0x077F)],
+    "hebrew":     [(0x0590, 0x05FF)],
+    "devanagari": [(0x0900, 0x097F)],
+    "hangul":     [(0xAC00, 0xD7AF), (0x1100, 0x11FF), (0x3130, 0x318F)],
+    "kana":       [(0x3040, 0x30FF)],
+    "han":        [(0x4E00, 0x9FFF), (0x3400, 0x4DBF)],
+    "thai":       [(0x0E00, 0x0E7F)],
+}
+_LANG_SCRIPT = {
+    "ko": "hangul", "ja": "kana", "zh": "han",
+    "ru": "cyrillic", "uk": "cyrillic", "bg": "cyrillic", "sr": "cyrillic",
+    "ar": "arabic", "ur": "arabic", "fa": "arabic",
+    "he": "hebrew", "hi": "devanagari", "mr": "devanagari", "ne": "devanagari",
+    "el": "greek", "th": "thai",
+}
+
+
+def _expected_script(language: str) -> str:
+    """Script a given channel language is written in. Anything not
+    listed is Latin — covers en/es/fr/de/pt/it/nl/tr/id/vi/pl/etc."""
+    return _LANG_SCRIPT.get((language or "en").split("-")[0].lower(), "latin")
+
+
+def _script_matches(text: str, language: str) -> bool:
+    """True when `text` is written in the script `language` uses.
+
+    Judged on letters only, so digits, '#', and punctuation never decide
+    the outcome. Tags that carry no letters at all (e.g. "2024") are
+    script-neutral and always pass — they're valid keywords in any
+    language.
+    """
+    want = _expected_script(language)
+    ranges = _SCRIPT_RANGES.get(want, _SCRIPT_RANGES["latin"])
+    hits = total = 0
+    for ch in text:
+        if not ch.isalpha():
+            continue
+        total += 1
+        cp = ord(ch)
+        if any(lo <= cp <= hi for lo, hi in ranges):
+            hits += 1
+    if total == 0:
+        return True
+    # Majority rule rather than all-or-nothing: real tags mix scripts
+    # ("League of Legends 롤"), and demanding purity would drop usable
+    # keywords.
+    return (hits / total) >= 0.6
+
+
+def find_viral_pool(topic: str, language: str = "en") -> list[dict]:
+    """All qualifying peers for the topic, best-viewed first.
+
+    This is the real result of a lookup: fetch_metadata already pays to
+    retrieve title + description + tags + views for TOP_N videos, so
+    collapsing that to a single title (as find_viral does) throws away
+    most of what a ~103-unit quota spend just bought — the competitor
+    TAGS especially, which are the strongest keyword signal available
+    and were never reaching the writer at all.
+
+    Returns [] rather than None on any miss, so callers can iterate
+    unconditionally.
+    """
     hits = yt_search(topic, max_results=10)
     if not hits:
-        return None
+        return []
     meta = fetch_metadata([h["video_id"] for h in hits[:TOP_N]])
     qualifying = [m for m in meta if m["views"] >= MIN_VIEWS]
+
+    # Drop peers in another language. relevanceLanguage is only a hint,
+    # so a high-view foreign video routinely outranks the English ones —
+    # observed live: an English "league of legends" lookup returned a
+    # Korean video whose tags were entirely Hangul. Borrowing those
+    # would put wrong-language keywords on the video, which costs reach
+    # instead of gaining it. Peers that declare nothing are kept: most
+    # uploaders never set the field, and the tag-level script filter in
+    # pool_tags catches what slips through.
+    want = (language or "en").split("-")[0].lower()
+    kept = []
+    for m in qualifying:
+        declared = (m.get("language") or "").split("-")[0].lower()
+        if declared and declared != want:
+            log.info(
+                "seo_borrower: skipping %s — declared language %r != %r",
+                m["video_id"], declared, want,
+            )
+            continue
+        kept.append(m)
+    qualifying = kept
+
     if not qualifying:
         log.info(
-            f"seo_borrower: no Shorts past {MIN_VIEWS} views in last "
+            f"seo_borrower: no {want} Shorts past {MIN_VIEWS} views in last "
             f"{LOOKBACK_DAYS} days for topic={topic!r}"
         )
-        return None
+        return []
     qualifying.sort(key=lambda m: m["views"], reverse=True)
-    winner = qualifying[0]
+    log.info(
+        "seo_borrower: %d qualifying peer(s) — %s",
+        len(qualifying),
+        ", ".join(f"{m['video_id']} ({m['views']:,})" for m in qualifying),
+    )
+    return qualifying
+
+
+def pool_tags(pool: list[dict], cap: int = 25, language: str = "en") -> list[str]:
+    """Distinct tags across the peer pool, most-common first.
+
+    Ordering by frequency matters: a tag two of three ranking videos
+    share is a topic-graph signal, while one appearing once is usually
+    that channel's own branding.
+    """
+    counts: dict[str, int] = {}
+    original: dict[str, str] = {}
+    for m in pool:
+        # Count each tag once per video, so a video repeating a tag
+        # can't outweigh agreement between two different videos. The
+        # dedup must be case-INSENSITIVE: a video tagging both
+        # "centralia" and "Centralia" is one video's opinion, and
+        # deduping on the raw string would score it as two.
+        seen_here: dict[str, str] = {}
+        for x in (m.get("tags") or []):
+            t = str(x).strip()
+            # Second line of defence after the peer-level language
+            # filter: a video that declares no language can still carry
+            # foreign-script tags.
+            if t and _script_matches(t, language):
+                seen_here.setdefault(t.lower(), t)
+        for k, t in seen_here.items():
+            counts[k] = counts.get(k, 0) + 1
+            original.setdefault(k, t)
+    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return [original[k] for k, _ in ranked[:cap]]
+
+
+def find_viral(topic: str) -> Optional[dict]:
+    """Highest-viewed qualifying peer, or None.
+
+    Kept for callers that only want the single winner; find_viral_pool
+    is the richer entry point.
+    """
+    pool = find_viral_pool(topic)
+    if not pool:
+        return None
+    winner = pool[0]
     log.info(
         f"seo_borrower: borrowing from {winner['video_id']} "
         f"({winner['views']:,} views) — title: {winner['title'][:60]!r}"
