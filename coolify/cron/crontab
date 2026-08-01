@@ -117,7 +117,18 @@
 # every 6-9 minutes — a self-inflicted outage storm. The in-container
 # probe can miss one rare external-only failure mode, but a blind spot
 # beats an active saboteur. --max-time 15 for TLS headroom.
-*/3 * * * *  CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 --resolve yt-agent.thyker.online:443:132.226.86.61 https://yt-agent.thyker.online/login 2>/dev/null || echo 000); case "$CODE" in 2*|3*) rm -f /tmp/gwfail ;; *) N=$(($(cat /tmp/gwfail 2>/dev/null || echo 0) + 1)); echo "$N" > /tmp/gwfail; echo "gateway-heal: probe returned $CODE (consecutive fail #$N)"; if [ "$N" -eq 2 ]; then CADDY=$(docker ps --format '{{.Names}}' | grep '^caddy' | head -1); [ -n "$CADDY" ] && docker restart $CADDY && echo "gateway-heal: restarted caddy"; elif [ "$N" -ge 3 ]; then docker restart coolify-proxy && echo "gateway-heal: escalated — restarted coolify-proxy"; rm -f /tmp/gwfail; fi; esac >> /proc/1/fd/1 2>&1
+#
+# DO NOT put a '#' anywhere in this command, including inside quotes.
+# busybox crond strips from the first '#' to end-of-line as a comment
+# before handing the command to sh. This line used to read
+#     ... (consecutive fail #$N)" ...
+# which got truncated mid-string, so every tick died with
+#     /bin/sh: syntax error: unterminated quoted string
+# and the watchdog never ran once between the 2026-07-18 revert to the
+# in-container probe and 2026-08-02 — the dropped-route failures it
+# exists to catch went unhealed that whole time. Reproduced by feeding
+# the exact line to `crond -f -d 8`; removing the '#' fixes it.
+*/3 * * * *  CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 --resolve yt-agent.thyker.online:443:132.226.86.61 https://yt-agent.thyker.online/login 2>/dev/null || echo 000); case "$CODE" in 2*|3*) rm -f /tmp/gwfail ;; *) N=$(($(cat /tmp/gwfail 2>/dev/null || echo 0) + 1)); echo "$N" > /tmp/gwfail; echo "gateway-heal: probe returned $CODE (consecutive fail $N)"; if [ "$N" -eq 2 ]; then CADDY=$(docker ps --format '{{.Names}}' | grep '^caddy' | head -1); [ -n "$CADDY" ] && docker restart $CADDY && echo "gateway-heal: restarted caddy"; elif [ "$N" -ge 3 ]; then docker restart coolify-proxy && echo "gateway-heal: escalated — restarted coolify-proxy"; rm -f /tmp/gwfail; fi; esac >> /proc/1/fd/1 2>&1
 
 # Trailing newline is required — Linux crontab silently ignores the last
 # line if it doesn't end with one.
