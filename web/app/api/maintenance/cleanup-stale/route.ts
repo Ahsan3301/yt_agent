@@ -94,8 +94,25 @@ export async function POST(req: NextRequest) {
       });
     } catch { /* best-effort */ }
 
-    const jobsSnap = await adminDb().collection("jobs").get();
-    for (const doc of jobsSnap.docs) {
+    // Query BY STATUS rather than scanning the whole collection.
+    //
+    // `.get()` with no `.limit()` silently caps at 200 records (the PB
+    // adapter's `perPage = this._limit || 200`). The jobs collection
+    // passed 200 rows some time ago — 315 at the time of writing — so
+    // this loop was reading an arbitrary 200-row slice and the orphan
+    // sweep simply never saw the newest jobs. Confirmed live: three
+    // renders sat 'running' for two hours after their worker was
+    // replaced by a deploy, while this route reported "orphan_jobs: 0"
+    // on every 15-minute tick.
+    //
+    // Filtering server-side is both correct and far cheaper: three rows
+    // instead of three hundred.
+    const jobDocs = (await Promise.all(
+      ["running", "claimed"].map((st) =>
+        adminDb().collection("jobs").where("status", "==", st).limit(500).get(),
+      ),
+    )).flatMap((s) => s.docs);
+    for (const doc of jobDocs) {
       const j = doc.data() as {
         status?: string; backend_instance_id?: string;
         started_at?: unknown; run_id?: string; orphan_count?: number;
@@ -150,7 +167,11 @@ export async function POST(req: NextRequest) {
   const orphans: { key: string; run_id: string; size: number; last_modified: number }[] = [];
   try {
     const [runsSnap, storage] = await Promise.all([
-      adminDb().collection("runs_index").get(),
+      // Explicit limit: an unbounded .get() silently caps at 200, and
+      // this set is what decides whether a stored video counts as an
+      // orphan. A truncated read here would delete videos whose
+      // runs_index row simply fell outside the first page.
+      adminDb().collection("runs_index").limit(2000).get(),
       listStorageVideos().catch(() => []),
     ]);
     const knownRunIds = new Set<string>();
