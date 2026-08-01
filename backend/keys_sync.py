@@ -87,41 +87,92 @@ def _shadow_id(user_id: str) -> str:
     return f"{user_id}__api_keys"
 
 
-def _read_all(user_id: str | None = None) -> dict[str, str]:
-    """Return {key_name: value} from the central store.
+# Operator-supplied keys shared by every tenant.
+#
+# Deliberately a SEPARATE document from the founder's own blob at
+# settings/api_keys. Conflating them would mean "the operator's
+# personal credentials" and "the credentials customers are entitled to
+# use" are the same thing, so there'd be no way to give customers
+# access to a pooled Groq key without also handing them whatever else
+# the founder happens to have configured.
+_POOL_DOC_ID = "platform_pool__api_keys"
 
-    Storage model (Phase 2, 2026-07-24): the caller's per-user shadow
-    at settings/{user_id}__api_keys takes precedence when user_id is
-    given. Falls back to the legacy singleton at settings/api_keys —
-    which is what workers with no user_id (pre-Phase-2 jobs) or a
-    user whose shadow hasn't been seeded yet still read.
+FOUNDER_USER_ID = "ufounder0000000"
+
+
+def _blob_of(c, doc_id: str) -> dict[str, str]:
+    """Read one settings/<doc_id> blob into a flat {name: value} dict.
+
+    PocketBase stores the JSON column as either a native dict or a
+    string depending on how it was written, so both shapes are handled.
+    """
+    try:
+        snap = c.collection("settings").document(doc_id).get()
+        if not snap.exists:
+            return {}
+        blob = (snap.to_dict() or {}).get("data") or {}
+        if isinstance(blob, str):
+            import json as _json
+            try:
+                blob = _json.loads(blob)
+            except Exception:
+                return {}
+        if not isinstance(blob, dict):
+            return {}
+        return {k: str(v) for k, v in blob.items() if isinstance(v, str) and v}
+    except Exception as e:
+        log.warning(f"keys_sync: read of settings/{doc_id} failed: {e}")
+        return {}
+
+
+def _read_all(user_id: str | None = None) -> dict[str, str]:
+    """Return {key_name: value} for this tenant.
+
+    Resolution order (later wins):
+
+        1. Platform pool  settings/platform_pool__api_keys
+        2. Tenant's own   settings/{user_id}__api_keys
+
+    The pool is the operator's shared credentials, priced into the
+    subscription. Merging it UNDERNEATH the tenant's own keys is what
+    makes the product usable by a non-technical customer: previously a
+    user with no shadow document got {} and their render simply had no
+    AI providers, so before publishing one video they had to sign up
+    for NVIDIA NIM, HuggingFace, Cloudflare, OpenRouter, Stable Horde,
+    Pexels and an S3 bucket. Now they inherit working defaults and only
+    connect YouTube.
+
+    Merging per-key (rather than picking one source wholesale) keeps
+    bring-your-own viable: a tenant who sets only GROQ_API_KEY gets
+    their Groq key plus pooled everything-else, which is what a power
+    user moving one provider at a time expects.
+
+    The founder additionally falls through to the legacy singleton at
+    settings/api_keys so the original single-tenant setup keeps working
+    untouched.
     """
     if not db.is_configured():
         return {}
     try:
         c = db.client()
-        # Per-user shadow first.
+
         if user_id:
-            shadow = c.collection("settings").document(_shadow_id(user_id)).get()
-            if shadow.exists:
-                data = shadow.to_dict() or {}
-                blob = data.get("data") or {}
-                # PB stores JSON as either dict (native) or string.
-                if isinstance(blob, str):
-                    try:
-                        import json as _json
-                        blob = _json.loads(blob)
-                    except Exception:
-                        blob = {}
-                if isinstance(blob, dict) and blob:
-                    return {k: str(v) for k, v in blob.items()
-                            if isinstance(v, str) and v}
-            # Missing shadow for a NON-founder user is intentional —
-            # they haven't set any keys yet. Return {} so their render
-            # uses ONLY the keys they've supplied (never the founder's).
-            # Otherwise a paid tier user's job would silently burn my
-            # global Groq/NIM/CF quota. Founder falls through to legacy.
-            if user_id != "ufounder0000000":
+            pool = _blob_of(c, _POOL_DOC_ID)
+            own = _blob_of(c, _shadow_id(user_id))
+            merged = {**pool, **own}
+            if merged:
+                if pool and own:
+                    log.info(f"keys_sync: {len(own)} tenant key(s) over "
+                             f"{len(pool)} pooled key(s)")
+                elif pool:
+                    log.info(f"keys_sync: using {len(pool)} pooled platform key(s)")
+                return merged
+            # Nothing for this tenant and nothing pooled. The founder
+            # continues to the legacy singleton below; anyone else gets
+            # an empty set, which surfaces as a clear "no providers
+            # configured" failure rather than silently borrowing
+            # someone else's credentials.
+            if user_id != FOUNDER_USER_ID:
                 return {}
         # Legacy singleton path — founder only, or no user context.
         snap = c.collection("settings").document(_BLOB_DOC_ID).get()
@@ -157,9 +208,10 @@ def pull_into_env(override: bool = True, user_id: str | None = None) -> dict:
     var. Right behaviour on Colab/HF where the platform-level secrets are
     minimal and the central store should be authoritative.
 
-    user_id (Phase 2, 2026-07-24): when given, prefer this user's
-    per-tenant shadow at settings/{user_id}__api_keys. Missing shadow
-    falls back to the legacy singleton so old workers keep working.
+    user_id: resolves through _read_all — the operator's shared pool
+    merged underneath this tenant's own keys, so a customer who has
+    configured nothing still renders on pooled credentials while a
+    tenant who supplies their own overrides the pool per key.
     """
     keys = _read_all(user_id=user_id)
     if not keys:
