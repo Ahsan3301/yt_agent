@@ -36,7 +36,21 @@ HEALTH_URL="${HEALTH_URL:-https://yt-agent.thyker.online/login}"
 FORCE_REBUILD="${FORCE_REBUILD:-0}"
 
 DEPLOY_POLL_MAX="${DEPLOY_POLL_MAX:-90}"   # x10s = 15 min ceiling
-HEALTH_POLL_MAX="${HEALTH_POLL_MAX:-18}"   # x5s  = 90s grace
+HEALTH_POLL_MAX="${HEALTH_POLL_MAX:-36}"   # x5s  = 3 min grace
+
+# Core containers that must all be up and settled before the site can
+# be considered live.
+CORE_RE='^(dashboard|caddy|pocketbase|minio)-'
+# How long every core container must have been running before we start
+# probing. Coolify brings containers up in waves, and a PocketBase
+# migration can cascade a restart through depends_on well after the
+# first one is answering.
+STABLE_SECONDS="${STABLE_SECONDS:-25}"
+# Consecutive good probes required. A single 200 is not proof the
+# deploy landed — it can arrive in the gap before a restart, which is
+# exactly how a previous run reported success while the site was about
+# to go down for several minutes.
+NEED_CONSECUTIVE="${NEED_CONSECUTIVE:-3}"
 
 say() { echo "[deploy] $*"; }
 
@@ -113,32 +127,79 @@ if [ "$STATUS" != "finished" ]; then
   exit 1
 fi
 
-say "build finished — waiting for Traefik to pick up the new container"
+say "build finished — waiting for the stack to settle"
 
-# ── 3. Health probe ──────────────────────────────────────────────
-# NO manual network surgery. Traefik watches Docker events and
-# re-syncs on its own; this loop just waits for that to land.
+# ── 3. Wait for container uptime to stabilise ────────────────────
+# Probing immediately is unreliable: Coolify starts containers in
+# waves, and PocketBase applying a migration restarts and takes its
+# depends_on dependents with it. An earlier version of this script
+# probed once, got a 200 five seconds in, and reported success — then
+# the stack restarted a minute later and the site was unreachable
+# until someone noticed. Wait until nothing has restarted recently.
+youngest_core_uptime() {
+  local now min age started c
+  now=$(date -u +%s)
+  min=999999
+  for c in $(sudo docker ps --format '{{.Names}}' | grep -E "$CORE_RE"); do
+    started=$(sudo docker inspect -f '{{.State.StartedAt}}' "$c" 2>/dev/null) || continue
+    age=$(( now - $(date -u -d "$started" +%s 2>/dev/null || echo "$now") ))
+    [ "$age" -lt "$min" ] && min=$age
+  done
+  echo "$min"
+}
+
+core_count() { sudo docker ps --format '{{.Names}}' | grep -cE "$CORE_RE"; }
+
+for i in $(seq 1 40); do          # up to ~200s
+  UP=$(youngest_core_uptime)
+  N=$(core_count)
+  if [ "$N" -ge 4 ] && [ "$UP" -ge "$STABLE_SECONDS" ]; then
+    say "stack settled ($N core containers, youngest up ${UP}s)"
+    break
+  fi
+  [ $((i % 4)) -eq 0 ] && say "  waiting… $N core up, youngest ${UP}s"
+  sleep 5
+done
+
+# ── 4. Sustained health probe ────────────────────────────────────
+# No manual network surgery — Traefik re-syncs from Docker events on
+# its own. This only waits for that, and insists the result holds.
 probe() {
   curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$HEALTH_URL" 2>/dev/null
 }
+ok_code() { case "$1" in 200|302|307) return 0 ;; *) return 1 ;; esac; }
 
+STREAK=0
+SAW_OK=0
 NUDGED=0
 for i in $(seq 1 "$HEALTH_POLL_MAX"); do
   CODE=$(probe)
-  if [ "$CODE" = "200" ] || [ "$CODE" = "302" ] || [ "$CODE" = "307" ]; then
-    say "healthy after $((i*5))s — HTTP $CODE"
-    exit 0
-  fi
-  # Halfway through the grace period, give Traefik exactly one nudge.
-  if [ "$i" -eq $((HEALTH_POLL_MAX / 2)) ] && [ "$NUDGED" -eq 0 ]; then
-    say "still HTTP $CODE at $((i*5))s — nudging coolify-proxy once"
-    sudo docker restart coolify-proxy >/dev/null 2>&1
-    NUDGED=1
+  if ok_code "$CODE"; then
+    STREAK=$((STREAK + 1))
+    SAW_OK=1
+    if [ "$STREAK" -ge "$NEED_CONSECUTIVE" ]; then
+      say "healthy — $STREAK consecutive OK (HTTP $CODE) after $((i*5))s"
+      exit 0
+    fi
+  else
+    # Dropping back to failing AFTER a success is the signature of the
+    # route being lost to a restart. That is precisely when the proxy
+    # needs re-syncing, so nudge here rather than on a fixed timer.
+    if [ "$SAW_OK" -eq 1 ] && [ "$NUDGED" -eq 0 ]; then
+      say "was healthy, now HTTP $CODE — route dropped, nudging coolify-proxy"
+      sudo docker restart coolify-proxy >/dev/null 2>&1
+      NUDGED=1
+    elif [ "$i" -eq $((HEALTH_POLL_MAX / 2)) ] && [ "$NUDGED" -eq 0 ]; then
+      say "still HTTP $CODE at $((i*5))s — nudging coolify-proxy once"
+      sudo docker restart coolify-proxy >/dev/null 2>&1
+      NUDGED=1
+    fi
+    STREAK=0
   fi
   sleep 5
 done
 
 say "UNHEALTHY — last probe returned HTTP $(probe)"
 say "containers:"
-sudo docker ps --format '  {{.Names}}  {{.Status}}' | grep -E 'dashboard|caddy|proxy'
+sudo docker ps --format '  {{.Names}}  {{.Status}}' | grep -E 'dashboard|caddy|pocketbase|proxy'
 exit 1
