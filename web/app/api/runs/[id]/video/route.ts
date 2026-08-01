@@ -34,17 +34,32 @@ export const runtime = "nodejs";
 const URL_TTL_SECONDS = 60 * 30;   // long enough to watch; short enough to not be a share link
 
 let _s3: S3Client | null = null;
-function s3(): S3Client | null {
+
+/**
+ * Client used ONLY for presigning.
+ *
+ * It must be built against the PUBLIC origin, not the internal
+ * `http://minio:9000` the server normally talks to. SigV4 signs the
+ * host and path, and the resulting URL is followed by the user's
+ * browser — signing against the internal hostname produces a URL that
+ * is both unresolvable outside Docker and whose signature wouldn't
+ * match anyway once the host differed.
+ *
+ * The Caddyfile deliberately exposes MinIO at the BUCKET ROOT of the
+ * same domain (`handle /yt-agent-videos/*`) with `header_up Host
+ * {host}` and no prefix stripping — an earlier fix, made because
+ * `handle_path /s3/*` stripped the prefix and MinIO then recomputed
+ * the signature over a different path, giving SignatureDoesNotMatch.
+ * So: endpoint = origin, forcePathStyle = true, and the signed URL
+ * lands on /<bucket>/<key>, exactly what MinIO receives.
+ */
+function s3(origin: string): S3Client | null {
   if (_s3) return _s3;
-  const endpoint =
-    process.env.S3_ENDPOINT_INTERNAL ||
-    process.env.S3_ENDPOINT ||
-    "";
   const accessKeyId = process.env.S3_ACCESS_KEY_ID || process.env.MINIO_ROOT_USER || "";
   const secretAccessKey = process.env.S3_SECRET_ACCESS_KEY || process.env.MINIO_ROOT_PASSWORD || "";
-  if (!endpoint || !accessKeyId || !secretAccessKey) return null;
+  if (!origin || !accessKeyId || !secretAccessKey) return null;
   _s3 = new S3Client({
-    endpoint,
+    endpoint: origin,
     region: process.env.S3_REGION || "us-east-1",
     credentials: { accessKeyId, secretAccessKey },
     forcePathStyle: true,
@@ -84,7 +99,10 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     return NextResponse.json({ error: "lookup failed" }, { status: 500 });
   }
 
-  const c = s3();
+  // Derive the public origin from the incoming request so the signed
+  // URL is valid for whatever domain the user actually reached us on.
+  const origin = new URL(req.url).origin;
+  const c = s3(origin);
   const bucket = process.env.S3_BUCKET || "yt-agent-videos";
   if (!c) {
     return NextResponse.json({ error: "storage not configured" }, { status: 503 });
