@@ -6,7 +6,8 @@ import { Reveal } from "@/components/Reveal";
 import { MarketingNav } from "@/components/MarketingNav";
 import { Tilt3D } from "@/components/Tilt3D";
 import { PricingCard } from "@/components/PricingCard";
-import { InfinityMount } from "@/components/InfinityMount";
+import { HeroBackdropMount } from "@/components/HeroBackdropMount";
+import { ProductShowcase } from "@/components/ProductShowcase";
 import { ArrowRight, Sparkles, Zap, Layers, Waves } from "lucide-react";
 
 /**
@@ -109,64 +110,71 @@ export default async function LandingPage() {
       <MarketingNav ctaHref={c.hero_cta_href} ctaText={c.hero_cta_text} />
 
       {/* ── Hero ─────────────────────────────────────────────────── */}
-      <section className="relative z-10 min-h-[100svh] flex flex-col items-center justify-center text-center px-6 pt-32 pb-24 overflow-hidden">
-        {/* Very faint neon grid — 3% opacity, radial-mask so it fades
-            out at the edges. Only used here, nowhere else on the page. */}
-        <div aria-hidden className="absolute inset-0 neon-grid opacity-[0.03]" />
+      {/* Type-led, product-forward. The WebGL layer is ambient
+          atmosphere behind everything — not a centred ornament — so
+          the section reads as one composition rather than a graphic
+          with copy stacked under it. */}
+      <section className="relative z-10 px-6 pt-40 pb-24 md:pb-32 overflow-hidden">
+        <HeroBackdropMount />
+        <div aria-hidden className="absolute inset-0 neon-grid opacity-[0.025] pointer-events-none" />
 
-        <InfinityMount />
+        <div className="relative max-w-5xl mx-auto text-center">
+          <Reveal delay={100}>
+            <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] backdrop-blur-xl px-3.5 py-1.5 text-[11px] font-medium text-neutral-300 mb-9">
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="absolute inline-flex h-full w-full rounded-full bg-success opacity-75 animate-ping" />
+                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-success" />
+              </span>
+              {c.hero_badge}
+            </div>
+          </Reveal>
 
-        <Reveal delay={200}>
-          <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.02] backdrop-blur-xl px-3.5 py-1.5 text-[11px] font-medium text-neutral-400 mb-8">
-            <span className="relative flex h-1.5 w-1.5">
-              <span className="absolute inline-flex h-full w-full rounded-full bg-success opacity-75 animate-ping" />
-              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-success" />
-            </span>
-            {c.hero_badge}
-          </div>
+          <Reveal delay={200}>
+            <h1 className="text-[clamp(2.9rem,7vw,6rem)] font-semibold tracking-[-0.04em] leading-[0.98] mb-7 text-white">
+              {c.hero_title}
+              <br />
+              <span className="serif-accent bg-gradient-to-br from-white via-accent to-accent-glow bg-clip-text text-transparent">
+                {c.hero_tail}
+              </span>
+            </h1>
+          </Reveal>
+
+          <Reveal delay={300}>
+            <p className="max-w-xl mx-auto text-lg text-neutral-400 leading-relaxed mb-10 font-light">
+              {c.hero_sub}
+            </p>
+          </Reveal>
+
+          <Reveal delay={400}>
+            <div className="flex flex-wrap items-center justify-center gap-3 mb-20">
+              <Link href={c.hero_cta_href}
+                    className="group inline-flex items-center gap-2 h-12 px-7 rounded-full bg-white text-[#050508] text-sm font-semibold hover:bg-white/90 transition-all shadow-[0_10px_40px_rgba(255,255,255,0.15)]">
+                {c.hero_cta_text}
+                <ArrowRight className="h-4 w-4 group-hover:translate-x-0.5 transition-transform" />
+              </Link>
+              <Link href="/demo"
+                    className="inline-flex items-center gap-2 h-12 px-7 rounded-full border border-white/10 bg-white/[0.02] backdrop-blur-xl text-white/85 text-sm font-medium hover:border-white/20 hover:bg-white/[0.04] transition-all">
+                Watch a render, live
+              </Link>
+            </div>
+          </Reveal>
+        </div>
+
+        {/* The product, mid-render. This is the hero's real payload. */}
+        <Reveal delay={550}>
+          <ProductShowcase />
         </Reveal>
 
-        <Reveal delay={300}>
-          <h1 className="max-w-5xl mx-auto text-[clamp(2.75rem,6.5vw,5.75rem)] font-semibold tracking-[-0.035em] leading-[1.02] mb-6 text-white">
-            {c.hero_title}
-            <br />
-            <span className="serif-accent text-transparent bg-clip-text bg-gradient-to-br from-white via-accent to-accent-glow">
-              {c.hero_tail}
-            </span>
-          </h1>
-        </Reveal>
-
-        <Reveal delay={400}>
-          <p className="max-w-2xl mx-auto text-lg md:text-xl text-neutral-400 leading-relaxed mb-10 font-light">
-            {c.hero_sub}
-          </p>
-        </Reveal>
-
-        <Reveal delay={500}>
-          <div className="flex flex-wrap items-center justify-center gap-3">
-            <Link href={c.hero_cta_href}
-                  className="group inline-flex items-center gap-2 h-12 px-7 rounded-full bg-white text-[#050508] text-sm font-semibold hover:bg-white/90 transition-all shadow-[0_10px_40px_rgba(255,255,255,0.15)]">
-              {c.hero_cta_text}
-              <ArrowRight className="h-4 w-4 group-hover:translate-x-0.5 transition-transform" />
-            </Link>
-            <Link href="/demo"
-                  className="inline-flex items-center gap-2 h-12 px-7 rounded-full border border-white/10 bg-white/[0.02] backdrop-blur-xl text-white/85 text-sm font-medium hover:border-white/20 hover:bg-white/[0.04] transition-all">
-              Watch the demo
-            </Link>
-          </div>
-        </Reveal>
-
-        {/* Sub-metrics — real numbers, not a "trusted by" logo salad */}
-        <Reveal delay={700}>
-          <div className="mt-16 grid grid-cols-3 gap-8 md:gap-16 text-center max-w-2xl mx-auto">
+        <Reveal delay={750}>
+          <div className="relative mt-24 grid grid-cols-3 gap-8 md:gap-16 text-center max-w-2xl mx-auto">
             {[
-              ["1,247", "Published today"],
-              ["12 min", "Average time to first video"],
-              ["9",      "Channels on autopilot right now"],
+              ["1,247",  "Published today"],
+              ["12 min", "Topic to published"],
+              ["9",      "Channels on autopilot"],
             ].map(([n, lab]) => (
               <div key={lab as string}>
                 <div className="text-2xl md:text-3xl font-semibold tracking-tight text-white tabular-nums">{n}</div>
-                <div className="text-[11px] uppercase tracking-[0.14em] text-neutral-500 mt-1">{lab}</div>
+                <div className="text-[11px] uppercase tracking-[0.14em] text-neutral-500 mt-1.5">{lab}</div>
               </div>
             ))}
           </div>
