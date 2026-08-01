@@ -10,6 +10,8 @@ type AppUser = {
   role: "user" | "admin" | "superadmin";
   status: "pending" | "active" | "suspended";
   plan_id: string;
+  plan_expires_at?: number;
+  plan_note?: string;
   has_kaggle_key: boolean;
   kaggle_username: string;
   approved_by: string | null;
@@ -44,14 +46,34 @@ export default function AdminUsersPage() {
 
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [filter]);
 
+  // Manual billing: assigning a paid plan without a term means it
+  // never lapses, and with no payment provider nothing else will
+  // catch that. So a paid plan prompts for how long was paid for.
   const changePlan = async (u: AppUser, planId: string) => {
     if (planId === u.plan_id) return;
+    let months = 0;
+    let note = "";
+    if (planId !== "free" && planId !== "founder") {
+      const answer = window.prompt(
+        `How many months has ${u.email} paid for?
+
+` +
+        `Leave blank for no expiry (comped / indefinite).`,
+        "1",
+      );
+      if (answer === null) return;            // cancelled
+      months = parseInt(answer, 10) || 0;
+      note = window.prompt(
+        "Payment note (optional) — e.g. 'PKR 8000, bank transfer'",
+        "",
+      ) || "";
+    }
     setBusy(u.id);
     try {
       const r = await fetch(`/api/admin/users/${u.id}/plan`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plan_id: planId }),
+        body: JSON.stringify({ plan_id: planId, months, note }),
       });
       if (r.ok) await load();
       else { const j = await r.json().catch(() => ({})); alert(`Failed: ${j.error || `HTTP ${r.status}`}`); }
@@ -119,6 +141,7 @@ export default function AdminUsersPage() {
                 <th className="px-2 py-2">Role</th>
                 <th className="px-2 py-2">Status</th>
                 <th className="px-2 py-2">Plan</th>
+                <th className="px-2 py-2">Paid until</th>
                 <th className="px-2 py-2">Kaggle</th>
                 <th className="px-2 py-2">Created</th>
                 <th className="px-3 py-2 text-right">Actions</th>
@@ -153,6 +176,9 @@ export default function AdminUsersPage() {
                     ) : (
                       <span>{u.plan_id || "—"}</span>
                     )}
+                  </td>
+                  <td className="px-2 py-2 text-xs">
+                    <PlanTerm expiresAt={u.plan_expires_at} planId={u.plan_id} note={u.plan_note} />
                   </td>
                   <td className="px-2 py-2 text-xs">
                     {u.has_kaggle_key ? (
@@ -233,4 +259,40 @@ function fmtAge(sec: number | null): string {
   if (delta < 3600) return `${Math.floor(delta/60)}m ago`;
   if (delta < 86400) return `${Math.floor(delta/3600)}h ago`;
   return `${Math.floor(delta/86400)}d ago`;
+}
+
+/** Remaining paid term.
+ *
+ *  Free and founder legitimately have no expiry. A PAID plan with no
+ *  expiry is flagged, because with manual billing nothing else will
+ *  ever revoke it — that's an account being served indefinitely off
+ *  one payment. */
+function PlanTerm({
+  expiresAt, planId, note,
+}: { expiresAt?: number; planId?: string; note?: string }) {
+  const isPaid = planId && planId !== "free" && planId !== "founder";
+  if (!isPaid) return <span className="text-neutral-600">—</span>;
+
+  if (!expiresAt) {
+    return (
+      <span className="pill pill-warn" title="No end date — this will never lapse on its own.">
+        no expiry
+      </span>
+    );
+  }
+
+  const days = Math.ceil((expiresAt - Date.now() / 1000) / 86400);
+  const when = new Date(expiresAt * 1000).toISOString().slice(0, 10);
+
+  if (days < 0) {
+    return <span className="pill pill-danger" title={note || ""}>expired {when}</span>;
+  }
+  if (days <= 7) {
+    return <span className="pill pill-warn" title={note || ""}>{days}d left</span>;
+  }
+  return (
+    <span className="text-neutral-400" title={note || ""}>
+      {when} <span className="text-neutral-600">({days}d)</span>
+    </span>
+  );
 }

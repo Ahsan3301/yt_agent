@@ -36,6 +36,10 @@ export async function GET(req: NextRequest) {
         role: d.role,
         status: d.status,
         plan_id: d.plan_id,
+        // Manual billing: the operator IS the billing system, so the
+        // term and the note are the only record of what was agreed.
+        plan_expires_at: Number(d.plan_expires_at || 0),
+        plan_note: String(d.plan_note || ""),
         has_kaggle_key: Boolean(d.kaggle_username && d.kaggle_key),
         kaggle_username: d.kaggle_username || "",
         approved_by: d.approved_by || null,

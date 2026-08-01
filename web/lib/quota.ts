@@ -36,8 +36,24 @@ async function _resolvePlan(userId: string): Promise<Record<string, unknown> | n
   try {
     const user = await adminDb().collection("app_users").doc(userId).get();
     if (!user.exists) return null;
-    const slug = String((user.data() || {}).plan_id || "").trim();
+    const d = (user.data() || {}) as Record<string, unknown>;
+    let slug = String(d.plan_id || "").trim();
     if (!slug) return null;
+
+    // Manual billing: payments happen outside the product, so nothing
+    // ever tells us a subscription lapsed. An expiry that has passed
+    // means the paid plan's limits no longer apply — fall back to
+    // free rather than leaving someone on Pro indefinitely because
+    // an operator forgot to downgrade them.
+    //
+    // Resolved at read time rather than relying solely on the nightly
+    // sweep, so access is correct the moment the date passes even if
+    // the sweep hasn't run.
+    const expires = Number(d.plan_expires_at || 0);
+    if (expires > 0 && expires < Math.floor(Date.now() / 1000)) {
+      slug = "free";
+    }
+
     const q = await adminDb().collection("plans").where("slug", "==", slug).limit(1).get();
     if (q.empty) return null;
     const doc = q.docs[0];

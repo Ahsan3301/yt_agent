@@ -21,11 +21,26 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
   const { id } = await ctx.params;
-  let body: { plan_id?: string };
+  let body: { plan_id?: string; months?: number; expires_at?: number; note?: string };
   try { body = await req.json(); }
   catch { return NextResponse.json({ error: "invalid body" }, { status: 400 }); }
   const plan_id = String(body.plan_id || "").trim().toLowerCase();
   if (!plan_id) return NextResponse.json({ error: "plan_id required" }, { status: 400 });
+
+  // Manual billing: payments happen outside the product, so the
+  // operator records how long this plan was paid for. `months` is the
+  // convenience path ("they paid for 3 months"); `expires_at` allows
+  // an exact date. Neither given = no expiry, which is right for free
+  // and comped accounts but would be a revenue leak on a paid tier —
+  // hence the warning returned below.
+  const now = Math.floor(Date.now() / 1000);
+  let plan_expires_at = 0;
+  if (Number.isFinite(Number(body.expires_at)) && Number(body.expires_at) > 0) {
+    plan_expires_at = Math.floor(Number(body.expires_at));
+  } else if (Number.isFinite(Number(body.months)) && Number(body.months) > 0) {
+    plan_expires_at = now + Math.floor(Number(body.months)) * 30 * 86400;
+  }
+  const note = String(body.note || "").slice(0, 300);
 
   // Only superadmins can assign the founder plan (which is unlimited).
   if (plan_id === "founder" && auth.tenant.role !== "superadmin") {
@@ -41,13 +56,32 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     const doc = await ref.get();
     if (!doc.exists) return NextResponse.json({ error: "user not found" }, { status: 404 });
     const prev = String((doc.data() as { plan_id?: string }).plan_id || "");
-    await ref.set({ plan_id }, { merge: true });
+    await ref.set({
+      plan_id,
+      plan_expires_at,
+      plan_note: note,
+      plan_assigned_at: now,
+      plan_assigned_by: auth.tenant.userId,
+    }, { merge: true });
     bustQuotaCache(id);
     await audit(auth.tenant, {
       action: "user.plan_change", target_type: "app_users", target_id: id,
-      meta: { previous_plan: prev, new_plan: plan_id },
+      meta: {
+        previous_plan: prev, new_plan: plan_id,
+        expires_at: plan_expires_at || null, note: note || null,
+      },
     }, req);
-    return NextResponse.json({ ok: true, id, plan_id });
+
+    // Surfaced rather than silent: a paid plan with no end date never
+    // lapses, and with no payment provider nothing else will catch it.
+    const isPaidTier = plan_id !== "free" && plan_id !== "founder";
+    return NextResponse.json({
+      ok: true, id, plan_id,
+      expires_at: plan_expires_at || null,
+      warning: (isPaidTier && !plan_expires_at)
+        ? "No expiry set — this paid plan will never lapse on its own."
+        : undefined,
+    });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }
