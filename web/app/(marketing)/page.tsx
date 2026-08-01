@@ -4,7 +4,8 @@ import { redirect } from "next/navigation";
 import { adminDb } from "@/lib/firebase-admin";
 import { Reveal } from "@/components/Reveal";
 import { MarketingNav } from "@/components/MarketingNav";
-import { SiriOrb } from "@/components/SiriOrb";
+import { AnimatedInfinity } from "@/components/AnimatedInfinity";
+import { Tilt3D } from "@/components/Tilt3D";
 
 /**
  * Yven — public landing page.
@@ -116,7 +117,7 @@ export default async function LandingPage() {
                style={{ background: "#fbbf24", animationDelay: "-15s" }} />
         </div>
 
-        <SiriOrb />
+        <AnimatedInfinity />
 
         <Reveal delay={300}>
           <div className="inline-flex items-center gap-2 rounded-full border border-accent/15 bg-white/[0.02] backdrop-blur-xl px-4 py-2 text-xs font-medium text-neutral-400 mb-7">
@@ -174,15 +175,17 @@ export default async function LandingPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl mx-auto">
           {c.features.map((f, i) => (
             <Reveal key={i} delay={i * 100}>
-              <div className="relative rounded-3xl border border-white/5 bg-white/[0.015] backdrop-blur-3xl p-9 h-full overflow-hidden group hover:border-accent/15 hover:-translate-y-1 hover:shadow-[0_30px_80px_rgba(0,0,0,0.4),0_0_40px_rgba(167,139,250,0.05)] transition-all duration-500">
-                <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-accent/30 to-transparent" />
-                <div className="h-13 w-13 rounded-2xl bg-gradient-to-br from-accent to-accent-2 flex items-center justify-center text-2xl mb-5 shadow-[0_0_20px_rgba(167,139,250,0.2)]"
-                     style={{ height: "3.25rem", width: "3.25rem" }}>
-                  {f.icon || "✨"}
+              <Tilt3D max={8} className="h-full">
+                <div className="relative rounded-3xl border border-white/5 bg-white/[0.015] backdrop-blur-3xl p-9 h-full overflow-hidden group hover:border-accent/15 hover:shadow-[0_30px_80px_rgba(0,0,0,0.4),0_0_40px_rgba(167,139,250,0.05)] transition-[border-color,box-shadow] duration-500">
+                  <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-accent/30 to-transparent" />
+                  <div className="h-13 w-13 rounded-2xl bg-gradient-to-br from-accent to-accent-2 flex items-center justify-center text-2xl mb-5 shadow-[0_0_20px_rgba(167,139,250,0.2)]"
+                       style={{ height: "3.25rem", width: "3.25rem", transform: "translateZ(30px)" }}>
+                    {f.icon || "✨"}
+                  </div>
+                  <h3 className="text-lg font-bold mb-2.5" style={{ transform: "translateZ(20px)" }}>{f.title}</h3>
+                  <p className="text-sm text-neutral-400 leading-relaxed" style={{ transform: "translateZ(10px)" }}>{f.body}</p>
                 </div>
-                <h3 className="text-lg font-bold mb-2.5">{f.title}</h3>
-                <p className="text-sm text-neutral-400 leading-relaxed">{f.body}</p>
-              </div>
+              </Tilt3D>
             </Reveal>
           ))}
         </div>
@@ -201,16 +204,29 @@ export default async function LandingPage() {
           <div className="flex flex-wrap items-center justify-center gap-0 max-w-4xl mx-auto">
             {c.pipeline_steps.map((step, i, arr) => (
               <div key={step.n} className="flex items-center">
-                <div className="rounded-3xl border border-white/5 bg-white/[0.015] backdrop-blur-3xl p-9 text-center min-w-[200px] hover:border-accent/20 hover:shadow-[0_0_40px_rgba(167,139,250,0.08)] hover:-translate-y-1 transition-all duration-500">
-                  <div className="mx-auto mb-4 h-11 w-11 rounded-full bg-gradient-to-br from-accent to-accent-2 text-[#050508] font-extrabold text-base flex items-center justify-center shadow-[0_0_20px_rgba(167,139,250,0.3)]">
-                    {step.n}
+                <Tilt3D max={6}>
+                  <div className="rounded-3xl border border-white/5 bg-white/[0.015] backdrop-blur-3xl p-9 text-center min-w-[200px] hover:border-accent/20 hover:shadow-[0_0_40px_rgba(167,139,250,0.08)] transition-[border-color,box-shadow] duration-500 relative overflow-hidden group">
+                    {/* faint step number ghost in the background */}
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                      <span className="text-[9rem] font-black text-white/[0.025] leading-none">{step.n}</span>
+                    </div>
+                    <div className="relative mx-auto mb-4 h-11 w-11 rounded-full bg-gradient-to-br from-accent to-accent-2 text-[#050508] font-extrabold text-base flex items-center justify-center shadow-[0_0_20px_rgba(167,139,250,0.3)]"
+                         style={{ transform: "translateZ(30px)" }}>
+                      {step.n}
+                    </div>
+                    <div className="relative font-bold text-lg mb-1.5" style={{ transform: "translateZ(20px)" }}>{step.title}</div>
+                    <div className="relative text-sm text-neutral-500" style={{ transform: "translateZ(10px)" }}>{step.sub}</div>
                   </div>
-                  <div className="font-bold text-lg mb-1.5">{step.title}</div>
-                  <div className="text-sm text-neutral-500">{step.sub}</div>
-                </div>
+                </Tilt3D>
                 {i < arr.length - 1 && (
-                  <div className="hidden md:block h-0.5 w-16 bg-gradient-to-r from-accent to-accent-2 opacity-40 relative animate-[connectorPulse_3s_ease-in-out_infinite]">
-                    <span className="absolute -right-1 -top-[3px] h-2 w-2 rounded-full bg-accent-2 shadow-[0_0_10px_#67e8f9]" />
+                  <div className="hidden md:flex items-center h-0.5 w-20 relative">
+                    {/* base track */}
+                    <div className="absolute inset-0 bg-gradient-to-r from-accent/40 to-accent-2/40 rounded-full" />
+                    {/* flowing data pulse */}
+                    <span className="absolute top-1/2 left-0 -translate-y-1/2 h-2 w-2 rounded-full bg-accent-2 shadow-[0_0_12px_#67e8f9]"
+                          style={{ animation: `connectorDot 2.4s ease-in-out infinite ${i * 0.6}s` }} />
+                    <span className="absolute top-1/2 left-0 -translate-y-1/2 h-1.5 w-1.5 rounded-full bg-accent-glow shadow-[0_0_10px_#f0abfc]"
+                          style={{ animation: `connectorDot 2.4s ease-in-out infinite ${i * 0.6 + 1.2}s` }} />
                   </div>
                 )}
               </div>
@@ -232,10 +248,11 @@ export default async function LandingPage() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-5xl mx-auto items-start">
             {c.pricing_tiers.map((t, i) => (
               <Reveal key={i} delay={i * 100}>
+                <Tilt3D max={6} scale={t.highlight ? 1.03 : 1} className="h-full">
                 <div className={
-                  "relative rounded-3xl border p-11 hover:-translate-y-2 transition-all duration-500 " +
+                  "relative rounded-3xl border p-11 transition-[border-color,box-shadow] duration-500 h-full " +
                   (t.highlight
-                    ? "border-accent/20 bg-gradient-to-b from-accent/[0.04] to-white/[0.01] scale-[1.03] shadow-[0_30px_80px_rgba(0,0,0,0.4),0_0_50px_rgba(167,139,250,0.06)]"
+                    ? "border-accent/25 bg-gradient-to-b from-accent/[0.05] to-white/[0.01] shadow-[0_30px_80px_rgba(0,0,0,0.4),0_0_50px_rgba(167,139,250,0.08)] animate-[float_6s_ease-in-out_infinite]"
                     : "border-white/5 bg-white/[0.015] backdrop-blur-3xl hover:border-accent/20 hover:shadow-[0_30px_80px_rgba(0,0,0,0.4),0_0_50px_rgba(167,139,250,0.06)]")
                 }>
                   {t.highlight && (
@@ -264,6 +281,7 @@ export default async function LandingPage() {
                     {t.name === "Agency" ? "Contact Sales" : "Start Free Trial"}
                   </Link>
                 </div>
+                </Tilt3D>
               </Reveal>
             ))}
           </div>
@@ -271,17 +289,34 @@ export default async function LandingPage() {
       )}
 
       {/* ── Final CTA ──────────────────────────────────────────── */}
-      <section className="relative z-10 px-6 py-40 text-center">
+      <section className="relative z-10 px-6 py-40 text-center overflow-hidden">
+        {/* Rotating conic aura — pure CSS. Sits behind the copy at low
+            opacity, spins slowly. GPU-composited. */}
+        <div aria-hidden className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <div
+            className="h-[900px] w-[900px] max-w-[140vw] max-h-[140vw] opacity-30"
+            style={{
+              background:
+                "conic-gradient(from 0deg, #a78bfa 0%, #67e8f9 25%, #f0abfc 50%, #fbbf24 75%, #a78bfa 100%)",
+              WebkitMaskImage: "radial-gradient(closest-side, black 40%, transparent 72%)",
+                      maskImage: "radial-gradient(closest-side, black 40%, transparent 72%)",
+              animation: "conicSpin 30s linear infinite",
+              willChange: "transform",
+            }}
+          />
+        </div>
         <Reveal>
-          <h2 className="text-4xl md:text-6xl font-extrabold tracking-tight mb-5 text-gradient-hero max-w-3xl mx-auto">
-            Attach Your Channel.<br />Watch It Grow.
-          </h2>
-          <p className="text-neutral-400 text-lg max-w-md mx-auto mb-10">
-            Join 2,000+ creators who replaced their entire video stack with one engine.
-          </p>
-          <Link href={c.hero_cta_href} className="btn btn-primary h-14 px-11 text-lg font-bold">
-            {c.hero_cta_text} — Free
-          </Link>
+          <div className="relative">
+            <h2 className="text-4xl md:text-6xl font-extrabold tracking-tight mb-5 text-gradient-hero max-w-3xl mx-auto">
+              Attach Your Channel.<br />Watch It Grow.
+            </h2>
+            <p className="text-neutral-400 text-lg max-w-md mx-auto mb-10">
+              Join 2,000+ creators who replaced their entire video stack with one engine.
+            </p>
+            <Link href={c.hero_cta_href} className="btn btn-primary h-14 px-11 text-lg font-bold">
+              {c.hero_cta_text} — Free
+            </Link>
+          </div>
         </Reveal>
       </section>
 
