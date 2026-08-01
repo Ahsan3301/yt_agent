@@ -94,7 +94,9 @@ export async function POST(req: NextRequest) {
         keepIds.add(it.id);
         await coll.doc(it.id).set(payload, { merge: true });
       } else {
-        const ref = await coll.add({ ...payload, created: now });
+        // PB adapter has no .add() — use .doc() with no arg for auto-id.
+        const ref = coll.doc();
+        await ref.set({ ...payload, created: now });
         keepIds.add(ref.id);
       }
     }

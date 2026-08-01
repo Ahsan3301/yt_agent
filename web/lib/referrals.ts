@@ -58,7 +58,8 @@ export async function getOrCreateReferral(userId: string): Promise<{
   if (!code) throw new Error("could not allocate referral code after 6 attempts");
   const now = Math.floor(Date.now() / 1000);
   const row = { user_id: userId, code, created_at: now };
-  await coll.add(row);
+  // The PB adapter has no .add() — use .doc() with no arg for auto-id.
+  await coll.doc().set(row);
   return row;
 }
 
@@ -76,7 +77,7 @@ export async function attributeSignup(referrerUserId: string, referredUserId: st
   const coll = adminDb().collection("referral_signups");
   const existing = await coll.where("referred_user_id", "==", referredUserId).limit(1).get();
   if (!existing.empty) return;
-  await coll.add({
+  await coll.doc().set({
     referrer_user_id: referrerUserId,
     referred_user_id: referredUserId,
     referred_email:   referredEmail,

@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
     const now = Math.floor(Date.now() / 1000);
     const payload = { email, first_name: first, channel_url: channel, ip, created_at: now };
     if (dupe.empty) {
-      await adminDb().collection("demo_waitlist").add(payload);
+      await adminDb().collection("demo_waitlist").doc().set(payload);
     } else {
       await dupe.docs[0].ref.set(payload, { merge: true });
     }
