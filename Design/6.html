@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Free Live Demo — Yven</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#050508;--glass:rgba(255,255,255,0.015);--border:rgba(255,255,255,0.06);--text:#f1f5f9;--muted:#64748b;--lavender:#a78bfa;--cyan:#67e8f9;--pink:#f0abfc;}
+*{margin:0;padding:0;box-sizing:border-box;font-family:'Inter',sans-serif;}
+body{background:var(--bg);color:var(--text);position:relative;}
+body::before{content:"";position:fixed;inset:0;opacity:0.02;pointer-events:none;z-index:9999;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+.glow{position:fixed;width:500px;height:500px;border-radius:50%;filter:blur(120px);pointer-events:none;z-index:0;}
+.glow-1{background:radial-gradient(circle,rgba(167,139,250,0.08),transparent 70%);top:-100px;left:50%;transform:translateX(-50%);}
+.glow-2{background:radial-gradient(circle,rgba(103,232,249,0.06),transparent 70%);bottom:-100px;right:-100px;}
+.hero{min-height:60vh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:140px 24px 80px;position:relative;z-index:1;}
+.badge{display:inline-flex;align-items:center;gap:8px;padding:8px 18px;background:var(--glass);backdrop-filter:blur(20px);border:1px solid var(--border);border-radius:100px;font-size:0.75rem;font-weight:600;color:var(--muted);margin-bottom:28px;}
+.badge .dot{width:7px;height:7px;background:#22c55e;border-radius:50%;box-shadow:0 0 10px #22c55e;animation:pulseDot 2s ease-in-out infinite;}
+@keyframes pulseDot{0%,100%{opacity:1;}50%{opacity:0.4;}}
+h1{font-size:clamp(2.2rem,5vw,3.8rem);font-weight:800;letter-spacing:-0.04em;max-width:700px;margin-bottom:16px;background:linear-gradient(180deg,#fff,rgba(255,255,255,0.8));-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+.hero>p{color:var(--muted);font-size:1.15rem;max-width:520px;margin-bottom:48px;}
+.countdown{display:flex;gap:20px;justify-content:center;margin-bottom:48px;}
+.count-box{background:var(--glass);backdrop-filter:blur(20px);border:1px solid var(--border);border-radius:20px;padding:24px 32px;text-align:center;min-width:100px;position:relative;overflow:hidden;}
+.count-box::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(167,139,250,0.3),transparent);}
+.count-box .num{font-size:2.8rem;font-weight:800;background:linear-gradient(135deg,var(--lavender),var(--cyan));-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+.count-box .lab{font-size:0.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.1em;margin-top:4px;}
+form{max-width:440px;width:100%;margin:0 auto 100px;background:var(--glass);backdrop-filter:blur(30px);border:1px solid var(--border);border-radius:28px;padding:44px;position:relative;z-index:1;overflow:hidden;}
+form::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(167,139,250,0.3),transparent);}
+form h2{font-size:1.3rem;font-weight:800;margin-bottom:8px;}
+form>p{color:var(--muted);font-size:0.95rem;margin-bottom:28px;}
+.form-group{margin-bottom:20px;}
+label{display:block;font-size:0.85rem;font-weight:600;margin-bottom:8px;}
+input{width:100%;padding:14px 18px;background:rgba(255,255,255,0.02);border:1px solid var(--border);border-radius:12px;color:var(--text);font-size:1rem;outline:none;transition:border-color 0.3s;}
+input:focus{border-color:var(--lavender);}
+button.register{width:100%;padding:16px;background:linear-gradient(135deg,var(--lavender),var(--cyan));border:none;border-radius:100px;color:#050508;font-weight:700;font-size:1rem;cursor:pointer;margin-top:8px;position:relative;overflow:hidden;transition:all 0.3s;}
+button.register::before{content:"";position:absolute;inset:-2px;border-radius:100px;background:linear-gradient(135deg,var(--lavender),var(--cyan),var(--pink));filter:blur(12px);opacity:0.4;z-index:-1;transition:opacity 0.3s;}
+button.register:hover{transform:translateY(-2px);}
+button.register:hover::before{opacity:0.8;}
+.agenda{max-width:800px;margin:0 auto;padding:0 24px 120px;position:relative;z-index:1;}
+.agenda h2{text-align:center;font-size:2.2rem;font-weight:800;margin-bottom:56px;letter-spacing:-0.03em;background:linear-gradient(180deg,#fff,rgba(255,255,255,0.8));-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+.agenda-item{display:flex;gap:24px;margin-bottom:32px;padding:32px;background:var(--glass);backdrop-filter:blur(20px);border:1px solid var(--border);border-radius:24px;align-items:flex-start;position:relative;overflow:hidden;transition:all 0.3s;}
+.agenda-item:hover{border-color:rgba(167,139,250,0.1);}
+.agenda-item::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(167,139,250,0.2),transparent);}
+.time{min-width:80px;text-align:right;font-size:0.875rem;font-weight:700;color:var(--lavender);padding-top:4px;}
+.agenda-item h3{font-size:1.15rem;font-weight:700;margin-bottom:6px;}
+.agenda-item p{color:var(--muted);font-size:0.95rem;line-height:1.6;}
+</style>
+</head>
+<body>
+<div class="glow glow-1"></div>
+<div class="glow glow-2"></div>
+<section class="hero">
+  <div class="badge"><span class="dot"></span>Live Workshop</div>
+  <h1>Watch Us Build a Viral Video from Scratch in 12 Minutes</h1>
+  <p>See Yven's full pipeline live: trend research → script → visuals → edit → publish. No slides, just real automation.</p>
+  <div class="countdown">
+    <div class="count-box"><div class="num" id="days">02</div><div class="lab">Days</div></div>
+    <div class="count-box"><div class="num" id="hours">14</div><div class="lab">Hours</div></div>
+    <div class="count-box"><div class="num" id="mins">35</div><div class="lab">Mins</div></div>
+    <div class="count-box"><div class="num" id="secs">48</div><div class="lab">Secs</div></div>
+  </div>
+</section>
+<form onsubmit="event.preventDefault();alert('Registered! Check your email.');">
+  <h2>Reserve Your Spot</h2>
+  <p>Only 500 seats. Free forever.</p>
+  <div class="form-group"><label>First Name</label><input type="text" placeholder="Marcus" required></div>
+  <div class="form-group"><label>Email</label><input type="email" placeholder="marcus@creator.com" required></div>
+  <div class="form-group"><label>YouTube Channel URL (optional)</label><input type="text" placeholder="youtube.com/c/YourChannel"></div>
+  <button class="register">Save My Seat</button>
+</form>
+<section class="agenda">
+  <h2>What You'll See</h2>
+  <div class="agenda-item"><div class="time">0:00</div><div><h3>Live Trend Discovery</h3><p>Watch Yven scan millions of data points and pick a high-intent, low-competition topic in real time.</p></div></div>
+  <div class="agenda-item"><div class="time">3:00</div><div><h3>Script & Hook Generation</h3><p>See the AI write a retention-optimized script with a hook that matches the channel's DNA.</p></div></div>
+  <div class="agenda-item"><div class="time">6:00</div><div><h3>Visuals & Voiceover</h3><p>Storyboard prep, image generation, and studio-quality AI voiceover — all automated.</p></div></div>
+  <div class="agenda-item"><div class="time">9:00</div><div><h3>Edit, Subtitles & QA</h3><p>Full video compilation with auto-editing, subtitles, and quality checks.</p></div></div>
+  <div class="agenda-item"><div class="time">12:00</div><div><h3>Publish & Q&A</h3><p>Multi-platform scheduling and live questions from the audience.</p></div></div>
+</section>
+<script>
+function updateCountdown(){
+  const now=new Date();
+  const target=new Date(now.getTime()+2*86400000+14*3600000);
+  const diff=target-now;
+  document.getElementById('days').textContent=String(Math.floor(diff/86400000)).padStart(2,'0');
+  document.getElementById('hours').textContent=String(Math.floor((diff%86400000)/3600000)).padStart(2,'0');
+  document.getElementById('mins').textContent=String(Math.floor((diff%3600000)/60000)).padStart(2,'0');
+  document.getElementById('secs').textContent=String(Math.floor((diff%60000)/1000)).padStart(2,'0');
+}
+setInterval(updateCountdown,1000);
+updateCountdown();
+</script>
+</body>
+</html>

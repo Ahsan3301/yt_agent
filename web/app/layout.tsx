@@ -18,8 +18,8 @@ import { ToastProvider } from "@/components/Toast";
  * (login errors, signup errors, etc.).
  */
 export const metadata: Metadata = {
-  title: "Shortsmith — Ship YouTube Shorts on autopilot",
-  description: "Turn a topic into a published YouTube Short in minutes. Research, script, voiceover, visuals, editing, and upload — done for you, on every channel you run.",
+  title: "Yven — The First Complete Video Automation Engine",
+  description: "Attach your channel. Yven researches trends, writes scripts, generates visuals, edits, adds subtitles, and publishes — while you sleep. One engine replaces the entire stack.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Roast My Channel — Free AI Audit | Yven</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#050508;--glass:rgba(255,255,255,0.015);--border:rgba(255,255,255,0.06);--text:#f1f5f9;--muted:#64748b;--lavender:#a78bfa;--cyan:#67e8f9;--pink:#f0abfc;--amber:#fbbf24;}
+*{margin:0;padding:0;box-sizing:border-box;font-family:'Inter',sans-serif;}
+body{background:var(--bg);color:var(--text);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;position:relative;}
+body::before{content:"";position:fixed;inset:0;opacity:0.02;pointer-events:none;z-index:9999;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+.glow{position:fixed;width:400px;height:400px;border-radius:50%;filter:blur(120px);pointer-events:none;z-index:0;animation:auroraFloat 16s ease-in-out infinite;}
+.glow-1{background:radial-gradient(circle,rgba(167,139,250,0.1),transparent 70%);top:-50px;left:-50px;}
+.glow-2{background:radial-gradient(circle,rgba(251,191,36,0.08),transparent 70%);bottom:-50px;right:-50px;animation-delay:-8s;}
+@keyframes auroraFloat{0%,100%{transform:translate(0,0) scale(1);}50%{transform:translate(20px,-30px) scale(1.1);}}
+.card{max-width:520px;width:100%;background:var(--glass);backdrop-filter:blur(30px);border:1px solid var(--border);border-radius:28px;padding:48px;text-align:center;position:relative;overflow:hidden;z-index:1;}
+.card::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(167,139,250,0.3),transparent);}
+.logo{font-size:1.5rem;font-weight:800;background:linear-gradient(135deg,var(--lavender),var(--cyan));-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:8px;}
+h1{font-size:1.8rem;font-weight:800;margin-bottom:12px;letter-spacing:-0.02em;}
+.subtitle{color:var(--muted);margin-bottom:32px;font-size:1rem;}
+.input-wrap{display:flex;gap:12px;margin-bottom:28px;}
+input[type="text"]{flex:1;padding:16px 20px;background:rgba(255,255,255,0.02);border:1px solid var(--border);border-radius:14px;color:var(--text);font-size:1rem;outline:none;transition:border-color 0.3s;}
+input[type="text"]:focus{border-color:var(--lavender);}
+button.analyze{padding:16px 28px;background:linear-gradient(135deg,var(--lavender),var(--cyan));border:none;border-radius:14px;color:#050508;font-weight:700;font-size:1rem;cursor:pointer;transition:all 0.3s;white-space:nowrap;position:relative;overflow:hidden;}
+button.analyze::before{content:"";position:absolute;inset:-2px;border-radius:14px;background:linear-gradient(135deg,var(--lavender),var(--cyan),var(--pink));filter:blur(10px);opacity:0.4;z-index:-1;transition:opacity 0.3s;}
+button.analyze:hover{transform:translateY(-2px);}
+button.analyze:hover::before{opacity:0.8;}
+.tips{text-align:left;display:none;}
+.tips.show{display:block;animation:fadeIn 0.6s ease;}
+@keyframes fadeIn{from{opacity:0;transform:translateY(20px);}to{opacity:1;transform:translateY(0);}}
+.tip{padding:24px;margin-bottom:14px;background:rgba(255,255,255,0.01);border:1px solid var(--border);border-radius:20px;position:relative;overflow:hidden;transition:all 0.3s;}
+.tip:hover{border-color:rgba(167,139,250,0.1);}
+.tip::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(167,139,250,0.2),transparent);}
+.tip-num{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;background:linear-gradient(135deg,var(--amber),var(--pink));border-radius:50%;font-weight:800;font-size:0.875rem;color:#050508;margin-bottom:12px;box-shadow:0 0 12px rgba(251,191,36,0.2);}
+.tip h3{font-size:1.05rem;font-weight:700;margin-bottom:8px;}
+.tip p{color:var(--muted);font-size:0.9rem;line-height:1.7;}
+.cta-tip{margin-top:28px;padding:24px;background:linear-gradient(135deg,rgba(167,139,250,0.06),rgba(103,232,249,0.03));border:1px solid rgba(167,139,250,0.12);border-radius:20px;text-align:center;position:relative;overflow:hidden;}
+.cta-tip::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(167,139,250,0.3),transparent);}
+.cta-tip p{margin-bottom:16px;color:var(--muted);font-size:0.95rem;}
+.btn-small{background:linear-gradient(135deg,var(--lavender),var(--cyan));color:#050508;border:none;padding:14px 28px;border-radius:100px;font-weight:700;cursor:pointer;font-size:0.95rem;position:relative;overflow:hidden;transition:all 0.3s;}
+.btn-small::before{content:"";position:absolute;inset:-2px;border-radius:100px;background:linear-gradient(135deg,var(--lavender),var(--cyan),var(--pink));filter:blur(8px);opacity:0.4;z-index:-1;transition:opacity 0.3s;}
+.btn-small:hover{transform:translateY(-2px);}
+.btn-small:hover::before{opacity:0.8;}
+</style>
+</head>
+<body>
+<div class="glow glow-1"></div>
+<div class="glow glow-2"></div>
+<div class="card">
+  <div class="logo">Yven</div>
+  <h1>Roast My Channel</h1>
+  <p class="subtitle">Paste your YouTube channel URL. Our AI analyzes your last 10 videos and gives you 3 actionable tips to blow up.</p>
+  <div class="input-wrap">
+    <input type="text" placeholder="youtube.com/c/YourChannel" id="channelUrl">
+    <button class="analyze" onclick="runAudit()">Analyze</button>
+  </div>
+  <div class="tips" id="tipsBox">
+    <div class="tip">
+      <div class="tip-num">1</div>
+      <h3>Your intros are losing 40% of viewers</h3>
+      <p>Your average viewer drops off at 0:08. Start with a pattern interrupt or a bold claim in the first 3 seconds. Yven's hook engine can rewrite your openings.</p>
+    </div>
+    <div class="tip">
+      <div class="tip-num">2</div>
+      <h3>Thumbnail contrast is too low</h3>
+      <p>3 of your last 10 thumbnails use dark text on dark backgrounds. Add a high-contrast face or bright accent color. Yven auto-generates CTR-optimized thumbnails.</p>
+    </div>
+    <div class="tip">
+      <div class="tip-num">3</div>
+      <h3>Posting at random times</h3>
+      <p>Your audience is most active at 7–9 PM EST, but 60% of your videos went live at 2 PM. Yven auto-schedules at peak hours for maximum reach.</p>
+    </div>
+    <div class="cta-tip">
+      <p>Want Yven to fix these automatically on your next 10 videos?</p>
+      <button class="btn-small" onclick="alert('Redirecting to signup...')">Unlock Full Audit</button>
+    </div>
+  </div>
+</div>
+<script>
+function runAudit(){
+  const url=document.getElementById('channelUrl').value;
+  if(!url){alert('Please enter a channel URL');return;}
+  const btn=document.querySelector('.analyze');
+  btn.textContent='Analyzing...';
+  setTimeout(()=>{btn.textContent='Analyze';document.getElementById('tipsBox').classList.add('show');},1500);
+}
+</script>
+</body>
+</html>

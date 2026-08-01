@@ -61,10 +61,10 @@ export default function LoginPage() {
       {/* Left panel — brand + trust */}
       <aside className="hidden md:flex flex-col justify-between p-12 relative border-r border-line/40 bg-bg-1/40 backdrop-blur">
         <Link href="/" className="flex items-center gap-2.5 group w-fit">
-          <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-accent via-accent-glow to-accent-spark flex items-center justify-center shadow-glow group-hover:scale-105 transition-transform">
+          <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-accent via-accent-2 to-accent-glow flex items-center justify-center shadow-glow group-hover:scale-105 transition-transform">
             <Play className="h-4 w-4 text-white fill-white" strokeWidth={0} />
           </div>
-          <span className="font-semibold tracking-tight">Shortsmith</span>
+          <span className="font-extrabold tracking-tight bg-gradient-to-br from-accent to-accent-2 bg-clip-text text-transparent">Yven</span>
         </Link>
 
         <div className="space-y-6 max-w-md">
@@ -73,17 +73,17 @@ export default function LoginPage() {
             Welcome back
           </div>
           <h1 className="text-3xl md:text-4xl font-bold tracking-tight leading-tight">
-            Every video, <span className="text-gradient-static">researched, cut, and published</span> without you.
+            Every video — <span className="text-gradient-static">researched, cut, and published</span> — while you sleep.
           </h1>
           <ul className="space-y-3 text-sm text-neutral-400">
-            <TrustLine>Multi-account YouTube publishing</TrustLine>
-            <TrustLine>Neural narration in 20+ languages</TrustLine>
-            <TrustLine>Schedule once, publish forever</TrustLine>
+            <TrustLine>Attach any YouTube channel</TrustLine>
+            <TrustLine>Channel DNA learns your voice</TrustLine>
+            <TrustLine>Approval mode or full autopilot</TrustLine>
           </ul>
         </div>
 
         <div className="text-xs text-neutral-500">
-          © {new Date().getUTCFullYear()} Shortsmith
+          © {new Date().getUTCFullYear()} Yven
         </div>
       </aside>
 
@@ -91,10 +91,10 @@ export default function LoginPage() {
       <main className="flex flex-col items-center justify-center p-6 md:p-12 relative">
         {/* Mobile brand strip */}
         <Link href="/" className="md:hidden absolute top-6 left-6 flex items-center gap-2">
-          <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-accent via-accent-glow to-accent-spark flex items-center justify-center shadow-glow">
+          <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-accent via-accent-2 to-accent-glow flex items-center justify-center shadow-glow">
             <Play className="h-3.5 w-3.5 text-white fill-white" strokeWidth={0} />
           </div>
-          <span className="font-semibold tracking-tight text-sm">Shortsmith</span>
+          <span className="font-extrabold tracking-tight text-sm bg-gradient-to-br from-accent to-accent-2 bg-clip-text text-transparent">Yven</span>
         </Link>
 
         <div className="w-full max-w-sm animate-[fadeUp_0.6s_cubic-bezier(0.16,1,0.3,1)_both]">

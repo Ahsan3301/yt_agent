@@ -91,10 +91,10 @@ export default function SignupPage() {
       {/* Left panel */}
       <aside className="hidden md:flex flex-col justify-between p-12 relative border-r border-line/40 bg-bg-1/40 backdrop-blur">
         <Link href="/" className="flex items-center gap-2.5 group w-fit">
-          <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-accent via-accent-glow to-accent-spark flex items-center justify-center shadow-glow group-hover:scale-105 transition-transform">
+          <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-accent via-accent-2 to-accent-glow flex items-center justify-center shadow-glow group-hover:scale-105 transition-transform">
             <Play className="h-4 w-4 text-white fill-white" strokeWidth={0} />
           </div>
-          <span className="font-semibold tracking-tight">Shortsmith</span>
+          <span className="font-extrabold tracking-tight bg-gradient-to-br from-accent to-accent-2 bg-clip-text text-transparent">Yven</span>
         </Link>
 
         <div className="space-y-8 max-w-md">
@@ -103,17 +103,17 @@ export default function SignupPage() {
             Access is review-gated
           </div>
           <h1 className="text-3xl md:text-4xl font-bold tracking-tight leading-tight">
-            Start shipping <span className="text-gradient-static">Shorts on autopilot.</span>
+            Attach your channel. <span className="text-gradient-static">Yven does the rest.</span>
           </h1>
           <div className="space-y-4">
-            <BenefitRow icon={Zap}    title="One click to publish" body="Topic → script → voiceover → video → upload." />
-            <BenefitRow icon={Layers} title="Multi-channel"        body="Each channel gets its own tone, voice, and schedule." />
-            <BenefitRow icon={Rocket} title="Runs on cron"         body="Daily quotas, timezone-aware. Set once, publish forever." />
+            <BenefitRow icon={Zap}    title="One-click publish"  body="Topic → script → voiceover → video → upload." />
+            <BenefitRow icon={Layers} title="Multi-channel DNA"  body="Each channel gets its own tone, voice, and schedule." />
+            <BenefitRow icon={Rocket} title="Approval or autopilot" body="Review every video, or let it publish while you sleep." />
           </div>
         </div>
 
         <div className="text-xs text-neutral-500 flex items-center justify-between">
-          <span>© {new Date().getUTCFullYear()} Shortsmith</span>
+          <span>© {new Date().getUTCFullYear()} Yven</span>
           <Link href="/login" className="hover:text-neutral-300 transition">Already have an account? →</Link>
         </div>
       </aside>
@@ -121,10 +121,10 @@ export default function SignupPage() {
       {/* Right panel — form */}
       <main className="flex flex-col items-center justify-center p-6 md:p-12 relative">
         <Link href="/" className="md:hidden absolute top-6 left-6 flex items-center gap-2">
-          <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-accent via-accent-glow to-accent-spark flex items-center justify-center shadow-glow">
+          <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-accent via-accent-2 to-accent-glow flex items-center justify-center shadow-glow">
             <Play className="h-3.5 w-3.5 text-white fill-white" strokeWidth={0} />
           </div>
-          <span className="font-semibold tracking-tight text-sm">Shortsmith</span>
+          <span className="font-extrabold tracking-tight text-sm bg-gradient-to-br from-accent to-accent-2 bg-clip-text text-transparent">Yven</span>
         </Link>
 
         <div className="w-full max-w-sm animate-[fadeUp_0.6s_cubic-bezier(0.16,1,0.3,1)_both]">

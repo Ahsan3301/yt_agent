@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Time Saved Calculator — Yven</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#050508;--glass:rgba(255,255,255,0.015);--border:rgba(255,255,255,0.06);--text:#f1f5f9;--muted:#64748b;--lavender:#a78bfa;--cyan:#67e8f9;--pink:#f0abfc;}
+*{margin:0;padding:0;box-sizing:border-box;font-family:'Inter',sans-serif;}
+body{background:var(--bg);color:var(--text);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;position:relative;}
+body::before{content:"";position:fixed;inset:0;opacity:0.02;pointer-events:none;z-index:9999;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+.glow{position:fixed;width:400px;height:400px;border-radius:50%;filter:blur(120px);pointer-events:none;z-index:0;}
+.glow-1{background:radial-gradient(circle,rgba(167,139,250,0.1),transparent 70%);top:-100px;left:-50px;}
+.glow-2{background:radial-gradient(circle,rgba(103,232,249,0.08),transparent 70%);bottom:-100px;right:-50px;}
+.card{max-width:540px;width:100%;background:var(--glass);backdrop-filter:blur(30px);border:1px solid var(--border);border-radius:28px;padding:48px;position:relative;overflow:hidden;z-index:1;}
+.card::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(167,139,250,0.3),transparent);}
+.logo{font-size:1.3rem;font-weight:800;background:linear-gradient(135deg,var(--lavender),var(--cyan));-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:8px;}
+h1{font-size:1.6rem;font-weight:800;margin-bottom:36px;letter-spacing:-0.02em;}
+.input-group{margin-bottom:28px;}
+.input-group label{display:block;font-size:0.95rem;font-weight:600;margin-bottom:14px;}
+.slider-wrap{display:flex;align-items:center;gap:16px;}
+input[type="range"]{flex:1;-webkit-appearance:none;height:6px;background:rgba(255,255,255,0.04);border-radius:100px;outline:none;}
+input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;width:24px;height:24px;background:linear-gradient(135deg,var(--lavender),var(--cyan));border-radius:50%;cursor:pointer;box-shadow:0 0 16px rgba(167,139,250,0.3);transition:transform 0.2s;}
+input[type="range"]::-webkit-slider-thumb:hover{transform:scale(1.1);}
+.val-box{min-width:70px;text-align:center;padding:10px 14px;background:rgba(255,255,255,0.02);border:1px solid var(--border);border-radius:10px;font-weight:700;font-size:0.95rem;background:linear-gradient(135deg,#fff,rgba(167,139,250,0.8));-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+.result-box{margin-top:36px;padding:36px;background:linear-gradient(135deg,rgba(167,139,250,0.06),rgba(103,232,249,0.03));border:1px solid rgba(167,139,250,0.12);border-radius:20px;text-align:center;position:relative;overflow:hidden;}
+.result-box::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(167,139,250,0.4),transparent);}
+.result-box h2{font-size:0.9rem;color:var(--muted);font-weight:500;margin-bottom:14px;text-transform:uppercase;letter-spacing:0.1em;}
+.result-box .big{font-size:3.5rem;font-weight:800;background:linear-gradient(135deg,var(--lavender),var(--cyan));-webkit-background-clip:text;-webkit-text-fill-color:transparent;line-height:1;}
+.result-box .sub{margin-top:14px;color:var(--muted);font-size:1rem;}
+</style>
+</head>
+<body>
+<div class="glow glow-1"></div>
+<div class="glow glow-2"></div>
+<div class="card">
+  <div class="logo">Yven</div>
+  <h1>How much time will you save?</h1>
+  <div class="input-group">
+    <label>Videos you make per month</label>
+    <div class="slider-wrap">
+      <input type="range" min="1" max="50" value="8" id="videoSlider" oninput="calculate()">
+      <div class="val-box" id="videoVal">8</div>
+    </div>
+  </div>
+  <div class="input-group">
+    <label>Hours spent per video</label>
+    <div class="slider-wrap">
+      <input type="range" min="1" max="40" value="12" id="hourSlider" oninput="calculate()">
+      <div class="val-box" id="hourVal">12</div>
+    </div>
+  </div>
+  <div class="input-group">
+    <label>Your hourly value ($)</label>
+    <div class="slider-wrap">
+      <input type="range" min="10" max="500" value="80" id="rateSlider" oninput="calculate()">
+      <div class="val-box" id="rateVal">$80</div>
+    </div>
+  </div>
+  <div class="result-box">
+    <h2>Yven saves you every month</h2>
+    <div class="big" id="hoursSaved">96 hrs</div>
+    <div class="sub" id="moneySaved">That's $7,680 in labor value</div>
+  </div>
+</div>
+<script>
+function calculate(){
+  const v=parseInt(document.getElementById('videoSlider').value);
+  const h=parseInt(document.getElementById('hourSlider').value);
+  const r=parseInt(document.getElementById('rateSlider').value);
+  document.getElementById('videoVal').textContent=v;
+  document.getElementById('hourVal').textContent=h;
+  document.getElementById('rateVal').textContent='$'+r;
+  const total=v*h;const value=total*r;
+  document.getElementById('hoursSaved').textContent=total+' hrs';
+  document.getElementById('moneySaved').textContent="That's $"+value.toLocaleString()+" in labor value";
+}
+calculate();
+</script>
+</body>
+</html>

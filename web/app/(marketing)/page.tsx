@@ -1,46 +1,49 @@
 import Link from "next/link";
-import {
-  Sparkles, ArrowRight, Play, Check, Zap, Mic, Video, Layers,
-  Clock, Palette, Wand2, Rocket, TrendingUp, Star,
-} from "lucide-react";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { adminDb } from "@/lib/firebase-admin";
 import { Reveal } from "@/components/Reveal";
+import { MarketingNav } from "@/components/MarketingNav";
+import { SiriOrb } from "@/components/SiriOrb";
 
 /**
- * Public landing page.
+ * Yven — public landing page.
  *
- * Hero + features + pricing are editable at /superadmin/content
- * (60s revalidate). Content falls back to DEFAULT_CONTENT below —
- * written in user-benefit language, no internal-plumbing terms.
+ * Server component so we can hydrate hero + features + pricing
+ * from `landing_content` (editable at /superadmin/content, 60s
+ * revalidate). Copy falls back to DEFAULT_CONTENT below — pulled
+ * from the master design in /Design/1.html.
  *
- * Design: layered ambient blobs, animated gradient text, scroll-
- * triggered fade-ups on every section. Palette + motion tokens live
- * in web/app/globals.css so the whole app inherits the redesign.
+ * Visual system lives in web/app/globals.css. This file assembles
+ * the aurora blobs + neon grid + orb hero + feature/pipeline/pricing
+ * sections and stitches CMS copy in.
  */
 export const revalidate = 60;
 
 const CONTENT_ID = "landingcontent0";
 
-type Feature = { title: string; body: string };
+type Feature = { title: string; body: string; icon?: string };
 type Tier = { name: string; price: string; sub?: string; features?: string[]; highlight?: boolean };
 
 const DEFAULT_CONTENT = {
-  hero_title: "Ship YouTube Shorts on autopilot",
-  hero_sub:
-    "Turn a topic into a published Short in minutes. Research, script, voiceover, visuals, editing, and upload — done for you, on every channel you run.",
-  hero_cta_text: "Request access",
+  hero_badge:    "Now Live — 1,247 videos published today",
+  hero_title:    "The First Complete Video Automation Engine",
+  hero_sub:      "Attach your channel. Yven researches trends, writes scripts, generates visuals, edits, adds subtitles, and publishes — while you sleep.",
+  hero_cta_text: "Get Early Access",
   hero_cta_href: "/signup",
   features: [
-    { title: "Topic to published in one click", body: "Give it a niche. It writes the script, records the voiceover, generates visuals, cuts the video, and uploads to YouTube — with the right title, description, and tags." },
-    { title: "Every channel gets its own voice", body: "Horror, wisdom, finance, whatever you run — each channel has its own tone, narrator, thumbnail style, publish schedule, and YouTube account. Set once, publish forever." },
-    { title: "Multi-account YouTube publishing", body: "Connect any number of YouTube accounts. Route each channel to the right one. No re-authing, no browser tabs, no manual uploads." },
-    { title: "Human-quality narration in any language", body: "Neural voices in English, Urdu, Hindi, Spanish, French, German, and more. Choose the accent, pace, and pitch per channel." },
-    { title: "Real research, not made-up filler", body: "Optional web-research mode grounds every script in current facts before writing. Toggleable per channel." },
-    { title: "Schedule and forget", body: "Set a daily quota per channel. It runs on cron, respects your timezone, and publishes without you clicking a button." },
+    { icon: "🔍", title: "Trending & SEO Research",  body: "Scans millions of data points across platforms to identify high-intent, low-competition topics before they peak." },
+    { icon: "✍️", title: "Script & Hook Creation",   body: "AI writes retention-optimized scripts with hooks, story arcs, and CTAs tailored to your channel's voice." },
+    { icon: "🎨", title: "Storyboard & Visuals",     body: "Auto storyboard prep with custom image generation prompts. Finds or creates visuals matching your style." },
+    { icon: "🎙️", title: "Voiceover & Audio",        body: "Studio-quality AI voice synced to script. Multiple voices, tone matching, background music." },
+    { icon: "🎬", title: "Edit, Compile & Publish",  body: "Full editing with transitions, subtitles, QA, and multi-platform publishing. Wake up to done." },
   ] as Feature[],
-  pricing_tiers: [] as Tier[],
+  pricing_tiers: [
+    { name: "Starter", price: "$49",  sub: "For solo creators",  features: ["1 channel connected", "10 videos/month", "YouTube publishing", "Basic analytics"] },
+    { name: "Pro",     price: "$149", sub: "For serious creators", highlight: true,
+      features: ["3 channels connected", "Unlimited videos", "All platforms (soon)", "Channel DNA analysis", "Approval mode"] },
+    { name: "Agency",  price: "$399", sub: "For teams & clients", features: ["10 channels", "Unlimited videos", "API access (soon)", "White-label (soon)", "Dedicated manager"] },
+  ] as Tier[],
   footer_links: [] as Array<{ label: string; href: string }>,
 };
 
@@ -50,6 +53,7 @@ async function _loadContent() {
     if (!snap.exists) return DEFAULT_CONTENT;
     const d = snap.data() as Record<string, unknown>;
     return {
+      hero_badge:    String(d.hero_badge    || DEFAULT_CONTENT.hero_badge),
       hero_title:    String(d.hero_title    || DEFAULT_CONTENT.hero_title),
       hero_sub:      String(d.hero_sub      || DEFAULT_CONTENT.hero_sub),
       hero_cta_text: String(d.hero_cta_text || DEFAULT_CONTENT.hero_cta_text),
@@ -57,7 +61,9 @@ async function _loadContent() {
       features:      Array.isArray(d.features) && d.features.length > 0
                        ? (d.features as Feature[])
                        : DEFAULT_CONTENT.features,
-      pricing_tiers: Array.isArray(d.pricing_tiers) ? (d.pricing_tiers as Tier[]) : DEFAULT_CONTENT.pricing_tiers,
+      pricing_tiers: Array.isArray(d.pricing_tiers) && d.pricing_tiers.length > 0
+                       ? (d.pricing_tiers as Tier[])
+                       : DEFAULT_CONTENT.pricing_tiers,
       footer_links:  Array.isArray(d.footer_links)  ? (d.footer_links as Array<{ label: string; href: string }>) : DEFAULT_CONTENT.footer_links,
     };
   } catch {
@@ -73,351 +79,224 @@ export default async function LandingPage() {
   const c = await _loadContent();
 
   return (
-    <div className="flex-1 flex flex-col relative overflow-hidden">
-      {/* Ambient blobs — slowly drift, establish the palette before content */}
-      <div aria-hidden className="pointer-events-none absolute inset-0 -z-10">
-        <div className="blob top-[-10rem] left-[-8rem] h-[600px] w-[600px]" style={{
-          background: "radial-gradient(circle, rgba(139,92,246,0.28) 0%, transparent 70%)",
-        }} />
-        <div className="blob top-[20rem] right-[-10rem] h-[520px] w-[520px] animate-[blob_28s_ease-in-out_infinite]"
-             style={{ background: "radial-gradient(circle, rgba(236,72,153,0.22) 0%, transparent 70%)" }} />
-        <div className="blob top-[70rem] left-[10%] h-[480px] w-[480px] animate-[blob_20s_ease-in-out_infinite_reverse]"
-             style={{ background: "radial-gradient(circle, rgba(249,115,22,0.18) 0%, transparent 70%)" }} />
-        <div className="absolute inset-0 dot-grid" />
+    <div className="flex-1 flex flex-col relative">
+      {/* ── Ambient aurora backdrop (fixed, cheap CSS) ─────────────── */}
+      <div aria-hidden className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
+        <div className="blob top-[-10%] left-[-5%] h-[600px] w-[600px] opacity-35"
+             style={{ background: "radial-gradient(circle, #a78bfa 0%, transparent 70%)", animationDuration: "14s" }} />
+        <div className="blob bottom-[-10%] right-[-5%] h-[500px] w-[500px] opacity-35"
+             style={{ background: "radial-gradient(circle, #67e8f9 0%, transparent 70%)", animationDuration: "16s", animationDelay: "-4s" }} />
+        <div className="blob top-[40%] left-[45%] h-[400px] w-[400px] opacity-35"
+             style={{ background: "radial-gradient(circle, #f0abfc 0%, transparent 70%)", animationDuration: "18s", animationDelay: "-8s" }} />
       </div>
 
-      {/* ── Nav ──────────────────────────────────────────────────── */}
-      <header className="sticky top-0 z-30 border-b border-line/40 bg-bg/70 backdrop-blur-lg">
-        <div className="mx-auto max-w-6xl px-6 py-4 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2.5 group">
-            <div className="relative h-9 w-9 rounded-xl bg-gradient-to-br from-accent via-accent-glow to-accent-spark flex items-center justify-center shadow-glow group-hover:scale-105 transition-transform">
-              <Play className="h-4 w-4 text-white fill-white" strokeWidth={0} />
-            </div>
-            <span className="font-semibold tracking-tight text-[15px]">Shortsmith</span>
-          </Link>
-          <nav className="hidden md:flex items-center gap-1">
-            <Link href="#features"  className="text-sm text-neutral-400 hover:text-white px-3 py-2 transition">Features</Link>
-            <Link href="#how"       className="text-sm text-neutral-400 hover:text-white px-3 py-2 transition">How it works</Link>
-            {c.pricing_tiers.length > 0 && (
-              <Link href="#pricing" className="text-sm text-neutral-400 hover:text-white px-3 py-2 transition">Pricing</Link>
-            )}
-          </nav>
-          <div className="flex items-center gap-2">
-            <Link href="/login" className="text-sm text-neutral-300 hover:text-white px-3 py-2 transition">Log in</Link>
-            <Link href={c.hero_cta_href} className="btn btn-primary h-9 px-4 text-sm">
-              {c.hero_cta_text}
-            </Link>
-          </div>
-        </div>
-      </header>
+      <MarketingNav ctaHref={c.hero_cta_href} ctaText={c.hero_cta_text} />
 
       {/* ── Hero ─────────────────────────────────────────────────── */}
-      <section className="relative z-10 px-6 pt-20 md:pt-28 pb-16 md:pb-24">
-        <div className="mx-auto max-w-4xl text-center space-y-8">
-          <Reveal>
-            <div className="inline-flex items-center gap-2 rounded-full border border-line-strong bg-bg-1/70 backdrop-blur px-4 py-1.5 text-xs text-neutral-300 shadow-[var(--shadow-elev-1)]">
-              <span className="relative flex h-2 w-2">
-                <span className="absolute inline-flex h-full w-full rounded-full bg-accent opacity-75 animate-ping" />
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-accent" />
-              </span>
-              End-to-end YouTube Shorts automation
-            </div>
-          </Reveal>
-
-          <Reveal delay={100}>
-            <h1 className="text-5xl md:text-7xl font-bold tracking-tight leading-[1.05]">
-              {(() => {
-                const words = c.hero_title.split(/\s+/).filter(Boolean);
-                const tailCount = Math.min(3, Math.max(1, Math.floor(words.length / 2)));
-                const head = words.slice(0, words.length - tailCount).join(" ");
-                const tail = words.slice(-tailCount).join(" ");
-                return (
-                  <>
-                    {head && <span className="block">{head}</span>}
-                    <span className="block text-gradient">{tail}</span>
-                  </>
-                );
-              })()}
-            </h1>
-          </Reveal>
-
-          <Reveal delay={200}>
-            <p className="text-lg md:text-xl text-neutral-400 max-w-2xl mx-auto leading-relaxed">
-              {c.hero_sub}
-            </p>
-          </Reveal>
-
-          <Reveal delay={300}>
-            <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
-              <Link href={c.hero_cta_href}
-                    className="btn btn-primary h-12 px-7 text-sm shadow-xl shadow-accent/30 group">
-                {c.hero_cta_text}
-                <ArrowRight className="h-4 w-4 group-hover:translate-x-0.5 transition-transform" />
-              </Link>
-              <Link href="#how" className="btn h-12 px-6 text-sm border-line-strong">
-                See how it works
-              </Link>
-            </div>
-          </Reveal>
-
-          <Reveal delay={400}>
-            <div className="pt-8 flex flex-wrap items-center justify-center gap-x-8 gap-y-2 text-xs text-neutral-500">
-              <span className="inline-flex items-center gap-1.5"><Check className="h-3 w-3 text-accent" /> Multi-account YouTube</span>
-              <span className="inline-flex items-center gap-1.5"><Check className="h-3 w-3 text-accent" /> 20+ languages</span>
-              <span className="inline-flex items-center gap-1.5"><Check className="h-3 w-3 text-accent" /> Runs on cron</span>
-              <span className="inline-flex items-center gap-1.5"><Check className="h-3 w-3 text-accent" /> No video editing skills needed</span>
-            </div>
-          </Reveal>
+      <section className="relative z-10 min-h-screen flex flex-col items-center justify-center text-center px-6 pt-28 pb-20">
+        <div className="absolute inset-0 neon-grid pointer-events-none" aria-hidden />
+        {/* Floating mini orbs */}
+        <div aria-hidden className="absolute inset-0 pointer-events-none overflow-hidden">
+          <div className="absolute top-[10%] left-[10%] h-20 w-20 rounded-full blur-[40px] opacity-25 animate-[float_20s_ease-in-out_infinite]"
+               style={{ background: "#a78bfa" }} />
+          <div className="absolute top-[60%] left-[80%] h-16 w-16 rounded-full blur-[40px] opacity-25 animate-[float_24s_ease-in-out_infinite]"
+               style={{ background: "#67e8f9", animationDelay: "-5s" }} />
+          <div className="absolute top-[80%] left-[20%] h-24 w-24 rounded-full blur-[40px] opacity-25 animate-[float_22s_ease-in-out_infinite]"
+               style={{ background: "#f0abfc", animationDelay: "-10s" }} />
+          <div className="absolute top-[30%] left-[85%] h-12 w-12 rounded-full blur-[40px] opacity-25 animate-[float_18s_ease-in-out_infinite]"
+               style={{ background: "#fbbf24", animationDelay: "-15s" }} />
         </div>
 
-        {/* Product preview mockup — pure CSS/SVG, no external assets */}
+        <SiriOrb />
+
+        <Reveal delay={300}>
+          <div className="inline-flex items-center gap-2 rounded-full border border-accent/15 bg-white/[0.02] backdrop-blur-xl px-4 py-2 text-xs font-medium text-neutral-400 mb-7">
+            <span className="relative flex h-1.5 w-1.5">
+              <span className="absolute inline-flex h-full w-full rounded-full bg-success opacity-75 animate-ping" />
+              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-success shadow-[0_0_10px_#22c55e]" />
+            </span>
+            {c.hero_badge}
+          </div>
+        </Reveal>
+
+        <Reveal delay={400}>
+          <h1 className="text-5xl md:text-7xl font-extrabold tracking-tight leading-[1.05] max-w-4xl mx-auto mb-5 text-gradient-hero">
+            {c.hero_title}
+          </h1>
+        </Reveal>
+
         <Reveal delay={500}>
-          <div className="mx-auto max-w-5xl mt-16 md:mt-20 relative group">
-            {/* Gradient glow rim */}
-            <div className="absolute -inset-0.5 bg-gradient-to-r from-accent via-accent-glow to-accent-spark rounded-2xl blur-lg opacity-40 group-hover:opacity-60 transition-opacity animate-[gradientShift_6s_ease-in-out_infinite] bg-[length:200%_100%]" />
-            <div className="relative rounded-2xl border border-line-strong bg-bg-1/95 backdrop-blur shadow-[var(--shadow-elev-3)] overflow-hidden">
-              {/* faux browser chrome */}
-              <div className="flex items-center gap-1.5 px-4 py-3 border-b border-line/60 bg-bg-2/50">
-                <span className="h-2.5 w-2.5 rounded-full bg-red-500/60" />
-                <span className="h-2.5 w-2.5 rounded-full bg-amber-500/60" />
-                <span className="h-2.5 w-2.5 rounded-full bg-emerald-500/60" />
-                <div className="ml-4 text-[10px] text-neutral-500 font-mono">shortsmith.app / app</div>
+          <p className="text-lg text-neutral-400 max-w-xl mx-auto leading-relaxed mb-10">
+            {c.hero_sub}
+          </p>
+        </Reveal>
+
+        <Reveal delay={600}>
+          <div className="flex flex-wrap items-center justify-center gap-4">
+            <Link href={c.hero_cta_href} className="btn btn-primary h-12 px-9 text-base font-bold">
+              {c.hero_cta_text}
+            </Link>
+            <Link href="/demo" className="btn btn-ghost h-12 px-9 text-base">
+              See It In Action
+            </Link>
+          </div>
+        </Reveal>
+
+        {/* Scroll hint */}
+        <div className="absolute bottom-10 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 text-neutral-500 text-[10px] uppercase tracking-[0.15em] animate-[fadeIn_0.8s_ease_2.5s_both]">
+          <span>Scroll</span>
+          <div className="w-px h-10 bg-gradient-to-b from-accent to-transparent animate-[pulse_2s_ease-in-out_infinite]" />
+        </div>
+      </section>
+
+      {/* ── Features ───────────────────────────────────────────── */}
+      <section id="features" className="relative z-10 px-6 py-32">
+        <Reveal>
+          <div className="text-center mb-20">
+            <h2 className="text-4xl md:text-5xl font-extrabold tracking-tight mb-4 text-gradient-hero">
+              One Attachment. Zero Work.
+            </h2>
+            <p className="text-neutral-400 text-lg max-w-lg mx-auto">
+              From trend research to published video — the entire pipeline, autonomously.
+            </p>
+          </div>
+        </Reveal>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl mx-auto">
+          {c.features.map((f, i) => (
+            <Reveal key={i} delay={i * 100}>
+              <div className="relative rounded-3xl border border-white/5 bg-white/[0.015] backdrop-blur-3xl p-9 h-full overflow-hidden group hover:border-accent/15 hover:-translate-y-1 hover:shadow-[0_30px_80px_rgba(0,0,0,0.4),0_0_40px_rgba(167,139,250,0.05)] transition-all duration-500">
+                <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-accent/30 to-transparent" />
+                <div className="h-13 w-13 rounded-2xl bg-gradient-to-br from-accent to-accent-2 flex items-center justify-center text-2xl mb-5 shadow-[0_0_20px_rgba(167,139,250,0.2)]"
+                     style={{ height: "3.25rem", width: "3.25rem" }}>
+                  {f.icon || "✨"}
+                </div>
+                <h3 className="text-lg font-bold mb-2.5">{f.title}</h3>
+                <p className="text-sm text-neutral-400 leading-relaxed">{f.body}</p>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-4 min-h-[340px]">
-                {/* faux sidebar */}
-                <aside className="hidden md:block border-r border-line/60 bg-bg-2/30 p-3 space-y-0.5">
-                  {["Dashboard", "Create", "Channels", "Queue", "Library", "Reports", "Settings"].map((s, i) => (
-                    <div key={s}
-                         className={`px-3 py-2 rounded-md text-xs ${
-                           i === 2
-                             ? "bg-gradient-to-r from-accent/15 to-transparent text-white border-l-2 border-accent"
-                             : "text-neutral-500"
-                         }`}>
-                      {s}
-                    </div>
-                  ))}
-                </aside>
-                {/* faux main */}
-                <main className="md:col-span-3 p-5 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="text-sm font-medium">Channels</div>
-                    <div className="text-[10px] px-2 py-0.5 rounded-full bg-accent/15 text-accent">4 active</div>
+            </Reveal>
+          ))}
+        </div>
+      </section>
+
+      {/* ── Pipeline ───────────────────────────────────────────── */}
+      <section id="pipeline" className="relative z-10 px-6 py-32 border-t border-white/5">
+        <Reveal>
+          <div className="text-center mb-20">
+            <h2 className="text-4xl md:text-5xl font-extrabold tracking-tight mb-4 text-gradient-hero">How Yven Works</h2>
+            <p className="text-neutral-400 text-lg">Three steps. Then you observe.</p>
+          </div>
+        </Reveal>
+
+        <Reveal delay={200}>
+          <div className="flex flex-wrap items-center justify-center gap-0 max-w-4xl mx-auto">
+            {[
+              { n: "1", title: "Connect",  sub: "Attach your channel" },
+              { n: "2", title: "Analyze",  sub: "Channel DNA scan" },
+              { n: "3", title: "Autopilot", sub: "AI takes over" },
+            ].map((step, i, arr) => (
+              <div key={step.n} className="flex items-center">
+                <div className="rounded-3xl border border-white/5 bg-white/[0.015] backdrop-blur-3xl p-9 text-center min-w-[200px] hover:border-accent/20 hover:shadow-[0_0_40px_rgba(167,139,250,0.08)] hover:-translate-y-1 transition-all duration-500">
+                  <div className="mx-auto mb-4 h-11 w-11 rounded-full bg-gradient-to-br from-accent to-accent-2 text-[#050508] font-extrabold text-base flex items-center justify-center shadow-[0_0_20px_rgba(167,139,250,0.3)]">
+                    {step.n}
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {[
-                      { name: "Ghost Tales",    niche: "horror",  status: "running",  progress: 68 },
-                      { name: "Money Minute",   niche: "finance", status: "queued",   progress: 0  },
-                      { name: "Orbitarium",     niche: "science", status: "complete", progress: 100 },
-                      { name: "Ancient Wisdom", niche: "wisdom",  status: "running",  progress: 34 },
-                    ].map((ch) => (
-                      <div key={ch.name} className="rounded-lg border border-line bg-bg-2/60 p-3 space-y-2 hover:border-accent/40 transition">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <div className="text-sm font-medium">{ch.name}</div>
-                            <div className="text-[10px] text-neutral-500">{ch.niche}</div>
-                          </div>
-                          <div className={`text-[10px] px-1.5 py-0.5 rounded border ${
-                            ch.status === "running"  ? "border-amber-500/40 text-amber-300 bg-amber-500/10" :
-                            ch.status === "queued"   ? "border-sky-500/40 text-sky-300 bg-sky-500/10" :
-                                                        "border-emerald-500/40 text-emerald-300 bg-emerald-500/10"
-                          }`}>{ch.status}</div>
-                        </div>
-                        {ch.progress > 0 && (
-                          <div className="progress-track">
-                            <div className="progress-fill" style={{ width: `${ch.progress}%` }} />
-                          </div>
-                        )}
-                      </div>
-                    ))}
+                  <div className="font-bold text-lg mb-1.5">{step.title}</div>
+                  <div className="text-sm text-neutral-500">{step.sub}</div>
+                </div>
+                {i < arr.length - 1 && (
+                  <div className="hidden md:block h-0.5 w-16 bg-gradient-to-r from-accent to-accent-2 opacity-40 relative animate-[connectorPulse_3s_ease-in-out_infinite]">
+                    <span className="absolute -right-1 -top-[3px] h-2 w-2 rounded-full bg-accent-2 shadow-[0_0_10px_#67e8f9]" />
                   </div>
-                </main>
+                )}
               </div>
-            </div>
+            ))}
           </div>
         </Reveal>
       </section>
 
-      {/* ── How it works ─────────────────────────────────────────── */}
-      <section id="how" className="relative z-10 px-6 py-20 md:py-28">
-        <div className="mx-auto max-w-5xl">
+      {/* ── Pricing ────────────────────────────────────────────── */}
+      {c.pricing_tiers.length > 0 && (
+        <section id="pricing" className="relative z-10 px-6 py-32 border-t border-white/5">
           <Reveal>
-            <div className="text-center space-y-3 mb-14">
-              <div className="text-xs uppercase tracking-[0.2em] text-accent">How it works</div>
-              <h2 className="text-4xl md:text-5xl font-bold tracking-tight">
-                Set up once. <span className="text-gradient-static">Publish forever.</span>
-              </h2>
-              <p className="text-neutral-400 max-w-2xl mx-auto text-lg">Three steps, then the videos publish themselves on the cadence you pick.</p>
+            <div className="text-center mb-20">
+              <h2 className="text-4xl md:text-5xl font-extrabold tracking-tight mb-4 text-gradient-hero">Simple Pricing</h2>
+              <p className="text-neutral-400 text-lg">Start free. Scale when you're ready.</p>
             </div>
           </Reveal>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {[
-              { n: "01", icon: Layers,  title: "Add a channel",   body: "Name it, pick a niche, connect a YouTube account, choose a voice and tone." },
-              { n: "02", icon: Wand2,   title: "Set a schedule",  body: "Pick how many Shorts per day and what time to publish. That's it." },
-              { n: "03", icon: Rocket,  title: "Watch it publish", body: "Every video: researched, written, narrated, edited, uploaded. See the queue live." },
-            ].map(({ n, icon: Icon, title, body }, i) => (
-              <Reveal key={n} delay={i * 100}>
-                <div className="relative rounded-2xl border border-line-strong bg-bg-1/60 backdrop-blur p-6 pt-10 h-full card-hover overflow-hidden group">
-                  <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity bg-gradient-to-br from-accent/[0.04] via-transparent to-transparent" />
-                  <div className="absolute top-4 right-4 text-5xl font-black text-white/[0.06] tabular-nums">
-                    {n}
-                  </div>
-                  <div className="relative">
-                    <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-accent/25 to-accent-glow/15 border border-accent/30 flex items-center justify-center mb-4">
-                      <Icon className="h-4 w-4 text-accent" />
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-5xl mx-auto items-start">
+            {c.pricing_tiers.map((t, i) => (
+              <Reveal key={i} delay={i * 100}>
+                <div className={
+                  "relative rounded-3xl border p-11 hover:-translate-y-2 transition-all duration-500 " +
+                  (t.highlight
+                    ? "border-accent/20 bg-gradient-to-b from-accent/[0.04] to-white/[0.01] scale-[1.03] shadow-[0_30px_80px_rgba(0,0,0,0.4),0_0_50px_rgba(167,139,250,0.06)]"
+                    : "border-white/5 bg-white/[0.015] backdrop-blur-3xl hover:border-accent/20 hover:shadow-[0_30px_80px_rgba(0,0,0,0.4),0_0_50px_rgba(167,139,250,0.06)]")
+                }>
+                  {t.highlight && (
+                    <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 bg-gradient-to-r from-accent to-accent-glow text-white px-4 py-1.5 rounded-full text-[10px] font-bold tracking-wider uppercase shadow-[0_4px_20px_rgba(167,139,250,0.3)]">
+                      Most Popular
                     </div>
-                    <div className="font-semibold text-lg mb-1.5">{title}</div>
-                    <div className="text-sm text-neutral-400 leading-relaxed">{body}</div>
+                  )}
+                  <h3 className="text-xl font-bold mb-1.5">{t.name}</h3>
+                  <p className="text-neutral-500 text-sm mb-6">{t.sub}</p>
+                  <div className="text-5xl font-extrabold mb-1.5 bg-gradient-to-r from-white to-accent bg-clip-text text-transparent">
+                    {t.price}
+                    <span className="text-base text-neutral-500 font-normal">/mo</span>
                   </div>
+                  <ul className="my-8 space-y-3">
+                    {t.features?.map((f, j) => (
+                      <li key={j} className="flex items-center gap-2.5 text-sm text-neutral-400">
+                        <span className="text-accent-2 font-bold">→</span>
+                        <span>{f}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <Link href={c.hero_cta_href}
+                        className={t.highlight
+                          ? "btn btn-primary w-full h-11 text-sm font-bold"
+                          : "btn w-full h-11 text-sm font-bold"}>
+                    {t.name === "Agency" ? "Contact Sales" : "Start Free Trial"}
+                  </Link>
                 </div>
               </Reveal>
             ))}
           </div>
-        </div>
-      </section>
-
-      {/* ── Features grid ────────────────────────────────────────── */}
-      <section id="features" className="relative z-10 px-6 py-20 md:py-28 border-t border-line/40">
-        <div className="mx-auto max-w-5xl">
-          <Reveal>
-            <div className="text-center space-y-3 mb-14">
-              <div className="text-xs uppercase tracking-[0.2em] text-accent">Everything you need</div>
-              <h2 className="text-4xl md:text-5xl font-bold tracking-tight">
-                Built for creators who <span className="text-gradient-static">publish daily</span>
-              </h2>
-              <p className="text-neutral-400 max-w-2xl mx-auto text-lg">No video editor. No script writer. No thumbnail designer. Just a channel that keeps growing.</p>
-            </div>
-          </Reveal>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {c.features.map((f, i) => {
-              const icons = [Zap, Layers, Video, Mic, TrendingUp, Clock, Palette, Wand2];
-              const Icon = icons[i % icons.length];
-              return (
-                <Reveal key={i} delay={(i % 3) * 100}>
-                  <FeatureCard icon={Icon} title={f.title} body={f.body} />
-                </Reveal>
-              );
-            })}
-          </div>
-        </div>
-      </section>
-
-      {/* ── Pricing ──────────────────────────────────────────────── */}
-      {c.pricing_tiers.length > 0 && (
-        <section id="pricing" className="relative z-10 px-6 py-20 md:py-28 border-t border-line/40">
-          <div className="mx-auto max-w-5xl">
-            <Reveal>
-              <div className="text-center space-y-3 mb-14">
-                <div className="text-xs uppercase tracking-[0.2em] text-accent">Pricing</div>
-                <h2 className="text-4xl md:text-5xl font-bold tracking-tight">
-                  Start free. <span className="text-gradient-static">Scale when you're ready.</span>
-                </h2>
-              </div>
-            </Reveal>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {c.pricing_tiers.map((t, i) => (
-                <Reveal key={i} delay={i * 100}>
-                  <div className={`relative rounded-2xl border p-6 space-y-4 h-full card-hover ${
-                       t.highlight
-                         ? "border-accent/60 bg-gradient-to-b from-accent/[0.08] to-transparent shadow-[var(--shadow-glow-lg)]"
-                         : "border-line-strong bg-bg-1/60 backdrop-blur"
-                     }`}>
-                    {t.highlight && (
-                      <div className="absolute -top-3 left-1/2 -translate-x-1/2 text-[10px] uppercase tracking-wider bg-gradient-to-r from-accent to-accent-glow text-white px-3 py-1 rounded-full font-semibold flex items-center gap-1">
-                        <Star className="h-3 w-3 fill-white" strokeWidth={0} /> Most popular
-                      </div>
-                    )}
-                    <div className="text-sm font-medium text-neutral-400">{t.name}</div>
-                    <div className="text-4xl font-bold">{t.price}</div>
-                    {t.sub && <div className="text-sm text-neutral-500 -mt-2">{t.sub}</div>}
-                    {t.features && t.features.length > 0 && (
-                      <ul className="space-y-2 text-sm pt-3">
-                        {t.features.map((f, j) => (
-                          <li key={j} className="flex items-start gap-2">
-                            <Check className="h-4 w-4 text-accent mt-0.5 shrink-0" />
-                            <span className="text-neutral-300">{f}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                    <Link href={c.hero_cta_href}
-                          className={`btn w-full h-11 mt-4 ${t.highlight ? "btn-primary" : ""}`}>
-                      {c.hero_cta_text}
-                    </Link>
-                  </div>
-                </Reveal>
-              ))}
-            </div>
-          </div>
         </section>
       )}
 
-      {/* ── Bottom CTA ────────────────────────────────────────────── */}
-      <section className="relative z-10 px-6 py-24 md:py-32 border-t border-line/40">
+      {/* ── Final CTA ──────────────────────────────────────────── */}
+      <section className="relative z-10 px-6 py-40 text-center">
         <Reveal>
-          <div className="mx-auto max-w-3xl text-center space-y-6 relative">
-            <div className="absolute -inset-x-16 -inset-y-8 -z-10 bg-gradient-to-r from-accent/10 via-accent-glow/10 to-accent-spark/10 blur-3xl opacity-60" />
-            <h2 className="text-4xl md:text-6xl font-bold tracking-tight leading-tight">
-              Your channel, <span className="text-gradient-static">publishing without you.</span>
-            </h2>
-            <p className="text-lg md:text-xl text-neutral-400">
-              Stop touching the video editor. Start counting subscribers.
-            </p>
-            <div className="flex flex-wrap justify-center gap-3 pt-2">
-              <Link href={c.hero_cta_href}
-                    className="btn btn-primary h-12 px-7 text-sm shadow-xl shadow-accent/30 group">
-                {c.hero_cta_text}
-                <ArrowRight className="h-4 w-4 group-hover:translate-x-0.5 transition-transform" />
-              </Link>
-              <Link href="/login" className="btn h-12 px-6 text-sm border-line-strong">
-                Log in
-              </Link>
-            </div>
-          </div>
+          <h2 className="text-4xl md:text-6xl font-extrabold tracking-tight mb-5 text-gradient-hero max-w-3xl mx-auto">
+            Attach Your Channel.<br />Watch It Grow.
+          </h2>
+          <p className="text-neutral-400 text-lg max-w-md mx-auto mb-10">
+            Join 2,000+ creators who replaced their entire video stack with one engine.
+          </p>
+          <Link href={c.hero_cta_href} className="btn btn-primary h-14 px-11 text-lg font-bold">
+            {c.hero_cta_text} — Free
+          </Link>
         </Reveal>
       </section>
 
-      {/* ── Footer ──────────────────────────────────────────────── */}
-      <footer className="relative z-10 border-t border-line/40 px-6 py-10 mt-auto">
-        <div className="mx-auto max-w-5xl flex flex-wrap items-center justify-between gap-4 text-xs text-neutral-500">
-          <div className="flex items-center gap-2">
-            <div className="h-6 w-6 rounded-md bg-gradient-to-br from-accent to-accent-glow flex items-center justify-center">
-              <Play className="h-3 w-3 text-white fill-white" strokeWidth={0} />
-            </div>
-            <span className="font-medium text-neutral-300">Shortsmith</span>
-            <span className="text-neutral-700">·</span>
-            <span>© {new Date().getUTCFullYear()}</span>
-          </div>
-          <div className="flex flex-wrap gap-5">
-            {c.footer_links.length > 0
-              ? c.footer_links.map((l, i) => (
-                  <Link key={i} href={l.href} className="hover:text-neutral-300 transition">{l.label}</Link>
-                ))
-              : (
-                <>
-                  <Link href="/login"       className="hover:text-neutral-300 transition">Log in</Link>
-                  <Link href={c.hero_cta_href} className="hover:text-neutral-300 transition">Get access</Link>
-                </>
-              )}
-          </div>
+      {/* ── Footer ─────────────────────────────────────────────── */}
+      <footer className="relative z-10 border-t border-white/5 px-6 py-12 text-center text-xs text-neutral-500">
+        <div className="text-xl font-extrabold bg-gradient-to-r from-accent to-accent-2 bg-clip-text text-transparent mb-3 inline-block">Yven</div>
+        <p>The first complete video automation engine.</p>
+        <div className="mt-4 flex flex-wrap justify-center gap-5">
+          <Link href="/roadmap"          className="hover:text-neutral-300 transition">Roadmap</Link>
+          <Link href="/compare"          className="hover:text-neutral-300 transition">Compare</Link>
+          <Link href="/tools/calculator" className="hover:text-neutral-300 transition">Time Saved</Link>
+          <Link href="/tools/roast"      className="hover:text-neutral-300 transition">Roast My Channel</Link>
+          <Link href="/demo"             className="hover:text-neutral-300 transition">Live Demo</Link>
+          <Link href="/login"            className="hover:text-neutral-300 transition">Log in</Link>
+          {c.footer_links.map((l, i) => (
+            <Link key={i} href={l.href} className="hover:text-neutral-300 transition">{l.label}</Link>
+          ))}
         </div>
+        <p className="mt-4 opacity-50">© {new Date().getUTCFullYear()} Yven. All rights reserved.</p>
       </footer>
-    </div>
-  );
-}
-
-function FeatureCard({
-  icon: Icon, title, body,
-}: { icon: React.ComponentType<{ className?: string }>; title: string; body: string }) {
-  return (
-    <div className="group relative rounded-2xl border border-line bg-bg-1/60 backdrop-blur p-6 space-y-3 h-full card-hover overflow-hidden">
-      <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 bg-gradient-to-br from-accent/[0.06] via-transparent to-accent-glow/[0.03]" />
-      <div className="relative">
-        <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-accent/25 to-accent-glow/15 border border-accent/30 flex items-center justify-center mb-3 group-hover:shadow-glow transition">
-          <Icon className="h-4 w-4 text-accent" />
-        </div>
-        <div className="font-semibold text-[15px] mb-1.5">{title}</div>
-        <div className="text-sm text-neutral-400 leading-relaxed">{body}</div>
-      </div>
     </div>
   );
 }

@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Roadmap — Yven</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#050508;--glass:rgba(255,255,255,0.015);--border:rgba(255,255,255,0.06);--text:#f1f5f9;--muted:#64748b;--lavender:#a78bfa;--cyan:#67e8f9;--green:#22c55e;--amber:#fbbf24;}
+*{margin:0;padding:0;box-sizing:border-box;font-family:'Inter',sans-serif;}
+body{background:var(--bg);color:var(--text);padding:100px 24px;position:relative;}
+body::before{content:"";position:fixed;inset:0;opacity:0.02;pointer-events:none;z-index:9999;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+.glow{position:fixed;width:500px;height:500px;border-radius:50%;filter:blur(120px);pointer-events:none;z-index:0;}
+.glow-1{background:radial-gradient(circle,rgba(167,139,250,0.08),transparent 70%);top:-100px;right:-100px;}
+.glow-2{background:radial-gradient(circle,rgba(103,232,249,0.06),transparent 70%);bottom:-100px;left:-100px;}
+.container{max-width:800px;margin:0 auto;position:relative;z-index:1;}
+.logo{font-size:1.5rem;font-weight:800;background:linear-gradient(135deg,var(--lavender),var(--cyan));-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:40px;display:inline-block;}
+h1{font-size:2.8rem;font-weight:800;letter-spacing:-0.04em;margin-bottom:12px;}
+.subtitle{color:var(--muted);margin-bottom:40px;}
+.tabs{display:flex;gap:6px;margin-bottom:40px;background:var(--glass);backdrop-filter:blur(20px);border:1px solid var(--border);border-radius:12px;padding:6px;width:fit-content;}
+.tab{padding:10px 20px;border-radius:8px;font-size:0.875rem;font-weight:600;color:var(--muted);cursor:pointer;border:none;background:none;transition:all 0.2s;}
+.tab.active{background:rgba(167,139,250,0.12);color:var(--lavender);}
+.roadmap-section{display:none;}
+.roadmap-section.active{display:block;}
+.item{padding:28px;margin-bottom:16px;background:var(--glass);backdrop-filter:blur(20px);border:1px solid var(--border);border-radius:20px;display:flex;align-items:flex-start;gap:16px;transition:all 0.3s;position:relative;overflow:hidden;}
+.item:hover{border-color:rgba(167,139,250,0.1);}
+.item::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(167,139,250,0.15),transparent);}
+.status-dot{width:10px;height:10px;border-radius:50%;margin-top:6px;flex-shrink:0;}
+.status-dot.live{background:var(--green);box-shadow:0 0 10px var(--green);}
+.status-dot.next{background:var(--amber);box-shadow:0 0 10px var(--amber);}
+.status-dot.planned{background:var(--muted);}
+.item h3{font-size:1.05rem;font-weight:700;margin-bottom:6px;}
+.item p{color:var(--muted);font-size:0.9rem;line-height:1.6;}
+.tag{display:inline-block;padding:5px 12px;border-radius:100px;font-size:0.7rem;font-weight:700;margin-top:10px;text-transform:uppercase;letter-spacing:0.05em;}
+.tag.live{background:rgba(34,197,94,0.08);color:var(--green);}
+.tag.next{background:rgba(251,191,36,0.08);color:var(--amber);}
+.tag.planned{background:rgba(255,255,255,0.04);color:var(--muted);}
+.vote-btn{margin-left:auto;padding:8px 18px;background:rgba(255,255,255,0.02);border:1px solid var(--border);border-radius:10px;color:var(--muted);font-size:0.85rem;font-weight:600;cursor:pointer;transition:all 0.2s;white-space:nowrap;}
+.vote-btn:hover{border-color:var(--lavender);color:var(--lavender);box-shadow:0 0 12px rgba(167,139,250,0.1);}
+.changelog-date{font-size:0.7rem;text-transform:uppercase;letter-spacing:0.1em;color:var(--muted);margin:36px 0 16px;font-weight:700;}
+</style>
+</head>
+<body>
+<div class="glow glow-1"></div>
+<div class="glow glow-2"></div>
+<div class="container">
+  <div class="logo">Yven</div>
+  <h1>Product Roadmap</h1>
+  <p class="subtitle">What's live, what's next, and what you voted for.</p>
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('live')">Live Now</button>
+    <button class="tab" onclick="switchTab('next')">Next Up</button>
+    <button class="tab" onclick="switchTab('changelog')">Changelog</button>
+  </div>
+  <div id="live" class="roadmap-section active">
+    <div class="item"><div class="status-dot live"></div><div><h3>Complete Video Pipeline</h3><p>Research → Script → Storyboard → Visuals → Audio → Edit → QA → Publish. Fully autonomous.</p><span class="tag live">Live</span></div></div>
+    <div class="item"><div class="status-dot live"></div><div><h3>Channel DNA Analysis</h3><p>AI learns your voice, pacing, humor, and style from existing content. No generic output.</p><span class="tag live">Live</span></div></div>
+    <div class="item"><div class="status-dot live"></div><div><h3>Multi-Platform Publishing</h3><p>YouTube, TikTok, and Facebook with auto-formatting for each platform's specs.</p><span class="tag live">Live</span></div></div>
+    <div class="item"><div class="status-dot live"></div><div><h3>Approval Mode</h3><p>Review every video before it goes live. Switch to Autopilot when ready.</p><span class="tag live">Live</span></div></div>
+  </div>
+  <div id="next" class="roadmap-section">
+    <div class="item"><div class="status-dot next"></div><div><h3>Instagram Reels & X Integration</h3><p>Auto-publish to Instagram Reels and X (Twitter) with native-format optimization.</p><span class="tag next">Q3 2026</span></div><button class="vote-btn" onclick="this.textContent='Voted ✓';this.style.borderColor='var(--green)';this.style.color='var(--green)';this.style.boxShadow='0 0 12px rgba(34,197,94,0.1)'">Vote</button></div>
+    <div class="item"><div class="status-dot next"></div><div><h3>AI Thumbnail Generator</h3><p>CTR-optimized thumbnails with face detection, contrast analysis, and A/B testing.</p><span class="tag next">Q3 2026</span></div><button class="vote-btn" onclick="this.textContent='Voted ✓';this.style.borderColor='var(--green)';this.style.color='var(--green)';this.style.boxShadow='0 0 12px rgba(34,197,94,0.1)'">Vote</button></div>
+    <div class="item"><div class="status-dot planned"></div><div><h3>Team Collaboration</h3><p>Multi-user workspaces, client approvals, and role-based permissions for agencies.</p><span class="tag planned">Q4 2026</span></div><button class="vote-btn" onclick="this.textContent='Voted ✓';this.style.borderColor='var(--green)';this.style.color='var(--green)';this.style.boxShadow='0 0 12px rgba(34,197,94,0.1)'">Vote</button></div>
+    <div class="item"><div class="status-dot planned"></div><div><h3>Custom AI Training</h3><p>Upload your own voice samples and visual assets for truly personalized output.</p><span class="tag planned">Q4 2026</span></div><button class="vote-btn" onclick="this.textContent='Voted ✓';this.style.borderColor='var(--green)';this.style.color='var(--green)';this.style.boxShadow='0 0 12px rgba(34,197,94,0.1)'">Vote</button></div>
+  </div>
+  <div id="changelog" class="roadmap-section">
+    <div class="changelog-date">July 2026</div>
+    <div class="item"><div class="status-dot live"></div><div><h3>v2.1 — Referral System Launch</h3><p>5-friend viral unlock system, analytics wall preview, and progress tracking dashboard.</p></div></div>
+    <div class="item"><div class="status-dot live"></div><div><h3>v2.0 — Facebook Automation</h3><p>Added Facebook publishing with native video specs and audience targeting.</p></div></div>
+    <div class="changelog-date">June 2026</div>
+    <div class="item"><div class="status-dot live"></div><div><h3>v1.5 — Channel DNA 2.0</h3><p>Improved tone matching with sentiment analysis and hook pattern recognition.</p></div></div>
+    <div class="item"><div class="status-dot live"></div><div><h3>v1.0 — Public Beta</h3><p>Initial release with YouTube and TikTok automation, full pipeline support.</p></div></div>
+  </div>
+</div>
+<script>
+function switchTab(id){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.roadmap-section').forEach(s=>s.classList.remove('active'));
+  event.target.classList.add('active');
+  document.getElementById(id).classList.add('active');
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Yven vs Traditional Tools — Yven</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#050508;--glass:rgba(255,255,255,0.015);--border:rgba(255,255,255,0.06);--text:#f1f5f9;--muted:#64748b;--lavender:#a78bfa;--cyan:#67e8f9;--green:#22c55e;--red:#ef4444;}
+*{margin:0;padding:0;box-sizing:border-box;font-family:'Inter',sans-serif;}
+body{background:var(--bg);color:var(--text);padding:100px 24px;position:relative;}
+body::before{content:"";position:fixed;inset:0;opacity:0.02;pointer-events:none;z-index:9999;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+.glow{position:fixed;width:500px;height:500px;border-radius:50%;filter:blur(120px);pointer-events:none;z-index:0;}
+.glow-1{background:radial-gradient(circle,rgba(167,139,250,0.08),transparent 70%);top:-100px;right:-100px;}
+.glow-2{background:radial-gradient(circle,rgba(103,232,249,0.06),transparent 70%);bottom:-100px;left:-100px;}
+.container{max-width:900px;margin:0 auto;position:relative;z-index:1;}
+.logo{font-size:1.5rem;font-weight:800;background:linear-gradient(135deg,var(--lavender),var(--cyan));-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:40px;display:inline-block;}
+h1{font-size:2.8rem;font-weight:800;letter-spacing:-0.04em;margin-bottom:16px;}
+.subtitle{color:var(--muted);font-size:1.1rem;margin-bottom:56px;}
+table{width:100%;border-collapse:separate;border-spacing:0 10px;}
+th{text-align:left;padding:16px 24px;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.1em;color:var(--muted);font-weight:700;}
+td{padding:22px 24px;background:var(--glass);backdrop-filter:blur(16px);border:1px solid var(--border);font-size:0.95rem;transition:all 0.3s;}
+td:first-child{border-radius:16px 0 0 16px;font-weight:600;}
+td:last-child{border-radius:0 16px 16px 0;}
+tr:hover td{border-color:rgba(167,139,250,0.1);}
+.yven-col{background:rgba(167,139,250,0.04);border-color:rgba(167,139,250,0.12);}
+.check{color:var(--green);font-weight:800;}
+.cross{color:var(--red);font-weight:800;}
+.cta-box{margin-top:56px;padding:48px;background:linear-gradient(135deg,rgba(167,139,250,0.06),rgba(103,232,249,0.03));border:1px solid rgba(167,139,250,0.15);border-radius:28px;text-align:center;position:relative;overflow:hidden;}
+.cta-box::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(167,139,250,0.4),transparent);}
+.cta-box h2{font-size:1.8rem;font-weight:800;margin-bottom:12px;}
+.cta-box p{color:var(--muted);margin-bottom:28px;}
+.btn{background:linear-gradient(135deg,var(--lavender),var(--cyan));color:#050508;border:none;padding:16px 36px;border-radius:100px;font-weight:700;font-size:1rem;cursor:pointer;text-decoration:none;display:inline-block;position:relative;overflow:hidden;transition:all 0.3s;}
+.btn::before{content:"";position:absolute;inset:-2px;border-radius:100px;background:linear-gradient(135deg,var(--lavender),var(--cyan),var(--pink));filter:blur(12px);opacity:0.5;z-index:-1;transition:opacity 0.3s;}
+.btn:hover{transform:translateY(-2px);}
+.btn:hover::before{opacity:1;}
+</style>
+</head>
+<body>
+<div class="glow glow-1"></div>
+<div class="glow glow-2"></div>
+<div class="container">
+  <div class="logo">Yven</div>
+  <h1>Yven vs Traditional Tools</h1>
+  <p class="subtitle">Why juggle 6+ tools when one engine does it all?</p>
+  <table>
+    <thead><tr><th>Feature</th><th>Traditional Stack</th><th class="yven-col">Yven</th></tr></thead>
+    <tbody>
+      <tr><td>Trend & Title Research</td><td><span class="cross">✕</span> Manual / Separate tool ($49/mo)</td><td class="yven-col"><span class="check">✓</span> Built-in AI research</td></tr>
+      <tr><td>Script Writing</td><td><span class="cross">✕</span> ChatGPT + copy/paste</td><td class="yven-col"><span class="check">✓</span> Auto-generated with hooks</td></tr>
+      <tr><td>Storyboard & Visuals</td><td><span class="cross">✕</span> Midjourney + manual prompt</td><td class="yven-col"><span class="check">✓</span> Auto storyboard + image gen</td></tr>
+      <tr><td>Voiceover & Audio</td><td><span class="cross">✕</span> ElevenLabs + sync manually</td><td class="yven-col"><span class="check">✓</span> Auto-synced AI voice</td></tr>
+      <tr><td>Video Editing</td><td><span class="cross">✕</span> Premiere / DaVinci (4h+)</td><td class="yven-col"><span class="check">✓</span> Automated editing</td></tr>
+      <tr><td>Subtitles & QA</td><td><span class="cross">✕</span> Manual review</td><td class="yven-col"><span class="check">✓</span> Auto subtitles + QA</td></tr>
+      <tr><td>Multi-Platform Publish</td><td><span class="cross">✕</span> Buffer / Hootsuite ($99/mo)</td><td class="yven-col"><span class="check">✓</span> YouTube, TikTok, Facebook</td></tr>
+      <tr><td>Channel DNA Analysis</td><td><span class="cross">✕</span> Not available</td><td class="yven-col"><span class="check">✓</span> Learns your voice</td></tr>
+      <tr><td>Total Monthly Cost</td><td><span class="cross">✕</span> $300–$600 + your time</td><td class="yven-col"><span class="check">✓</span> From $49/mo</td></tr>
+    </tbody>
+  </table>
+  <div class="cta-box">
+    <h2>Stop stacking tools. Start scaling.</h2>
+    <p>Join 2,000+ creators who replaced their entire video stack with Yven.</p>
+    <a href="#" class="btn">Get Early Access</a>
+  </div>
+</div>
+</body>
+</html>

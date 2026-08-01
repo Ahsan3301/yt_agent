@@ -6,7 +6,7 @@ import { useState, useEffect } from "react";
 import {
   Play, Settings, History, KeyRound, LayoutDashboard, Activity,
   ListChecks, Wand2, HeartPulse, Layers, Menu, X, HardDrive, BarChart3,
-  Shield, Crown, Users, Flag, Package, LayoutTemplate, ScrollText,
+  Shield, Crown, Users, Flag, Package, LayoutTemplate, ScrollText, Sparkles,
 } from "lucide-react";
 import clsx from "clsx";
 
@@ -23,6 +23,7 @@ const USER_NAV: NavItem[] = [
   { href: "/app/history",   label: "Library",     icon: History         },
   { href: "/app/settings",  label: "Settings",    icon: Settings        },
   { href: "/app/keys",      label: "Connections", icon: KeyRound        },
+  { href: "/app/referrals", label: "Referrals",   icon: Sparkles        },
 ];
 
 const ADMIN_NAV: NavItem[] = [
@@ -69,11 +70,11 @@ export default function Sidebar({ role = "user" }: { role?: Role }) {
 
   const brand = (
     <Link href="/app" className="flex items-center gap-2.5 px-3 pb-5 mb-3 border-b border-line/60 group">
-      <div className="relative h-9 w-9 rounded-xl bg-gradient-to-br from-accent via-accent-glow to-accent-spark flex items-center justify-center shadow-glow group-hover:scale-105 transition-transform">
-        <Play className="h-4 w-4 text-white fill-white" strokeWidth={0} />
+      <div className="relative h-9 w-9 rounded-xl bg-gradient-to-br from-accent via-accent-2 to-accent-glow flex items-center justify-center shadow-[0_0_20px_rgba(167,139,250,0.35)] group-hover:scale-105 transition-transform">
+        <Play className="h-4 w-4 text-[#050508] fill-[#050508]" strokeWidth={0} />
       </div>
       <div>
-        <div className="font-semibold leading-tight text-[15px] tracking-tight">Shortsmith</div>
+        <div className="font-bold leading-tight text-[15px] tracking-tight bg-gradient-to-r from-accent to-accent-2 bg-clip-text text-transparent">Yven</div>
         <div className="text-[10px] text-neutral-500 uppercase tracking-wider">Studio</div>
       </div>
     </Link>
@@ -106,10 +107,10 @@ export default function Sidebar({ role = "user" }: { role?: Role }) {
                           justify-between border-b border-line/60 bg-bg-1/95
                           backdrop-blur px-4 py-3">
         <Link href="/app" className="flex items-center gap-2">
-          <div className="h-7 w-7 rounded-lg bg-gradient-to-br from-accent via-accent-glow to-accent-spark flex items-center justify-center shadow-glow">
-            <Play className="h-3.5 w-3.5 text-white fill-white" strokeWidth={0} />
+          <div className="h-7 w-7 rounded-lg bg-gradient-to-br from-accent via-accent-2 to-accent-glow flex items-center justify-center shadow-[0_0_16px_rgba(167,139,250,0.3)]">
+            <Play className="h-3.5 w-3.5 text-[#050508] fill-[#050508]" strokeWidth={0} />
           </div>
-          <span className="font-semibold text-sm tracking-tight">Shortsmith</span>
+          <span className="font-bold text-sm tracking-tight bg-gradient-to-r from-accent to-accent-2 bg-clip-text text-transparent">Yven</span>
         </Link>
         <button onClick={() => setOpen(true)} className="btn-ghost p-2 rounded-md hover:bg-bg-2"
                 aria-label="Open menu">
@@ -127,10 +128,10 @@ export default function Sidebar({ role = "user" }: { role?: Role }) {
                             animate-[fadeUp_0.3s_cubic-bezier(0.16,1,0.3,1)_both]">
             <div className="flex items-center justify-between px-1 pb-3 mb-2 border-b border-line/60">
               <Link href="/app" className="flex items-center gap-2.5" onClick={() => setOpen(false)}>
-                <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-accent via-accent-glow to-accent-spark flex items-center justify-center shadow-glow">
-                  <Play className="h-4 w-4 text-white fill-white" strokeWidth={0} />
+                <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-accent via-accent-2 to-accent-glow flex items-center justify-center shadow-[0_0_16px_rgba(167,139,250,0.3)]">
+                  <Play className="h-4 w-4 text-[#050508] fill-[#050508]" strokeWidth={0} />
                 </div>
-                <span className="font-semibold tracking-tight">Shortsmith</span>
+                <span className="font-bold tracking-tight bg-gradient-to-r from-accent to-accent-2 bg-clip-text text-transparent">Yven</span>
               </Link>
               <button onClick={() => setOpen(false)} className="p-2 rounded-md hover:bg-bg-2"
                       aria-label="Close menu">

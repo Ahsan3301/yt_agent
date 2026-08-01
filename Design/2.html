@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Unlock Your Trial — Yven</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#050508;--glass:rgba(255,255,255,0.015);--border:rgba(255,255,255,0.06);--text:#f1f5f9;--muted:#64748b;--lavender:#a78bfa;--cyan:#67e8f9;--pink:#f0abfc;--amber:#fbbf24;--green:#22c55e;}
+*{margin:0;padding:0;box-sizing:border-box;font-family:'Inter',sans-serif;}
+body{background:var(--bg);color:var(--text);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;position:relative;overflow-x:hidden;}
+body::before{content:"";position:fixed;inset:0;opacity:0.02;pointer-events:none;z-index:9999;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+.glow{position:fixed;width:500px;height:500px;border-radius:50%;filter:blur(120px);pointer-events:none;z-index:0;animation:auroraFloat 14s ease-in-out infinite;}
+.glow-1{background:radial-gradient(circle,rgba(251,191,36,0.12),transparent 70%);top:-100px;right:-100px;}
+.glow-2{background:radial-gradient(circle,rgba(167,139,250,0.1),transparent 70%);bottom:-100px;left:-100px;animation-delay:-7s;}
+@keyframes auroraFloat{0%,100%{transform:translate(0,0) scale(1);}50%{transform:translate(30px,-20px) scale(1.1);}}
+.container{max-width:640px;width:100%;position:relative;z-index:1;}
+.card{background:var(--glass);backdrop-filter:blur(30px);border:1px solid var(--border);border-radius:28px;padding:48px;text-align:center;position:relative;overflow:hidden;}
+.card::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(251,191,36,0.3),transparent);}
+.logo{font-size:1.5rem;font-weight:800;background:linear-gradient(135deg,var(--lavender),var(--cyan));-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:32px;}
+h1{font-size:1.75rem;font-weight:800;letter-spacing:-0.02em;margin-bottom:12px;}
+.subtitle{color:var(--muted);margin-bottom:40px;}
+.progress-ring-wrap{position:relative;width:200px;height:200px;margin:0 auto 36px;}
+.progress-ring-wrap svg{transform:rotate(-90deg);filter:drop-shadow(0 0 10px rgba(251,191,36,0.2));}
+.progress-bg{fill:none;stroke:rgba(255,255,255,0.04);stroke-width:10;}
+.progress-fill{fill:none;stroke:url(#progressGradient);stroke-width:10;stroke-linecap:round;stroke-dasharray:565;stroke-dashoffset:565;transition:stroke-dashoffset 1.5s ease;filter:drop-shadow(0 0 8px rgba(251,191,36,0.3));}
+.progress-text{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;}
+.progress-text .num{font-size:2.8rem;font-weight:800;background:linear-gradient(135deg,var(--amber),var(--pink));-webkit-background-clip:text;-webkit-text-fill-color:transparent;display:block;}
+.progress-text .label{font-size:0.8rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.1em;}
+.link-box{display:flex;gap:12px;margin-bottom:32px;}
+.link-box input{flex:1;padding:14px 20px;background:rgba(255,255,255,0.02);border:1px solid var(--border);border-radius:12px;color:var(--text);font-size:0.9375rem;outline:none;transition:border-color 0.3s;}
+.link-box input:focus{border-color:var(--amber);}
+.link-box button{padding:14px 24px;background:linear-gradient(135deg,var(--lavender),var(--cyan));border:none;border-radius:12px;color:#050508;font-weight:700;cursor:pointer;transition:all 0.3s;white-space:nowrap;position:relative;overflow:hidden;}
+.link-box button::before{content:"";position:absolute;inset:-2px;border-radius:12px;background:linear-gradient(135deg,var(--lavender),var(--cyan));filter:blur(8px);opacity:0.4;z-index:-1;transition:opacity 0.3s;}
+.link-box button:hover{transform:translateY(-1px);}
+.link-box button:hover::before{opacity:0.8;}
+.friends-list{text-align:left;margin-bottom:32px;}
+.friends-list h3{font-size:0.75rem;text-transform:uppercase;letter-spacing:0.1em;color:var(--muted);margin-bottom:16px;}
+.friend{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;background:rgba(255,255,255,0.015);border:1px solid var(--border);border-radius:14px;margin-bottom:8px;transition:all 0.3s;}
+.friend:hover{border-color:rgba(167,139,250,0.1);}
+.friend-info{display:flex;align-items:center;gap:12px;}
+.friend-avatar{width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,var(--lavender),var(--pink));display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.875rem;box-shadow:0 0 12px rgba(167,139,250,0.2);}
+.friend-email{font-size:0.9rem;color:var(--muted);}
+.status{font-size:0.7rem;font-weight:700;padding:5px 14px;border-radius:100px;letter-spacing:0.05em;text-transform:uppercase;}
+.status.joined{background:rgba(34,197,94,0.08);color:var(--green);box-shadow:0 0 8px rgba(34,197,94,0.1);}
+.status.pending{background:rgba(251,191,36,0.08);color:var(--amber);}
+.unlock-cta{padding:24px;background:linear-gradient(135deg,rgba(251,191,36,0.06),rgba(240,171,252,0.03));border:1px solid rgba(251,191,36,0.15);border-radius:20px;position:relative;overflow:hidden;}
+.unlock-cta::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(251,191,36,0.4),transparent);}
+.unlock-cta h3{font-size:1.2rem;margin-bottom:8px;color:var(--amber);font-weight:700;}
+.unlock-cta p{color:var(--muted);font-size:0.9375rem;margin-bottom:16px;}
+.btn-primary{background:linear-gradient(135deg,var(--amber),var(--pink));color:#050508;border:none;padding:14px 32px;border-radius:100px;font-weight:700;cursor:pointer;font-size:1rem;position:relative;overflow:hidden;transition:all 0.3s;}
+.btn-primary::before{content:"";position:absolute;inset:-2px;border-radius:100px;background:linear-gradient(135deg,var(--amber),var(--pink));filter:blur(10px);opacity:0.4;z-index:-1;transition:opacity 0.3s;}
+.btn-primary:hover{transform:translateY(-2px);}
+.btn-primary:hover::before{opacity:0.8;}
+.analytics-tease{margin-top:32px;padding:24px;background:var(--glass);backdrop-filter:blur(20px);border:1px solid var(--border);border-radius:20px;text-align:left;position:relative;overflow:hidden;}
+.analytics-tease::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(167,139,250,0.2),transparent);}
+.analytics-tease h3{font-size:1rem;margin-bottom:16px;font-weight:700;}
+.stat-row{display:flex;gap:16px;margin-bottom:16px;}
+.stat-box{flex:1;padding:18px;background:rgba(255,255,255,0.01);border-radius:14px;border:1px solid rgba(255,255,255,0.04);}
+.stat-box .val{font-size:1.6rem;font-weight:800;background:linear-gradient(135deg,#fff,var(--lavender));-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+.stat-box .lab{font-size:0.7rem;color:var(--muted);margin-top:6px;text-transform:uppercase;letter-spacing:0.05em;}
+.locked{position:relative;filter:blur(4px);user-select:none;}
+.locked::after{content:"🔒 Unlock with 5 referrals";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:0.8rem;color:var(--amber);filter:none;background:rgba(5,5,8,0.75);border-radius:10px;font-weight:600;}
+</style>
+</head>
+<body>
+<div class="glow glow-1"></div>
+<div class="glow glow-2"></div>
+<svg width="0" height="0"><defs><linearGradient id="progressGradient" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stop-color="#fbbf24"/><stop offset="100%" stop-color="#f0abfc"/></linearGradient></defs></svg>
+<div class="container">
+  <div class="card">
+    <div class="logo">Yven</div>
+    <h1>Unlock Your 14-Day Trial</h1>
+    <p class="subtitle">Share Yven with 5 creator friends. When they sign up, your trial activates instantly.</p>
+    <div class="progress-ring-wrap">
+      <svg width="200" height="200"><circle class="progress-bg" cx="100" cy="100" r="90"/><circle class="progress-fill" id="progressFill" cx="100" cy="100" r="90"/></svg>
+      <div class="progress-text"><span class="num" id="progressNum">0/5</span><span class="label">Friends Joined</span></div>
+    </div>
+    <div class="link-box">
+      <input type="text" value="yven.ai/r/marcus-8x2k" id="refLink" readonly>
+      <button onclick="copyLink()">Copy Link</button>
+    </div>
+    <div class="friends-list">
+      <h3>Your Referrals</h3>
+      <div class="friend"><div class="friend-info"><div class="friend-avatar">JD</div><span class="friend-email">james@creator.com</span></div><span class="status joined">Joined</span></div>
+      <div class="friend"><div class="friend-info"><div class="friend-avatar" style="background:linear-gradient(135deg,#67e8f9,#a78bfa);">AL</div><span class="friend-email">amy@studio.co</span></div><span class="status joined">Joined</span></div>
+      <div class="friend"><div class="friend-info"><div class="friend-avatar" style="background:linear-gradient(135deg,#f0abfc,#fbbf24);">RK</div><span class="friend-email">ravi@tech.io</span></div><span class="status joined">Joined</span></div>
+      <div class="friend"><div class="friend-info"><div class="friend-avatar" style="background:rgba(255,255,255,0.04);">?</div><span class="friend-email" style="color:var(--muted);">Waiting...</span></div><span class="status pending">Pending</span></div>
+      <div class="friend"><div class="friend-info"><div class="friend-avatar" style="background:rgba(255,255,255,0.04);">?</div><span class="friend-email" style="color:var(--muted);">Waiting...</span></div><span class="status pending">Pending</span></div>
+    </div>
+    <div class="unlock-cta">
+      <h3>You're 2 friends away</h3>
+      <p>The average Yven user unlocks their trial in under 48 hours. Share in creator Discords, Twitter DMs, or Instagram close friends.</p>
+      <button class="btn-primary" onclick="copyLink()">Share Yven Now</button>
+    </div>
+  </div>
+  <div class="analytics-tease">
+    <h3>Analytics Wall Preview</h3>
+    <div class="stat-row">
+      <div class="stat-box locked"><div class="val">2.4M</div><div class="lab">Avg Views / Month</div></div>
+      <div class="stat-box locked"><div class="val">68%</div><div class="lab">Avg Retention</div></div>
+      <div class="stat-box locked"><div class="val">$12K</div><div class="lab">Est. Monthly Value</div></div>
+    </div>
+    <p style="font-size:0.8rem;color:var(--muted);text-align:center;margin-top:8px;">Unlock full analytics when your trial activates</p>
+  </div>
+</div>
+<script>
+function copyLink(){const input=document.getElementById('refLink');input.select();navigator.clipboard.writeText(input.value).then(()=>{const btn=document.querySelector('.link-box button');btn.textContent='Copied!';setTimeout(()=>btn.textContent='Copy Link',2000);});}
+setTimeout(()=>{const fill=document.getElementById('progressFill');const circumference=2*Math.PI*90;fill.style.strokeDashoffset=circumference*(1-3/5);document.getElementById('progressNum').textContent='3/5';},300);
+</script>
+</body>
+</html>
