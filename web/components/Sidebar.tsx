@@ -7,6 +7,7 @@ import {
   Play, Settings, History, KeyRound, LayoutDashboard, Activity,
   ListChecks, Wand2, HeartPulse, Layers, Menu, X, HardDrive, BarChart3,
   Shield, Crown, Users, Flag, Package, LayoutTemplate, ScrollText, Sparkles,
+  SlidersHorizontal,
 } from "lucide-react";
 import clsx from "clsx";
 
@@ -38,6 +39,7 @@ const SUPERADMIN_NAV: NavItem[] = [
   { href: "/superadmin/content",   label: "Landing",      icon: LayoutTemplate  },
   { href: "/superadmin/roadmap",   label: "Roadmap",      icon: ScrollText      },
   { href: "/superadmin/plans",     label: "Plans",        icon: Package         },
+  { href: "/superadmin/config",    label: "Configuration", icon: SlidersHorizontal },
   { href: "/superadmin/flags",     label: "Flags",        icon: Flag            },
   { href: "/superadmin/audit",     label: "Audit log",    icon: ScrollText      },
 ];

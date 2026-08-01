@@ -29,8 +29,13 @@
  *   4. Prunes backups older than the retention window, remotely and in
  *      PB's own local backup store.
  *
- * Configuration (set these in Coolify's env store)
- * ------------------------------------------------
+ * Configuration
+ * -------------
+ * Set in the dashboard: Superadmin → Configuration → Backups. Values
+ * are read from the platform_config collection first and the process
+ * environment second, so a destination can be changed or a credential
+ * rotated without a redeploy.
+ *
  *   BACKUP_S3_ENDPOINT     e.g. https://<account>.r2.cloudflarestorage.com
  *   BACKUP_S3_BUCKET       destination bucket name
  *   BACKUP_S3_ACCESS_KEY
@@ -38,7 +43,7 @@
  *   BACKUP_S3_REGION       optional, default "auto" (right for R2)
  *   BACKUP_RETENTION_DAYS  optional, default 14
  *
- * If the BACKUP_S3_* vars are absent the script exits 0 with a notice
+ * With no destination configured the script exits 0 with a notice
  * rather than failing, so it can be installed and scheduled before the
  * destination bucket exists.
  */
@@ -53,15 +58,43 @@ const MINIO_URL   = process.env.MINIO_INTERNAL_URL || "http://minio:9000";
 const SRC_BUCKET  = process.env.S3_BUCKET || "yt-agent-videos";
 const RETAIN_DAYS = Number(process.env.BACKUP_RETENTION_DAYS || 14);
 
-const DEST = {
-  endpoint:  process.env.BACKUP_S3_ENDPOINT || "",
-  bucket:    process.env.BACKUP_S3_BUCKET || "",
-  accessKey: process.env.BACKUP_S3_ACCESS_KEY || "",
-  secretKey: process.env.BACKUP_S3_SECRET_KEY || "",
-  region:    process.env.BACKUP_S3_REGION || "auto",
-};
-
 const log = (...a) => console.log("[backup]", ...a);
+
+/**
+ * Resolve settings the same way the dashboard does: the
+ * platform_config collection first, environment second.
+ *
+ * This is what lets backup destinations be changed from
+ * /superadmin/config without a redeploy — previously the only way to
+ * point backups somewhere new was to edit Coolify env vars and
+ * rebuild, which is a slow round trip for a routine operational
+ * change.
+ */
+async function loadConfig(token) {
+  const fromDb = {};
+  try {
+    const r = await fetch(`${PB_URL}/api/collections/platform_config/records?perPage=500`, {
+      headers: { Authorization: token },
+    });
+    if (r.ok) {
+      for (const row of (await r.json()).items || []) {
+        if (row.key && row.value) fromDb[row.key] = String(row.value);
+      }
+    }
+  } catch (e) {
+    log("platform_config unreadable, falling back to environment:", e.message);
+  }
+  const get = (k, d = "") => fromDb[k] || process.env[k] || d;
+  return {
+    endpoint:  get("BACKUP_S3_ENDPOINT"),
+    bucket:    get("BACKUP_S3_BUCKET"),
+    accessKey: get("BACKUP_S3_ACCESS_KEY"),
+    secretKey: get("BACKUP_S3_SECRET_KEY"),
+    region:    get("BACKUP_S3_REGION", "auto"),
+    retainDays: Number(get("BACKUP_RETENTION_DAYS", "")) || RETAIN_DAYS,
+    source: Object.keys(fromDb).some((k) => k.startsWith("BACKUP_S3_")) ? "dashboard" : "environment",
+  };
+}
 
 function stamp() {
   // YYYY-MM-DD_HHMM in UTC — sorts lexicographically.
@@ -115,11 +148,11 @@ async function pbBackup(token) {
 }
 
 /** Drop PB-side backup files older than the retention window. */
-async function pbPrune(token) {
+async function pbPrune(token, retainDays) {
   const r = await fetch(`${PB_URL}/api/backups`, { headers: { Authorization: token } });
   if (!r.ok) return 0;
   const list = await r.json();
-  const cutoff = Date.now() - RETAIN_DAYS * 86400_000;
+  const cutoff = Date.now() - retainDays * 86400_000;
   let removed = 0;
   for (const b of Array.isArray(list) ? list : []) {
     const t = Date.parse(b.modified || "") || 0;
@@ -134,12 +167,26 @@ async function pbPrune(token) {
 }
 
 async function main() {
+  // Authenticate first: config now lives in the database, so we need a
+  // token before we can even find out where to write backups.
+  let token;
+  try {
+    token = await pbAuth();
+  } catch (e) {
+    log("FATAL: cannot reach PocketBase —", e.message);
+    process.exit(1);
+  }
+
+  const DEST = await loadConfig(token);
+  const RETAIN = DEST.retainDays;
+
   if (!DEST.endpoint || !DEST.bucket || !DEST.accessKey || !DEST.secretKey) {
-    log("BACKUP_S3_* not configured — nothing to do.");
-    log("Set BACKUP_S3_ENDPOINT / BACKUP_S3_BUCKET / BACKUP_S3_ACCESS_KEY /");
-    log("BACKUP_S3_SECRET_KEY in Coolify to enable offsite backups.");
+    log("Backup destination not configured — nothing to do.");
+    log("Set it in the dashboard: Superadmin → Configuration → Backups.");
+    log("(Takes effect immediately; no redeploy needed.)");
     process.exit(0);
   }
+  log(`destination configured via ${DEST.source}, retaining ${RETAIN} days`);
 
   const dest = new S3Client({
     endpoint: DEST.endpoint,
@@ -161,7 +208,6 @@ async function main() {
 
   // ── 1. PocketBase ──────────────────────────────────────────────
   try {
-    const token = await pbAuth();
     const { name, buf } = await pbBackup(token);
     summary.pb_bytes = buf.length;
     await dest.send(new PutObjectCommand({
@@ -169,7 +215,7 @@ async function main() {
       Body: buf, ContentType: "application/zip",
     }));
     log(`pocketbase → pocketbase/${name} (${(buf.length / 1048576).toFixed(1)} MB)`);
-    summary.pruned_pb = await pbPrune(token);
+    summary.pruned_pb = await pbPrune(token, RETAIN);
   } catch (e) {
     summary.errors.push(`pocketbase: ${e.message}`);
     log("ERROR pocketbase:", e.message);
@@ -206,7 +252,7 @@ async function main() {
 
   // ── 3. Remote retention ────────────────────────────────────────
   try {
-    const cutoff = Date.now() - RETAIN_DAYS * 86400_000;
+    const cutoff = Date.now() - RETAIN * 86400_000;
     let ContinuationToken;
     do {
       const page = await dest.send(new ListObjectsV2Command({
