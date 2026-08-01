@@ -32,6 +32,13 @@
 # orphan_retention=604800 → keep orphan videos for 7 days before deleting.
 */15 * * * *  curl -fsS -X POST -H "X-API-Key: $RENDER_TRIGGER_KEY" "$DASHBOARD_INTERNAL_URL/api/maintenance/cleanup-stale?stale_seconds=600&orphan_retention=604800" >> /proc/1/fd/1 2>&1
 
+# Verify every tenant's YouTube connection once a day. A revoked
+# token produces no event, so without this the platform only finds
+# out when a render has already spent ~20 min of GPU and fails at
+# the publish step. Alerts only on transitions into a broken state.
+30 6 * * * curl -fsS -X POST -H "X-API-Key: $RENDER_TRIGGER_KEY" "$DASHBOARD_INTERNAL_URL/api/maintenance/check-connections" >> /proc/1/fd/1 2>&1
+
+
 # 03:30 UTC daily — reclaim Docker build cache + dangling images on
 # the host. Frequent image rebuilds (dashboard + side-worker) leave
 # multi-GB BuildKit layer cache; without this it accumulates 15-20 GB

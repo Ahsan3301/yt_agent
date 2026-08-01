@@ -106,6 +106,13 @@ type YouTubeAccount = {
   youtube_channel_id: string;
   title: string;
   thumbnail: string;
+  // Populated from /api/youtube/health. A revoked token produces no
+  // event, so without an explicit status a disconnected channel looks
+  // identical to a working one right up until a render fails at the
+  // publish step.
+  health_status?: "ok" | "dead" | "error" | "unknown";
+  health_error?: string;
+  health_checked_at?: number;
 };
 
 // Stay in sync with web/app/create/wizard/page.tsx WIZARD_LANGUAGES.
@@ -139,21 +146,63 @@ export default function ChannelsPage() {
   const toast = useToast();
   const [channels, setChannels] = useState<Channel[]>([]);
   const [ytAccounts, setYtAccounts] = useState<YouTubeAccount[]>([]);
+  const [checkingHealth, setCheckingHealth] = useState(false);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Channel | null>(null);
   const [showNew, setShowNew] = useState(false);
 
+  // Live re-probe against Google. Deliberately explicit rather than
+  // automatic on page load: it costs a round trip per account, and the
+  // stored status is refreshed daily by the maintenance sweep anyway.
+  const checkConnections = async () => {
+    setCheckingHealth(true);
+    try {
+      const r = await fetch("/api/youtube/health", { method: "POST" });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        toast.error("Couldn't check connections", d.error || `HTTP ${r.status}`);
+      } else if (d.broken > 0) {
+        toast.error(
+          `${d.broken} of ${d.checked} channel${d.checked === 1 ? "" : "s"} need reconnecting`,
+          "Use the ↻ button on each one to sign in again.",
+        );
+      } else {
+        toast.success("All channels connected", `${d.checked} verified with YouTube.`);
+      }
+      await refresh();
+    } finally {
+      setCheckingHealth(false);
+    }
+  };
+
   const refresh = async () => {
     setLoading(true);
     try {
-      const [chRes, accRes] = await Promise.all([
+      const [chRes, accRes, healthRes] = await Promise.all([
         fetch("/api/channels", { cache: "no-store" }),
         fetch("/api/youtube/accounts", { cache: "no-store" }),
+        fetch("/api/youtube/health",   { cache: "no-store" }),
       ]);
       const ch = await chRes.json();
       const acc = await accRes.json();
+      // Health is stored, not probed on load — merging it in is cheap
+      // and means a dead connection is visible immediately rather than
+      // only after a render fails.
+      const health = healthRes.ok ? await healthRes.json().catch(() => null) : null;
+      const byId = new Map<string, { status: string; error: string; checked_at: number }>(
+        (health?.items || []).map((h: { id: string; status: string; error: string; checked_at: number }) =>
+          [h.id, { status: h.status, error: h.error, checked_at: h.checked_at }]),
+      );
       setChannels(Array.isArray(ch) ? ch : []);
-      setYtAccounts(Array.isArray(acc) ? acc : []);
+      setYtAccounts(
+        (Array.isArray(acc) ? acc : []).map((a: YouTubeAccount) => {
+          const h = byId.get(a.id);
+          return h
+            ? { ...a, health_status: h.status as YouTubeAccount["health_status"],
+                health_error: h.error, health_checked_at: h.checked_at }
+            : a;
+        }),
+      );
     } catch (e) {
       toast.error("Couldn't load channels", String(e));
     }
@@ -322,12 +371,24 @@ export default function ChannelsPage() {
             Connected YouTube accounts
             <span className="text-xs text-neutral-500">({ytAccounts.length})</span>
           </div>
-          <button
-            onClick={() => connectYouTube(null)}
-            className="btn btn-ghost h-7 text-xs"
-          >
-            <Plus className="h-3 w-3" /> Connect another
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={checkConnections}
+              disabled={checkingHealth}
+              className="btn btn-ghost h-7 text-xs"
+              title="Verify every connection against Google right now"
+            >
+              {checkingHealth
+                ? <><Loader2 className="h-3 w-3 animate-spin" /> Checking…</>
+                : <><RefreshCw className="h-3 w-3" /> Check connections</>}
+            </button>
+            <button
+              onClick={() => connectYouTube(null)}
+              className="btn btn-ghost h-7 text-xs"
+            >
+              <Plus className="h-3 w-3" /> Connect another
+            </button>
+          </div>
         </div>
         {ytAccounts.length === 0 ? (
           <div className="text-xs text-neutral-500">
@@ -348,8 +409,21 @@ export default function ChannelsPage() {
                   </div>
                 )}
                 <div className="min-w-0 flex-1">
-                  <div className="text-sm font-medium truncate">{acc.title || "(unnamed)"}</div>
-                  <code className="text-[10px] text-neutral-500">{acc.id}</code>
+                  <div className="text-sm font-medium truncate flex items-center gap-2">
+                    <span className="truncate">{acc.title || "(unnamed)"}</span>
+                    <ConnectionBadge status={acc.health_status} />
+                  </div>
+                  {acc.health_status === "dead" || acc.health_status === "error" ? (
+                    <div className="text-[10px] text-red-300 mt-0.5">
+                      {acc.health_error || "This channel needs reconnecting."}
+                    </div>
+                  ) : (
+                    <div className="text-[10px] text-neutral-500">
+                      {acc.health_checked_at
+                        ? `Checked ${_ago(acc.health_checked_at)}`
+                        : "Not checked yet"}
+                    </div>
+                  )}
                 </div>
                 <button
                   onClick={() => connectYouTube(null)}
@@ -1588,4 +1662,23 @@ function ChannelForm({
       </div>
     </div>
   );
+}
+
+/** Connection status pill. "unknown" stays neutral rather than
+ *  implying health we haven't actually verified. */
+function ConnectionBadge({ status }: { status?: string }) {
+  if (status === "ok")    return <span className="pill pill-success">Connected</span>;
+  if (status === "dead")  return <span className="pill pill-danger">Disconnected</span>;
+  if (status === "error") return <span className="pill pill-warn">Problem</span>;
+  return <span className="pill pill-muted">Unchecked</span>;
+}
+
+function _ago(unixSeconds: number): string {
+  const s = Math.max(0, Math.floor(Date.now() / 1000) - unixSeconds);
+  if (s < 90) return "just now";
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
 }
