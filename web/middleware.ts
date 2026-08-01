@@ -35,6 +35,9 @@ const PUBLIC_PATHS = new Set([
   "/api/auth/logout",
   "/api/auth/register",
   "/api/preflight",
+  // Public marketing endpoints.
+  "/api/marketing/demo/waitlist",
+  "/api/tools/roast",
 ]);
 
 // API routes that use their own X-API-Key auth (worker↔dashboard).
@@ -61,7 +64,14 @@ export async function middleware(req: NextRequest) {
     const isPublic =
       PUBLIC_PATHS.has(pathname) ||
       pathname.startsWith("/_next/") ||
-      pathname.startsWith("/favicon");
+      pathname.startsWith("/favicon") ||
+      // Marketing surfaces added post-launch — all public by design.
+      pathname === "/roadmap" ||
+      pathname === "/compare" ||
+      pathname === "/demo" ||
+      pathname.startsWith("/tools/") ||
+      // Referral short-links must be reachable when signed out.
+      pathname.startsWith("/r/");
     const isApiKeyRoute = API_KEY_ROUTES.some((p) => pathname.startsWith(p));
     if (!isPublic && !isApiKeyRoute) {
       const cookie = req.cookies.get("dash_auth")?.value || "";

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase-admin";
 import { hashPassword } from "@/lib/passwords";
 import { getFlag } from "@/lib/flags";
+import { findReferralByCode, attributeSignup } from "@/lib/referrals";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -28,7 +29,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  let body: { email?: string; password?: string; kaggle_username?: string; kaggle_key?: string };
+  let body: { email?: string; password?: string; kaggle_username?: string; kaggle_key?: string; referral_code?: string };
   try { body = await req.json(); }
   catch { return NextResponse.json({ error: "invalid body" }, { status: 400 }); }
 
@@ -36,6 +37,11 @@ export async function POST(req: NextRequest) {
   const password = String(body?.password || "");
   const kaggleUsername = String(body?.kaggle_username || "").trim();
   const kaggleKey = String(body?.kaggle_key || "").trim();
+  // Referral code — accept from body OR yven_ref cookie (set by /r/<code>).
+  // Body wins if both present.
+  const cookieRef = req.cookies.get("yven_ref")?.value || "";
+  const refCode = String(body?.referral_code || cookieRef || "")
+    .toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 24);
 
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return NextResponse.json({ error: "invalid email" }, { status: 400 });
@@ -90,15 +96,32 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Attribute the signup to a referrer if a valid code was supplied.
+  // Silent on missing/unknown codes — never blocks signup.
+  let referrerAttributed: string | null = null;
+  if (refCode) {
+    try {
+      const ref = await findReferralByCode(refCode);
+      if (ref && ref.user_id !== userId) {
+        await attributeSignup(ref.user_id, userId, email);
+        referrerAttributed = ref.user_id;
+      }
+    } catch { /* silent */ }
+  }
+
   // Fire-and-forget Discord ping via the existing worker notifier
   // shim. Uses the global webhook stored at settings/api_keys.
-  _pingOperatorAsync({ userId, email, hasKaggle: !!kaggleUsername });
+  _pingOperatorAsync({ userId, email, hasKaggle: !!kaggleUsername, referrer: referrerAttributed });
 
-  return NextResponse.json({
+  const res = NextResponse.json({
     ok: true,
     status: "pending",
     message: "account created — a superadmin will review your signup shortly.",
+    referred: !!referrerAttributed,
   });
+  // Clear the ref cookie once consumed so it doesn't leak to future signups.
+  if (refCode) res.cookies.delete("yven_ref");
+  return res;
 }
 
 /** Short PB-valid user id: "u" + 14 [a-z0-9] = 15 chars total.
@@ -112,7 +135,7 @@ function _shortUserId(): string {
 
 /** Best-effort operator ping. Reads the DISCORD_WEBHOOK from the same
  *  settings/api_keys blob every other notifier hits. Never throws. */
-async function _pingOperatorAsync(payload: { userId: string; email: string; hasKaggle: boolean }): Promise<void> {
+async function _pingOperatorAsync(payload: { userId: string; email: string; hasKaggle: boolean; referrer?: string | null }): Promise<void> {
   try {
     const snap = await adminDb().collection("settings").doc("denauf3tmivtzyg").get();
     if (!snap.exists) return;
@@ -131,7 +154,9 @@ async function _pingOperatorAsync(payload: { userId: string; email: string; hasK
           description:
             `**Email:** ${payload.email}\n` +
             `**User ID:** \`${payload.userId}\`\n` +
-            `**Kaggle key supplied:** ${payload.hasKaggle ? "yes" : "no"}\n\n` +
+            `**Kaggle key supplied:** ${payload.hasKaggle ? "yes" : "no"}\n` +
+            (payload.referrer ? `**Referred by:** \`${payload.referrer}\`\n` : "") +
+            "\n" +
             "Approve at /admin/users (available once Phase 4 ships).",
           color: 0x22C55E,
           timestamp: new Date().toISOString(),

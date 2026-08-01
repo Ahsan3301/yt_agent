@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase-admin";
 import { requireTenant } from "@/lib/tenant";
 import { audit } from "@/lib/audit";
+import { markJoinedAndCheckUnlock, getOrCreateReferral } from "@/lib/referrals";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -37,13 +38,34 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       approved_by: auth.tenant.userId,
       approved_at: now,
     }, { merge: true });
+    // Give the freshly-approved user their own referral code so they
+    // can invite others. Idempotent — safe if a code already exists.
+    let referralUnlocked: null | { referrerUserId: string; joinedCount: number; newlyUnlocked: boolean } = null;
+    try {
+      await getOrCreateReferral(id);
+      // If this user was themselves referred, flip that signup to
+      // "joined" and check whether their referrer just crossed 5.
+      referralUnlocked = await markJoinedAndCheckUnlock(id);
+    } catch (e) {
+      // Referral tracking is best-effort — never blocks user approval.
+      console.error("referral bookkeeping failed:", e);
+    }
+
     await audit(auth.tenant, {
       action: "user.approve",
       target_type: "app_users",
       target_id: id,
-      meta: { email: d.email, previous_status: d.status || "pending" },
+      meta: {
+        email: d.email,
+        previous_status: d.status || "pending",
+        referral: referralUnlocked || undefined,
+      },
     }, req);
-    return NextResponse.json({ ok: true, id, status: "active" });
+
+    return NextResponse.json({
+      ok: true, id, status: "active",
+      referral: referralUnlocked || undefined,
+    });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }

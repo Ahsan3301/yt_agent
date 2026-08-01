@@ -5,33 +5,44 @@ import { useState } from "react";
 import { MarketingNav } from "@/components/MarketingNav";
 
 /**
- * Roast My Channel — free AI audit tool.
+ * Roast My Channel — free AI audit.
  *
- * The real audit engine (fetch last 10 videos → run analysis) is not
- * built yet, so this ships in "coming soon" mode: URL captured and
- * user sees a sample audit + waitlist CTA. When the backend lands,
- * flip DEMO_MODE=false and wire the real /api/tools/roast route.
+ * Hits /api/tools/roast. If YOUTUBE_API_KEY is present on the server,
+ * that route fetches the real channel + 10 latest videos and returns
+ * either LLM-generated tips (if any LLM key is set in the singleton)
+ * or heuristic tips from raw stats. Falls back to preview tips
+ * otherwise, transparently.
  */
-const DEMO_MODE = true;
-
-const SAMPLE_TIPS = [
-  { title: "Your intros are losing 40% of viewers",
-    body:  "Your average viewer drops off at 0:08. Start with a pattern interrupt or a bold claim in the first 3 seconds. Yven's hook engine can rewrite your openings." },
-  { title: "Thumbnail contrast is too low",
-    body:  "3 of your last 10 thumbnails use dark text on dark backgrounds. Add a high-contrast face or bright accent color. Yven auto-generates CTR-optimised thumbnails." },
-  { title: "Posting at random times",
-    body:  "Your audience is most active at 7–9pm EST, but 60% of your videos went live at 2pm. Yven auto-schedules at peak hours for maximum reach." },
-];
+type Tip = { title: string; body: string };
+type Result = {
+  mode: "live" | "preview";
+  channel?: { title: string; thumb: string; subscriberCount: number; videoCount: number; viewCount: number };
+  tips: Tip[];
+  error?: string;
+};
 
 export default function RoastPage() {
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
-  const [shown, setShown] = useState(false);
+  const [result, setResult] = useState<Result | null>(null);
+  const [err, setErr] = useState<string | null>(null);
 
-  const submit = () => {
+  const submit = async () => {
     if (!url.trim()) return;
-    setBusy(true);
-    setTimeout(() => { setBusy(false); setShown(true); }, 1400);
+    setBusy(true); setErr(null); setResult(null);
+    try {
+      const r = await fetch("/api/tools/roast", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok) setResult(j);
+      else setErr(j.error || `HTTP ${r.status}`);
+    } catch (e) {
+      setErr(String(e));
+    }
+    setBusy(false);
   };
 
   return (
@@ -55,13 +66,9 @@ export default function RoastPage() {
         <div className="rounded-3xl border border-white/6 bg-white/[0.015] backdrop-blur-3xl p-12 text-center relative overflow-hidden">
           <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-accent/30 to-transparent" />
 
-          <div className="inline-flex items-center gap-2 rounded-full border border-warn/25 bg-warn/[0.05] px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-amber-300 mb-4">
-            Preview · Coming soon
-          </div>
           <h1 className="text-3xl font-extrabold tracking-tight mb-3">Roast My Channel</h1>
           <p className="text-neutral-400 mb-8">
-            Paste your YouTube channel URL. Our AI analyses your last 10 videos and returns 3 actionable tips to blow up.
-            {DEMO_MODE && <span className="block mt-2 text-xs italic text-amber-300/80">Full audit engine ships soon — try the preview below.</span>}
+            Paste your YouTube channel URL. We fetch your last 10 videos and return 3 actionable tips.
           </p>
 
           <div className="flex gap-3 mb-7">
@@ -69,7 +76,7 @@ export default function RoastPage() {
               type="text"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
-              placeholder="youtube.com/c/YourChannel"
+              placeholder="youtube.com/@YourChannel"
               className="input h-12 flex-1"
             />
             <button
@@ -80,9 +87,36 @@ export default function RoastPage() {
             </button>
           </div>
 
-          {shown && (
+          {err && (
+            <div className="text-sm text-red-300 border border-red-500/30 bg-red-500/[0.06] rounded-lg px-3.5 py-2.5 mb-6 text-left">{err}</div>
+          )}
+
+          {result && (
             <div className="text-left animate-[fadeUp_0.6s_ease_both] space-y-3.5">
-              {SAMPLE_TIPS.map((tip, i) => (
+              {result.mode === "preview" && (
+                <div className="inline-flex items-center gap-2 rounded-full border border-warn/25 bg-warn/[0.05] px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-amber-300 mb-2">
+                  Preview mode — real audit needs the operator to configure a YouTube API key
+                </div>
+              )}
+
+              {result.channel && (
+                <div className="p-5 bg-white/[0.015] border border-white/6 rounded-2xl flex items-center gap-4">
+                  {result.channel.thumb && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={result.channel.thumb} alt="" className="h-12 w-12 rounded-full border border-white/10" />
+                  )}
+                  <div className="flex-1">
+                    <div className="font-bold">{result.channel.title}</div>
+                    <div className="text-xs text-neutral-500 mt-0.5">
+                      {result.channel.subscriberCount.toLocaleString()} subs ·{" "}
+                      {result.channel.videoCount.toLocaleString()} videos ·{" "}
+                      {result.channel.viewCount.toLocaleString()} total views
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {result.tips.map((tip, i) => (
                 <div key={i} className="p-6 bg-white/[0.01] border border-white/6 rounded-2xl relative overflow-hidden hover:border-accent/10 transition">
                   <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-accent/20 to-transparent" />
                   <div className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-gradient-to-br from-warn to-accent-glow text-[#050508] font-extrabold text-sm mb-3 shadow-[0_0_12px_rgba(251,191,36,0.2)]">

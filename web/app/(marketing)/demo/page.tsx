@@ -7,11 +7,10 @@ import { MarketingNav } from "@/components/MarketingNav";
 /**
  * Live-demo waitlist page.
  *
- * A real webinar-scheduling backend isn't wired up yet, so the
- * signup form captures interest client-side only and shows a
- * thank-you toast. The scheduled-run backend ships alongside the
- * referral system — until then, this page is transparent about
- * being an interest-capture form ("Coming soon" badge).
+ * Signups POST to /api/marketing/demo/waitlist which persists the
+ * row + pings the operator Discord. The actual webinar scheduling
+ * (event date, email invite delivery) is still manual — that's why
+ * the page keeps the "Coming soon" framing.
  */
 const DEMO_MODE = true;
 
@@ -41,10 +40,14 @@ export default function DemoPage() {
     setBusy(true);
     setError(null);
     try {
-      // No backend yet. If/when /api/marketing/demo/waitlist ships,
-      // this flips to a real POST. For now we just simulate.
-      await new Promise((r) => setTimeout(r, 800));
-      setDone(true);
+      const r = await fetch("/api/marketing/demo/waitlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, first_name: firstName, channel_url: channel }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok) setDone(true);
+      else setError(j.error || `HTTP ${r.status}`);
     } catch (err) {
       setError(String(err));
     }
@@ -93,7 +96,7 @@ export default function DemoPage() {
             <h2 className="text-xl font-extrabold mb-2">You're on the list</h2>
             <p className="text-neutral-400 text-sm">
               We'll email you the demo link once we lock the date.
-              {DEMO_MODE && <span className="block mt-2 text-xs italic text-amber-300/80">Interest tracked locally — email pipeline goes live with the referrals backend.</span>}
+              {DEMO_MODE && <span className="block mt-2 text-xs italic text-amber-300/80">Signup captured. Webinar date is still being locked — email invites go out then.</span>}
             </p>
           </div>
         ) : (
