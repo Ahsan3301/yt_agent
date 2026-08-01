@@ -17,11 +17,13 @@ export const runtime = "nodejs";
 const CONTENT_ID = "landingcontent0";  // 15-char alphanumeric PB id
 
 type LandingContent = {
+  hero_badge?: string;
   hero_title?: string;
   hero_sub?: string;
   hero_cta_text?: string;
   hero_cta_href?: string;
   features?: Array<{ title: string; body: string; icon?: string }>;
+  pipeline_steps?: Array<{ n: string; title: string; sub: string }>;
   pricing_tiers?: Array<{ name: string; price: string; sub?: string; features?: string[]; highlight?: boolean }>;
   footer_links?: Array<{ label: string; href: string }>;
 };
@@ -53,15 +55,17 @@ export async function PUT(req: NextRequest) {
 
   // Sanitize + cap sizes so a runaway paste can't stuff the DB.
   const clean = {
-    hero_title:    String(body.hero_title    || "").slice(0, 200),
-    hero_sub:      String(body.hero_sub      || "").slice(0, 500),
-    hero_cta_text: String(body.hero_cta_text || "").slice(0, 60),
-    hero_cta_href: String(body.hero_cta_href || "").slice(0, 200),
-    features:      _cleanFeatures(body.features),
-    pricing_tiers: _cleanTiers(body.pricing_tiers),
-    footer_links:  _cleanFooter(body.footer_links),
-    updated_by:    auth.tenant.userId,
-    updated_at:    Math.floor(Date.now() / 1000),
+    hero_badge:     String(body.hero_badge    || "").slice(0, 120),
+    hero_title:     String(body.hero_title    || "").slice(0, 200),
+    hero_sub:       String(body.hero_sub      || "").slice(0, 500),
+    hero_cta_text:  String(body.hero_cta_text || "").slice(0, 60),
+    hero_cta_href:  String(body.hero_cta_href || "").slice(0, 200),
+    features:       _cleanFeatures(body.features),
+    pipeline_steps: _cleanPipeline(body.pipeline_steps),
+    pricing_tiers:  _cleanTiers(body.pricing_tiers),
+    footer_links:   _cleanFooter(body.footer_links),
+    updated_by:     auth.tenant.userId,
+    updated_at:     Math.floor(Date.now() / 1000),
   };
 
   try {
@@ -106,6 +110,18 @@ function _cleanTiers(v: unknown): Array<{ name: string; price: string; sub?: str
       highlight: Boolean(o.highlight),
     };
   }).filter((t) => t.name);
+}
+
+function _cleanPipeline(v: unknown): Array<{ n: string; title: string; sub: string }> {
+  if (!Array.isArray(v)) return [];
+  return v.slice(0, 6).map((x) => {
+    const o = (x || {}) as Record<string, unknown>;
+    return {
+      n:     String(o.n     || "").slice(0, 4),
+      title: String(o.title || "").slice(0, 60),
+      sub:   String(o.sub   || "").slice(0, 120),
+    };
+  }).filter((s) => s.title);
 }
 
 function _cleanFooter(v: unknown): Array<{ label: string; href: string }> {

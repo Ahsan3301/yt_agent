@@ -24,6 +24,7 @@ const CONTENT_ID = "landingcontent0";
 
 type Feature = { title: string; body: string; icon?: string };
 type Tier = { name: string; price: string; sub?: string; features?: string[]; highlight?: boolean };
+type PipelineStep = { n: string; title: string; sub: string };
 
 const DEFAULT_CONTENT = {
   hero_badge:    "Now Live — 1,247 videos published today",
@@ -38,6 +39,11 @@ const DEFAULT_CONTENT = {
     { icon: "🎙️", title: "Voiceover & Audio",        body: "Studio-quality AI voice synced to script. Multiple voices, tone matching, background music." },
     { icon: "🎬", title: "Edit, Compile & Publish",  body: "Full editing with transitions, subtitles, QA, and multi-platform publishing. Wake up to done." },
   ] as Feature[],
+  pipeline_steps: [
+    { n: "1", title: "Connect",   sub: "Attach your channel" },
+    { n: "2", title: "Analyze",   sub: "Channel DNA scan"    },
+    { n: "3", title: "Autopilot", sub: "AI takes over"       },
+  ] as PipelineStep[],
   pricing_tiers: [
     { name: "Starter", price: "$49",  sub: "For solo creators",  features: ["1 channel connected", "10 videos/month", "YouTube publishing", "Basic analytics"] },
     { name: "Pro",     price: "$149", sub: "For serious creators", highlight: true,
@@ -61,6 +67,9 @@ async function _loadContent() {
       features:      Array.isArray(d.features) && d.features.length > 0
                        ? (d.features as Feature[])
                        : DEFAULT_CONTENT.features,
+      pipeline_steps: Array.isArray(d.pipeline_steps) && d.pipeline_steps.length > 0
+                       ? (d.pipeline_steps as PipelineStep[])
+                       : DEFAULT_CONTENT.pipeline_steps,
       pricing_tiers: Array.isArray(d.pricing_tiers) && d.pricing_tiers.length > 0
                        ? (d.pricing_tiers as Tier[])
                        : DEFAULT_CONTENT.pricing_tiers,
@@ -190,11 +199,7 @@ export default async function LandingPage() {
 
         <Reveal delay={200}>
           <div className="flex flex-wrap items-center justify-center gap-0 max-w-4xl mx-auto">
-            {[
-              { n: "1", title: "Connect",  sub: "Attach your channel" },
-              { n: "2", title: "Analyze",  sub: "Channel DNA scan" },
-              { n: "3", title: "Autopilot", sub: "AI takes over" },
-            ].map((step, i, arr) => (
+            {c.pipeline_steps.map((step, i, arr) => (
               <div key={step.n} className="flex items-center">
                 <div className="rounded-3xl border border-white/5 bg-white/[0.015] backdrop-blur-3xl p-9 text-center min-w-[200px] hover:border-accent/20 hover:shadow-[0_0_40px_rgba(167,139,250,0.08)] hover:-translate-y-1 transition-all duration-500">
                   <div className="mx-auto mb-4 h-11 w-11 rounded-full bg-gradient-to-br from-accent to-accent-2 text-[#050508] font-extrabold text-base flex items-center justify-center shadow-[0_0_20px_rgba(167,139,250,0.3)]">

@@ -36,6 +36,7 @@ const ADMIN_NAV: NavItem[] = [
 const SUPERADMIN_NAV: NavItem[] = [
   { href: "/superadmin",           label: "Superadmin",   icon: Crown           },
   { href: "/superadmin/content",   label: "Landing",      icon: LayoutTemplate  },
+  { href: "/superadmin/roadmap",   label: "Roadmap",      icon: ScrollText      },
   { href: "/superadmin/plans",     label: "Plans",        icon: Package         },
   { href: "/superadmin/flags",     label: "Flags",        icon: Flag            },
   { href: "/superadmin/audit",     label: "Audit log",    icon: ScrollText      },

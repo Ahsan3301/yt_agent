@@ -10,25 +10,30 @@ import Link from "next/link";
  * the "Preview" button just opens the live landing page in a new tab.
  */
 
-type Feature = { title: string; body: string };
+type Feature = { title: string; body: string; icon?: string };
 type Tier = { name: string; price: string; sub?: string; features?: string[]; highlight?: boolean };
+type PipelineStep = { n: string; title: string; sub: string };
 
 type Content = {
+  hero_badge: string;
   hero_title: string;
   hero_sub: string;
   hero_cta_text: string;
   hero_cta_href: string;
   features: Feature[];
+  pipeline_steps: PipelineStep[];
   pricing_tiers: Tier[];
   footer_links: Array<{ label: string; href: string }>;
 };
 
 const EMPTY: Content = {
+  hero_badge: "",
   hero_title: "",
   hero_sub: "",
-  hero_cta_text: "Request access",
+  hero_cta_text: "Get Early Access",
   hero_cta_href: "/signup",
   features: [],
+  pipeline_steps: [],
   pricing_tiers: [],
   footer_links: [],
 };
@@ -45,7 +50,12 @@ export default function ContentEditor() {
         const r = await fetch("/api/superadmin/content");
         if (r.ok) {
           const d = await r.json();
-          setC({ ...EMPTY, ...d, features: d.features || [], pricing_tiers: d.pricing_tiers || [], footer_links: d.footer_links || [] });
+          setC({ ...EMPTY, ...d,
+            features: d.features || [],
+            pipeline_steps: d.pipeline_steps || [],
+            pricing_tiers: d.pricing_tiers || [],
+            footer_links: d.footer_links || [],
+          });
         }
       } finally {
         setLoading(false);
@@ -98,6 +108,12 @@ export default function ContentEditor() {
       <div className="card space-y-3">
         <div className="text-sm font-medium">Hero</div>
         <div>
+          <label className="label">Badge <span className="text-neutral-500 normal-case">(pill above headline · e.g. "Now Live — 1,247 videos today")</span></label>
+          <input className="input" value={c.hero_badge}
+                 placeholder="Now Live — 1,247 videos published today"
+                 onChange={(e) => setC({ ...c, hero_badge: e.target.value })} />
+        </div>
+        <div>
           <label className="label">Title</label>
           <input className="input" value={c.hero_title} onChange={(e) => setC({ ...c, hero_title: e.target.value })} />
         </div>
@@ -121,7 +137,7 @@ export default function ContentEditor() {
       <div className="card space-y-3">
         <div className="flex items-center justify-between">
           <div className="text-sm font-medium">Features</div>
-          <button onClick={() => setC({ ...c, features: [...c.features, { title: "", body: "" }] })}
+          <button onClick={() => setC({ ...c, features: [...c.features, { title: "", body: "", icon: "" }] })}
                   className="btn btn-ghost h-7 text-xs"><Plus className="h-3 w-3" /> Add</button>
         </div>
         {c.features.length === 0 && <div className="text-xs text-neutral-500">No features yet.</div>}
@@ -131,16 +147,56 @@ export default function ContentEditor() {
                     className="absolute top-2 right-2 text-neutral-500 hover:text-red-300">
               <X className="h-3 w-3" />
             </button>
-            <input className="input" placeholder="Title"
-                   value={f.title} onChange={(e) => {
-              const next = [...c.features]; next[i] = { ...f, title: e.target.value };
-              setC({ ...c, features: next });
-            }} />
+            <div className="grid grid-cols-[80px_1fr] gap-2">
+              <input className="input text-center text-lg" placeholder="🔍" maxLength={4}
+                     value={f.icon || ""} onChange={(e) => {
+                const next = [...c.features]; next[i] = { ...f, icon: e.target.value };
+                setC({ ...c, features: next });
+              }} />
+              <input className="input" placeholder="Title"
+                     value={f.title} onChange={(e) => {
+                const next = [...c.features]; next[i] = { ...f, title: e.target.value };
+                setC({ ...c, features: next });
+              }} />
+            </div>
             <textarea className="input" rows={2} placeholder="Body"
                       value={f.body} onChange={(e) => {
               const next = [...c.features]; next[i] = { ...f, body: e.target.value };
               setC({ ...c, features: next });
             }} />
+          </div>
+        ))}
+      </div>
+
+      {/* Pipeline steps ("How Yven Works") */}
+      <div className="card space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="text-sm font-medium">How it works · pipeline steps</div>
+          <button onClick={() => setC({ ...c, pipeline_steps: [...c.pipeline_steps, { n: String(c.pipeline_steps.length + 1), title: "", sub: "" }] })}
+                  className="btn btn-ghost h-7 text-xs"><Plus className="h-3 w-3" /> Add step</button>
+        </div>
+        {c.pipeline_steps.length === 0 && <div className="text-xs text-neutral-500">No steps yet — landing falls back to the default 3-step (Connect · Analyze · Autopilot).</div>}
+        {c.pipeline_steps.map((s, i) => (
+          <div key={i} className="border border-line rounded p-3 space-y-2 relative grid grid-cols-[60px_1fr_2fr_20px] gap-2 items-start">
+            <input className="input text-center" placeholder="1" maxLength={2}
+                   value={s.n} onChange={(e) => {
+              const next = [...c.pipeline_steps]; next[i] = { ...s, n: e.target.value };
+              setC({ ...c, pipeline_steps: next });
+            }} />
+            <input className="input" placeholder="Title (Connect)"
+                   value={s.title} onChange={(e) => {
+              const next = [...c.pipeline_steps]; next[i] = { ...s, title: e.target.value };
+              setC({ ...c, pipeline_steps: next });
+            }} />
+            <input className="input" placeholder="Subtitle (Attach your channel)"
+                   value={s.sub} onChange={(e) => {
+              const next = [...c.pipeline_steps]; next[i] = { ...s, sub: e.target.value };
+              setC({ ...c, pipeline_steps: next });
+            }} />
+            <button onClick={() => setC({ ...c, pipeline_steps: c.pipeline_steps.filter((_, j) => j !== i) })}
+                    className="text-neutral-500 hover:text-red-300 h-9 flex items-center justify-center">
+              <X className="h-3 w-3" />
+            </button>
           </div>
         ))}
       </div>
