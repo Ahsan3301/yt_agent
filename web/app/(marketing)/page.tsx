@@ -1,5 +1,4 @@
 import Link from "next/link";
-import dynamic from "next/dynamic";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { adminDb } from "@/lib/firebase-admin";
@@ -7,6 +6,7 @@ import { Reveal } from "@/components/Reveal";
 import { MarketingNav } from "@/components/MarketingNav";
 import { Tilt3D } from "@/components/Tilt3D";
 import { PricingCard } from "@/components/PricingCard";
+import { InfinityMount } from "@/components/InfinityMount";
 import { ArrowRight, Sparkles, Zap, Layers, Waves } from "lucide-react";
 
 /**
@@ -23,13 +23,6 @@ import { ArrowRight, Sparkles, Zap, Layers, Waves } from "lucide-react";
 export const revalidate = 60;
 
 const CONTENT_ID = "landingcontent0";
-
-// Three.js is dynamically imported client-side only — its ~140kb of
-// WebGL machinery must not ship in the initial page bundle.
-const InfinityScene = dynamic(() => import("@/components/InfinityScene"), {
-  ssr: false,
-  loading: () => <div className="w-[min(760px,92vw)] aspect-[16/10] mb-8" aria-hidden />,
-});
 
 type Feature = { title: string; body: string; icon?: string };
 type Tier = { name: string; price: string; sub?: string; features?: string[]; highlight?: boolean };
@@ -121,7 +114,7 @@ export default async function LandingPage() {
             out at the edges. Only used here, nowhere else on the page. */}
         <div aria-hidden className="absolute inset-0 neon-grid opacity-[0.03]" />
 
-        <InfinityScene />
+        <InfinityMount />
 
         <Reveal delay={200}>
           <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.02] backdrop-blur-xl px-3.5 py-1.5 text-[11px] font-medium text-neutral-400 mb-8">
