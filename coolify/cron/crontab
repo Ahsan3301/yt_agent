@@ -43,6 +43,17 @@
 # downgrade expired paid plans and warn about ones about to end.
 45 6 * * * curl -fsS -X POST -H "X-API-Key: $RENDER_TRIGGER_KEY" "$DASHBOARD_INTERNAL_URL/api/maintenance/check-subscriptions" >> /proc/1/fd/1 2>&1
 
+# Every 20 min - re-publish videos that rendered but never reached
+# YouTube. Until now the only way one of these got published was an
+# operator spotting the orange badge in the queue and clicking retry;
+# 9 sat stranded for a week from the dead-OAuth window and were lost
+# when storage cleanup removed the files. A finished video nobody
+# publishes has already paid every cost and returns nothing.
+# Skips accounts already known disconnected, so a revoked token
+# doesn't burn the attempt budget. Caps at 3 attempts per video.
+# (No '#' characters inside this command - see the gateway-heal note.)
+*/20 * * * * curl -fsS -X POST -H "X-API-Key: $RENDER_TRIGGER_KEY" "$DASHBOARD_INTERNAL_URL/api/maintenance/retry-publish" >> /proc/1/fd/1 2>&1
+
 
 # Probe the SHARED credential pool every 4 hours. More frequent than
 # the per-tenant connection sweep because these keys are a single
