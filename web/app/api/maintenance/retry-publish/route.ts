@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminDb, FieldValue } from "@/lib/firebase-admin";
 import { requireMaintenanceKey } from "@/app/api/_lib/auth";
 import { newRequestId, logRoute } from "@/app/api/_lib/orchestrator";
-import { listStorageVideos } from "@/lib/storage-list";
+import { listStorageVideos, storageConfigured } from "@/lib/storage-list";
 import { customAlphabet } from "nanoid";
 
 export const dynamic = "force-dynamic";
@@ -79,9 +79,19 @@ export async function POST(req: NextRequest) {
 
     // One storage listing for the whole sweep rather than per job.
     let storageRunIds = new Set<string>();
-    let storageListed = true;
+    // Only an authoritative listing may justify marking a job failed.
+    // listStorageVideos() returns [] for an unconfigured client exactly
+    // as it does for an empty bucket, so without this check a
+    // credentials problem would mark every stranded video permanently
+    // unpublishable — turning a config error into data loss.
+    let storageListed = storageConfigured();
+    if (!storageListed) {
+      logRoute(reqId, "retry-publish: storage not configured, skipping no-video checks");
+    }
     try {
-      storageRunIds = new Set((await listStorageVideos()).map((v) => v.run_id));
+      if (storageListed) {
+        storageRunIds = new Set((await listStorageVideos()).map((v) => v.run_id));
+      }
     } catch (e) {
       // Can't prove absence if the listing failed. Treat every video as
       // possibly-present so a transient MinIO blip can never mark a job

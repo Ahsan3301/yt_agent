@@ -81,6 +81,22 @@ const CACHE_TTL_MS = 30_000;
  *  primary answer.
  *
  *  Cached for 30 seconds — dashboard + history poll this frequently. */
+/**
+ * Whether object storage is configured at all.
+ *
+ * listStorageVideos() returns [] both when the bucket is genuinely
+ * empty and when no credentials are set — the two are indistinguishable
+ * to callers. That is harmless for display code, but any caller about
+ * to make an IRREVERSIBLE decision from an empty listing (e.g. "this
+ * video no longer exists, mark the job permanently failed") must check
+ * this first, or a credentials problem silently becomes data loss.
+ */
+export function storageConfigured(): boolean {
+  const key    = process.env.S3_ACCESS_KEY_ID     || process.env.MINIO_ROOT_USER;
+  const secret = process.env.S3_SECRET_ACCESS_KEY || process.env.MINIO_ROOT_PASSWORD;
+  return Boolean(key && secret);
+}
+
 export async function listStorageVideos(): Promise<StorageVideo[]> {
   if (_cache && Date.now() - _cache.at < CACHE_TTL_MS) {
     return _cache.videos;
