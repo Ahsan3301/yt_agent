@@ -103,7 +103,7 @@ export default async function LandingPage() {
       <MarketingNav ctaHref={c.hero_cta_href} ctaText={c.hero_cta_text} />
 
       {/* ── Hero ─────────────────────────────────────────────────── */}
-      <section className="relative z-10 min-h-screen flex flex-col items-center justify-center text-center px-6 pt-28 pb-20">
+      <section className="relative z-10 min-h-[100svh] flex flex-col items-center justify-center text-center px-6 pt-32 pb-32">
         <div className="absolute inset-0 neon-grid pointer-events-none" aria-hidden />
         {/* Floating mini orbs */}
         <div aria-hidden className="absolute inset-0 pointer-events-none overflow-hidden">
@@ -152,10 +152,11 @@ export default async function LandingPage() {
           </div>
         </Reveal>
 
-        {/* Scroll hint */}
-        <div className="absolute bottom-10 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 text-neutral-500 text-[10px] uppercase tracking-[0.15em] animate-[fadeIn_0.8s_ease_2.5s_both]">
+        {/* Scroll hint — only on tall viewports so it never overlaps
+            the CTA row on shorter screens (laptops, mobile). */}
+        <div className="hidden lg:flex absolute bottom-6 left-1/2 -translate-x-1/2 flex-col items-center gap-2 text-neutral-500 text-[10px] uppercase tracking-[0.15em] animate-[fadeIn_0.8s_ease_2.5s_both] pointer-events-none">
           <span>Scroll</span>
-          <div className="w-px h-10 bg-gradient-to-b from-accent to-transparent animate-[pulse_2s_ease-in-out_infinite]" />
+          <div className="w-px h-8 bg-gradient-to-b from-accent to-transparent animate-[pulse_2s_ease-in-out_infinite]" />
         </div>
       </section>
 
