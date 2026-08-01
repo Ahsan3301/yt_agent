@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { pickWorkers, newRequestId, logRoute } from "@/app/api/_lib/orchestrator";
+import { pickWorkers, countLiveWorkers, newRequestId, logRoute } from "@/app/api/_lib/orchestrator";
 import { adminDb } from "@/lib/firebase-admin";
 import { requireTenant, tenantWhereClauses } from "@/lib/tenant";
 
@@ -16,9 +16,13 @@ export async function GET(req: NextRequest) {
   const auth = await requireTenant(req);
   if ("response" in auth) return auth.response;
   try {
+    // Liveness must count outbound-poll workers too — pickWorkers()
+    // filters to workers with a dispatch URL, which is a different
+    // question and reported 0 while a poll worker was mid-render.
     const workers = await pickWorkers();
-    const online = workers.length;
-    const busy = workers.filter((w) => w.status === "busy").length;
+    const live = await countLiveWorkers();
+    const online = live.online;
+    const busy = live.busy;
 
     // Count jobs in non-terminal state — scoped to caller under enforce.
     let queued = 0;

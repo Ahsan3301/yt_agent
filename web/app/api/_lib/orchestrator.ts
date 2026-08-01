@@ -39,6 +39,43 @@ function _toEpoch(v: unknown): number | null {
  * Empty list = no workers alive. The caller decides whether to queue
  * the job for later pickup or surface an error.
  */
+/**
+ * Live workers, INCLUDING outbound-poll ones.
+ *
+ * pickWorkers() answers "who can I dispatch an HTTP job to?" and so
+ * requires a url. That is the wrong question for "is anything alive
+ * to process this?" — the Oracle side-worker claims jobs by polling
+ * and has no inbound URL, so it was permanently invisible to the
+ * worker count. The dashboard therefore reported "0 workers online"
+ * while that worker was actively rendering a video, and the preflight
+ * check told the operator to go wake Kaggle for no reason.
+ */
+export async function countLiveWorkers(): Promise<{
+  online: number; busy: number; labels: string[];
+}> {
+  if (!isAdminConfigured()) return { online: 0, busy: 0, labels: [] };
+  try {
+    const snap = await adminDb().collection("backends").get();
+    const cutoff = Date.now() / 1000 - FRESHNESS_SECONDS;
+    let online = 0, busy = 0;
+    const labels: string[] = [];
+    snap.forEach((doc) => {
+      const d = doc.data() as Record<string, unknown>;
+      const last = _toEpoch(d.last_seen_at ?? d.last_seen);
+      // Stale rows accumulate because each deploy gives the container
+      // a new instance_id and nothing removes the old row, so the
+      // freshness cutoff is what actually decides liveness here.
+      if (last === null || last < cutoff) return;
+      online += 1;
+      if (d.status === "busy") busy += 1;
+      labels.push(String(d.label || d.instance_id || doc.id));
+    });
+    return { online, busy, labels };
+  } catch {
+    return { online: 0, busy: 0, labels: [] };
+  }
+}
+
 export async function pickWorkers(): Promise<WorkerEntry[]> {
   if (!isAdminConfigured()) return [];
   try {
