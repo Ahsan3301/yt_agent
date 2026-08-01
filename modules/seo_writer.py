@@ -34,7 +34,7 @@ log = logging.getLogger(__name__)
 
 _TITLE_MAX = 60
 _TAGS_COUNT = 10
-_HASHTAGS_COUNT = 3
+_HASHTAGS_COUNT = 8
 _THUMB_IDEAS_COUNT = 3
 
 _DEFAULT_BANNED_OPENERS = (
@@ -82,6 +82,11 @@ def write_seo_metadata(
             log.warning(f"seo_writer attempt {attempt}: invalid JSON: {e}")
             problems = [f"Your previous reply was not valid JSON ({e}). Reply again with ONLY the JSON object."]
             continue
+        # The model now returns youtube_title_candidates; collapse to
+        # the single youtube_title BEFORE validating, so _validate's
+        # existing contract (length, banned openers, language leak)
+        # applies to the title we're actually going to publish.
+        parsed = _collapse_title_candidates(parsed, viral)
         problems = _validate(
             parsed, viral,
             expected_language=(channel_cfg.get("language") or "en"),
@@ -213,9 +218,26 @@ NARRATION (this is the ACTUAL video — every metadata field must be tied to thi
 {problem_block}
 
 Return a JSON object with EXACTLY these keys:
-- youtube_title: string, {_TITLE_MAX} chars max, opens with one of the hook patterns above with slots filled from the narration
+- youtube_title_candidates: array of EXACTLY 3 DISTINCT title strings, each {_TITLE_MAX} chars max.
+    Each must follow the STRUCTURE of one of the hook patterns above, with slots
+    filled from the narration. Make the three genuinely different in angle —
+    e.g. one number-led, one question, one contradiction — not three rewordings.
+    Rules for every candidate (these decide whether anyone clicks):
+      * Strong concrete nouns beat adjectives. Specific beats abstract.
+      * Numbers outperform prose ("3", "$1000", "6 hours") — prefer a real
+        figure drawn from the narration over a vague quantity.
+      * Put the primary keyword in the FIRST 40 characters, for search.
+      * Aim for a curiosity gap: the viewer clicks to close a loop the title
+        opened. Do not resolve the loop in the title.
+      * NO ALL CAPS, NO emoji, NO clickbait ("you won't believe",
+        "shocked everyone", "gone wrong").
+      * Target 45-58 characters — long enough to be specific, short enough
+        to survive mobile truncation.
 - description: multi-line string with this structure:
-    * Line 1-2: hook (this is what viewers see before "...more" — follow the first-2-lines style above)
+    * Opening hook, UNDER 150 CHARACTERS TOTAL before the first blank line.
+      YouTube truncates at ~150 and this is the only description text most
+      viewers ever read, and the part search weights most heavily. Follow the
+      first-2-lines style above. Do not exceed 150 characters here.
     * Blank line
     * 3-5 short value-bullet lines starting with • that reference SPECIFIC content from the narration
     * Blank line
@@ -223,11 +245,14 @@ Return a JSON object with EXACTLY these keys:
     * Blank line
     * CTA line (follow the CTA style above)
     * Blank line
-    * The 3 hashtags on one line separated by spaces
+    * The first 3 hashtags on one line separated by spaces
     * Blank line
     * A single line of the 10 tags joined by ", "  (this improves search discoverability)
 - tags: array of EXACTLY {_TAGS_COUNT} strings, ranked most-specific → broadest
-- hashtags: array of EXACTLY {_HASHTAGS_COUNT} strings, each starting with #
+- hashtags: array of EXACTLY {_HASHTAGS_COUNT} strings, each starting with #.
+    Order matters: the FIRST THREE are displayed above the video title, so make
+    those the most specific and most searched. The remainder are for discovery
+    only and should widen progressively toward the broad niche terms.
 - pinned_comment: 1-2 sentence comment to pin under the video that seeds discussion
 - thumbnail_text_ideas: array of EXACTLY {_THUMB_IDEAS_COUNT} short 3-5 word strings for thumbnail overlay text
 - youtube_category_id: integer, use {cat_id}
@@ -265,6 +290,132 @@ def _looks_english(text: str) -> bool:
     words = [w.strip(".,;:!?()[]\"'").lower() for w in text.split()[:30]]
     hits = sum(1 for w in words if w in _EN_STOPWORDS)
     return hits >= 3
+
+
+
+def _score_title(t: str, keyword: str = "") -> tuple[float, list[str]]:
+    """Rank a candidate title on the levers that actually move CTR.
+
+    Deliberately mechanical rather than another LLM call: it costs
+    nothing, it's deterministic, and it's inspectable when a title
+    comes out badly. Returns (score, reasons) — reasons are logged so
+    a poor pick can be diagnosed rather than guessed at.
+    """
+    import re as _re
+    score, why = 0.0, []
+    t = (t or "").strip()
+    if not t:
+        return (-99.0, ["empty"])
+
+    n = len(t)
+    # 45-58 is the sweet spot: specific enough to earn a click, short
+    # enough to survive mobile truncation.
+    if 45 <= n <= 58:
+        score += 3.0; why.append(f"len {n} ideal")
+    elif 38 <= n < 45 or 58 < n <= _TITLE_MAX:
+        score += 1.0; why.append(f"len {n} ok")
+    else:
+        why.append(f"len {n} poor")
+
+    # A concrete figure is the single strongest signal we can detect.
+    if _re.search(r"\d", t):
+        score += 2.5; why.append("has number")
+
+    # Proper nouns / specific entities beat abstractions.
+    caps = _re.findall(r"[A-Z][a-z]{2,}", t)
+    if len(caps) >= 1:
+        score += 1.0; why.append(f"{len(caps)} proper noun(s)")
+
+    # Keyword position matters for search, not just presence.
+    if keyword:
+        pos = t.lower().find(keyword.lower())
+        if 0 <= pos <= 40:
+            score += 2.0; why.append(f"keyword @{pos}")
+        elif pos > 40:
+            score += 0.5; why.append(f"keyword late @{pos}")
+
+    # Open loops earn the click.
+    if t.rstrip().endswith("?"):
+        score += 1.0; why.append("question")
+
+    # Penalise the things that get videos ignored or demoted.
+    if t.isupper():
+        score -= 3.0; why.append("ALL CAPS")
+    if _re.search(r"[🌀-🫿☀-➿]", t):
+        score -= 2.0; why.append("emoji")
+    for bad in ("you won't believe", "shocked everyone", "gone wrong",
+                "this happened", "must see", "number one trick"):
+        if bad in t.lower():
+            score -= 3.0; why.append(f"clickbait '{bad}'")
+            break
+
+    return (score, why)
+
+
+def _pick_title(candidates: list, keyword: str = "") -> str:
+    """Choose the best candidate, logging the comparison."""
+    scored = []
+    for c in candidates:
+        if isinstance(c, str) and c.strip():
+            sc, why = _score_title(c, keyword)
+            scored.append((sc, c.strip(), why))
+    if not scored:
+        return ""
+    scored.sort(key=lambda x: x[0], reverse=True)
+    for sc, c, why in scored:
+        log.info(f"seo: title candidate [{sc:+.1f}] {c!r} ({', '.join(why)})")
+    log.info(f"seo: picked {scored[0][1]!r}")
+    return scored[0][1]
+
+
+def _trim_title(t: str) -> str:
+    """Hard-cap without cutting mid-word.
+
+    The previous `strip()[:60]` could slice a word in half, which reads
+    as broken rather than concise.
+    """
+    t = (t or "").strip()
+    if len(t) <= _TITLE_MAX:
+        return t
+    cut = t[:_TITLE_MAX]
+    sp = cut.rfind(" ")
+    # Only back off to a word boundary if it doesn't gut the title.
+    if sp >= _TITLE_MAX * 0.6:
+        cut = cut[:sp]
+    return cut.rstrip(" ,;:-—")
+
+
+def _collapse_title_candidates(data: dict, viral: dict) -> dict:
+    """Pick one title from the candidate list, on measurable criteria.
+
+    Runs before validation so the rest of the module keeps working
+    with a single `youtube_title`, exactly as it did before. Models
+    that ignore the instruction and return a bare youtube_title still
+    pass straight through.
+    """
+    if not isinstance(data, dict):
+        return data
+    cands = data.get("youtube_title_candidates")
+    if not (isinstance(cands, list) and cands):
+        return data
+    keyword = ""
+    try:
+        seeds = viral.get("tag_seeds") or []
+        keyword = str(seeds[0]) if seeds else ""
+    except Exception:
+        keyword = ""
+    picked = _pick_title(cands, keyword)
+    if picked:
+        out = dict(data)
+        out["youtube_title"] = _trim_title(picked)
+        # Kept for a future real A/B loop — nothing consumes them yet,
+        # but discarding them would throw away work already paid for.
+        out["youtube_title_alternates"] = [
+            c.strip() for c in cands
+            if isinstance(c, str) and c.strip() and c.strip() != picked
+        ][:2]
+        return out
+    return data
 
 
 def _validate(data: dict, viral: dict, expected_language: str = "en") -> list[str]:
@@ -341,9 +492,8 @@ def _normalise(data: dict, viral: dict, script: dict) -> dict:
         out["youtube_category_id"] = int(out.get("youtube_category_id") or viral.get("youtube_category_id") or 22)
     except Exception:
         out["youtube_category_id"] = int(viral.get("youtube_category_id") or 22)
-    # Trim title to hard cap
     if isinstance(out.get("youtube_title"), str):
-        out["youtube_title"] = out["youtube_title"].strip()[:_TITLE_MAX]
+        out["youtube_title"] = _trim_title(out["youtube_title"])
     # Trim description of trailing whitespace
     if isinstance(out.get("description"), str):
         out["description"] = out["description"].strip()

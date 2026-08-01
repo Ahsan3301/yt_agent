@@ -312,11 +312,35 @@ def upload_video(video_path, script_data, channel_type="horror", youtube_account
         if privacy not in ("public", "unlisted", "private"):
             privacy = "private"
     made_for_kids = bool(up.get("made_for_kids", False))
-    category_id = up.get(f"category_{channel_type}") or CATEGORY_IDS.get(channel_type, "24")
+    # Prefer the per-niche category the SEO writer computed. It was
+    # being calculated, logged, and then silently ignored here in
+    # favour of a static settings map — so every video went out under
+    # whatever the map said regardless of its actual subject.
+    category_id = (
+        script_data.get("youtube_category_id")
+        or up.get(f"category_{channel_type}")
+        or CATEGORY_IDS.get(channel_type, "24")
+    )
 
     title = _repair_mojibake((script_data.get("youtube_title") or "Untitled"))[:100]
     description = _repair_mojibake((script_data.get("description") or ""))[:5000]
-    tags = [_repair_mojibake(t) for t in (script_data.get("tags") or [])[:500]]
+    # YouTube's limit is 500 CHARACTERS across all tags, not 500 tags.
+    # `[:500]` sliced the list length — harmless only because the SEO
+    # writer happens to return 10, and a latent 400 invalidTags the
+    # moment that grew or tags got longer. Accumulate to the real
+    # budget instead, keeping the most specific tags (they come first).
+    _raw_tags = [_repair_mojibake(t) for t in (script_data.get("tags") or [])]
+    tags, _budget = [], 0
+    for _t in _raw_tags:
+        _t = (_t or "").strip()
+        if not _t:
+            continue
+        # +1 approximates the separator YouTube counts between tags.
+        _cost = len(_t) + 1
+        if _budget + _cost > 500:
+            break
+        tags.append(_t)
+        _budget += _cost
 
     eff_lang = (
         (language or script_data.get("language") or "en") or "en"
