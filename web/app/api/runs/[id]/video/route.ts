@@ -3,6 +3,7 @@ import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { adminDb } from "@/lib/firebase-admin";
 import { requireTenant } from "@/lib/tenant";
+import { publicOrigin } from "@/app/api/_lib/public-origin";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -33,7 +34,7 @@ export const runtime = "nodejs";
 
 const URL_TTL_SECONDS = 60 * 30;   // long enough to watch; short enough to not be a share link
 
-let _s3: S3Client | null = null;
+const _s3ByOrigin = new Map<string, S3Client>();
 
 /**
  * Client used ONLY for presigning.
@@ -54,17 +55,19 @@ let _s3: S3Client | null = null;
  * lands on /<bucket>/<key>, exactly what MinIO receives.
  */
 function s3(origin: string): S3Client | null {
-  if (_s3) return _s3;
+  const hit = _s3ByOrigin.get(origin);
+  if (hit) return hit;
   const accessKeyId = process.env.S3_ACCESS_KEY_ID || process.env.MINIO_ROOT_USER || "";
   const secretAccessKey = process.env.S3_SECRET_ACCESS_KEY || process.env.MINIO_ROOT_PASSWORD || "";
   if (!origin || !accessKeyId || !secretAccessKey) return null;
-  _s3 = new S3Client({
+  const c = new S3Client({
     endpoint: origin,
     region: process.env.S3_REGION || "us-east-1",
     credentials: { accessKeyId, secretAccessKey },
     forcePathStyle: true,
   });
-  return _s3;
+  _s3ByOrigin.set(origin, c);
+  return c;
 }
 
 export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
@@ -99,9 +102,12 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     return NextResponse.json({ error: "lookup failed" }, { status: 500 });
   }
 
-  // Derive the public origin from the incoming request so the signed
-  // URL is valid for whatever domain the user actually reached us on.
-  const origin = new URL(req.url).origin;
+  // MUST be publicOrigin(), not req.url. Behind Caddy/Traefik the
+  // container sees its own bind address (http://0.0.0.0:3000), which
+  // is neither browser-resolvable nor the host the signature needs to
+  // cover. publicOrigin() resolves PUBLIC_BASE_URL / DOMAIN /
+  // X-Forwarded-* in that order.
+  const origin = publicOrigin(req);
   const c = s3(origin);
   const bucket = process.env.S3_BUCKET || "yt-agent-videos";
   if (!c) {
