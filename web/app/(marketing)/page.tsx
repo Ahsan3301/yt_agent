@@ -365,7 +365,7 @@ const ACCENTS = [
 
 function FeatureCard({ f, accent }: { f: Feature; accent: string }) {
   return (
-    <div className="relative rounded-3xl border border-white/6 bg-white/[0.015] backdrop-blur-3xl p-9 h-full overflow-hidden group hover:border-white/12 transition-[border-color] duration-500">
+    <div className="relative rounded-3xl border border-white/6 bg-white/[0.022] p-9 h-full overflow-hidden group hover:border-white/12 transition-[border-color] duration-500">
       <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
 
       <div className="mb-6" style={{ transform: "translateZ(30px)" }}>

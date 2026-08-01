@@ -1,27 +1,39 @@
 "use client";
 
-import { Canvas, useFrame } from "@react-three/fiber";
-import { useMemo, useRef } from "react";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 
 /**
- * Full-bleed animated gradient mesh behind the hero.
+ * Full-bleed animated gradient field behind the hero.
  *
- * ── Why this replaced the floating infinity ──────────────────────
- * A discrete 3D object centred above the copy always reads as
- * decoration bolted onto the page — and because it lives in its own
- * canvas rect it can never truly sit *in* the layout. Every premium
- * SaaS hero (Linear, Stripe, Vercel, Raycast) does the opposite:
- * an ambient field that bleeds behind the whole section, with the
- * typography and the product doing the actual work.
+ * ── Performance ──────────────────────────────────────────────────
+ * The first cut of this shader ran 20 simplex-noise evaluations per
+ * pixel per frame (five fbm calls x four octaves) at up to 1.5x DPR,
+ * unthrottled. On a 1080p screen that is ~93M noise evaluations per
+ * frame — it visibly dragged the whole page down. Four fixes, each
+ * independent:
  *
- * This is one full-screen quad running a fragment shader. The alpha
- * falloff is computed IN the shader — radial from centre plus a
- * vertical fade — so the canvas edges are mathematically incapable
- * of producing a visible rectangle no matter the viewport.
+ *   1. 20 noise calls -> 7. A single-level domain warp with raw
+ *      snoise (rather than warping with two full fbm stacks) plus
+ *      3-octave fbm. Visually near-identical; the field is soft
+ *      enough that the extra octaves were invisible anyway.
+ *   2. Render at 0.65 DPR and let the browser upscale. This is a
+ *      blurry gradient — upsampling it is literally imperceptible,
+ *      and it cuts fragment count by ~5x versus 1.5 DPR.
+ *   3. 30fps instead of 60. The field drifts slowly; nobody can
+ *      tell. Done with frameloop="demand" plus an interval that
+ *      calls invalidate(), so the GPU genuinely idles between
+ *      frames rather than rendering and discarding.
+ *   4. Stop completely when the hero scrolls out of view. Most
+ *      time-on-page is spent below the fold, where this was
+ *      previously still burning a full GPU budget.
  *
- * Cost: one draw call, no geometry, no postprocessing, no textures.
- * Cheaper than the SVG version it replaces.
+ * Combined that is roughly a 35x reduction in shader work.
+ *
+ * The alpha falloff is still computed in the fragment shader —
+ * radial from centre plus fades top and bottom — so the canvas
+ * edges cannot produce a visible rectangle at any viewport size.
  */
 
 const vertexShader = /* glsl */ `
@@ -33,7 +45,7 @@ const vertexShader = /* glsl */ `
 `;
 
 const fragmentShader = /* glsl */ `
-  precision highp float;
+  precision mediump float;
   varying vec2 vUv;
 
   uniform float uTime;
@@ -70,63 +82,55 @@ const fragmentShader = /* glsl */ `
     return 130.0 * dot(m, g);
   }
 
-  // Fractal brownian motion — layered noise for organic flow.
-  float fbm(vec2 p) {
-    float v = 0.0;
-    float amp = 0.5;
-    for (int i = 0; i < 4; i++) {
-      v += amp * snoise(p);
-      p *= 2.02;
-      amp *= 0.5;
-    }
+  // 3 octaves — unrolled, no loop overhead.
+  float fbm3(vec2 p) {
+    float v = 0.5    * snoise(p);
+    p *= 2.02;
+    v += 0.25   * snoise(p);
+    p *= 2.03;
+    v += 0.125  * snoise(p);
     return v;
   }
 
   void main() {
-    // Correct for viewport aspect so the field isn't stretched.
     vec2 uv = vUv;
     vec2 p  = (uv - 0.5) * vec2(uAspect, 1.0);
 
     float t = uTime * 0.035;
 
-    // Domain-warp the sample point — this is what gives the slow
-    // liquid-silk motion rather than obvious scrolling noise.
-    vec2 q = vec2(fbm(p * 1.4 + vec2(0.0, t)),
-                  fbm(p * 1.4 + vec2(4.7, -t * 0.8)));
-    vec2 r = vec2(fbm(p * 1.8 + q * 1.6 + vec2(1.7, 9.2) + t * 0.6),
-                  fbm(p * 1.8 + q * 1.6 + vec2(8.3, 2.8) - t * 0.5));
+    // Single-level domain warp: one fbm + one raw snoise for the
+    // offset, then one fbm through it. 7 noise evaluations total.
+    vec2 warp = vec2(
+      fbm3(p * 1.25 + vec2(0.0, t)),
+      snoise(p * 1.6 - vec2(t * 0.7, 0.0))
+    );
+    float n = fbm3(p * 1.05 + warp * 1.35);
 
-    float n = fbm(p * 1.2 + r * 1.4);
+    // Gentle pull toward the cursor.
+    float mpull = smoothstep(0.9, 0.0, length(p - uMouse * vec2(uAspect, 1.0) * 0.5)) * 0.28;
 
-    // Pull the field gently toward the cursor.
-    float mdist = length(p - uMouse * vec2(uAspect, 1.0) * 0.5);
-    float mpull = smoothstep(0.9, 0.0, mdist) * 0.28;
-
-    // Palette — lavender / cyan / pink, matching the design tokens.
     vec3 lavender = vec3(0.655, 0.545, 0.980);
     vec3 cyan     = vec3(0.404, 0.910, 0.976);
     vec3 pink     = vec3(0.941, 0.671, 0.988);
 
-    vec3 col = mix(lavender, cyan, smoothstep(-0.6, 0.7, n + r.x * 0.4));
-    col = mix(col, pink, smoothstep(0.1, 0.9, r.y) * 0.55);
+    vec3 col = mix(lavender, cyan, smoothstep(-0.6, 0.7, n + warp.x * 0.4));
+    col = mix(col, pink, smoothstep(0.1, 0.9, warp.y) * 0.55);
     col += mpull * 0.5;
 
-    // ── Alpha: computed here, so no hard canvas edge can exist ──
-    float band  = smoothstep(0.15, 0.65, abs(n) + 0.25);
-    float radial = smoothstep(0.95, 0.15, length(p));
-    float topFade = smoothstep(1.05, 0.35, uv.y);   // fade toward nav
-    float botFade = smoothstep(-0.15, 0.55, uv.y);  // fade into section below
+    // ── Alpha computed here: no hard canvas edge can exist ──────
+    float band    = smoothstep(0.15, 0.65, abs(n) + 0.25);
+    float radial  = smoothstep(0.95, 0.15, length(p));
+    float topFade = smoothstep(1.05, 0.35, uv.y);
+    float botFade = smoothstep(-0.15, 0.55, uv.y);
 
-    float alpha = band * radial * topFade * botFade * 0.55;
-
-    gl_FragColor = vec4(col, alpha);
+    gl_FragColor = vec4(col, band * radial * topFade * botFade * 0.55);
   }
 `;
 
-function GradientPlane() {
+function GradientPlane({ active }: { active: boolean }) {
   const matRef = useRef<THREE.ShaderMaterial>(null);
-  const mouse = useRef(new THREE.Vector2(0, 0));
-  const target = useRef(new THREE.Vector2(0, 0));
+  const smoothed = useRef(new THREE.Vector2(0, 0));
+  const { invalidate } = useThree();
 
   const uniforms = useMemo(
     () => ({
@@ -137,15 +141,22 @@ function GradientPlane() {
     [],
   );
 
-  useFrame(({ size, pointer }, dt) => {
+  // 30fps pump. In demand mode nothing renders unless we ask, so
+  // this is a real halving of GPU work rather than a throttle on
+  // top of a 60fps loop. Stops entirely when `active` is false.
+  useEffect(() => {
+    if (!active) return;
+    const id = setInterval(() => invalidate(), 33);
+    return () => clearInterval(id);
+  }, [active, invalidate]);
+
+  useFrame(({ clock, size, pointer }) => {
     const m = matRef.current;
     if (!m) return;
-    m.uniforms.uTime.value += dt;
+    m.uniforms.uTime.value = clock.getElapsedTime();
     m.uniforms.uAspect.value = size.width / size.height;
-    // Damped cursor follow so the field drifts rather than snaps.
-    target.current.set(pointer.x, pointer.y);
-    mouse.current.lerp(target.current, 0.03);
-    m.uniforms.uMouse.value.copy(mouse.current);
+    smoothed.current.lerp(pointer, 0.05);
+    m.uniforms.uMouse.value.copy(smoothed.current);
   });
 
   return (
@@ -165,18 +176,44 @@ function GradientPlane() {
 }
 
 export default function HeroBackdrop() {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const [active, setActive] = useState(true);
+
+  // Pause all rendering once the hero is scrolled away — the bulk of
+  // time-on-page is spent below the fold.
+  useEffect(() => {
+    const el = hostRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(
+      ([entry]) => setActive(entry.isIntersecting),
+      { rootMargin: "120px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+
   return (
-    <div className="absolute inset-0 -z-10 pointer-events-none" aria-hidden>
+    <div ref={hostRef} className="absolute inset-0 -z-10 pointer-events-none" aria-hidden>
       <Canvas
-        dpr={[1, 1.5]}
-        gl={{ alpha: true, antialias: false, powerPreference: "high-performance" }}
+        // Deliberately sub-native: this is a soft gradient, so
+        // upscaling from 0.65 DPR is imperceptible and costs ~5x
+        // fewer fragments than 1.5.
+        dpr={0.65}
+        frameloop="demand"
+        gl={{
+          alpha: true,
+          antialias: false,
+          powerPreference: "high-performance",
+          depth: false,
+          stencil: false,
+        }}
         onCreated={({ gl, scene }) => {
           scene.background = null;
           gl.setClearColor(0x000000, 0);
         }}
         style={{ background: "transparent" }}
       >
-        <GradientPlane />
+        <GradientPlane active={active} />
       </Canvas>
     </div>
   );

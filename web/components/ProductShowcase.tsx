@@ -84,14 +84,22 @@ export function ProductShowcase() {
           transition: "transform 0.5s cubic-bezier(0.16, 1, 0.3, 1)",
         }}
       >
-        {/* Glow pooled under the window — grounds it on the page. */}
+        {/* Glow pooled under the window — grounds it on the page.
+            No blur filter: a radial-gradient is already soft, and
+            `blur-3xl` on top of it was paying for a large-area
+            filter pass to achieve nothing visible. */}
         <div
           aria-hidden
-          className="absolute -inset-x-16 -bottom-16 h-40 -z-10 blur-3xl opacity-50"
-          style={{ background: "radial-gradient(ellipse at center, rgba(167,139,250,0.35), transparent 70%)" }}
+          className="absolute -inset-x-16 -bottom-16 h-40 -z-10 opacity-60"
+          style={{ background: "radial-gradient(ellipse at center, rgba(167,139,250,0.32), transparent 70%)" }}
         />
 
-        <div className="rounded-2xl border border-white/10 bg-[#08080f]/90 backdrop-blur-2xl overflow-hidden shadow-[0_50px_120px_-20px_rgba(0,0,0,0.9)]">
+        {/* Opaque, NOT backdrop-blur. This panel sits directly over
+            the animated WebGL field, so a backdrop filter here forced
+            the browser to re-blur the region on every single frame —
+            one of the two things making the page feel heavy. At 96%
+            opacity over a dark backdrop the difference is invisible. */}
+        <div className="rounded-2xl border border-white/10 bg-[#08080f] overflow-hidden shadow-[0_50px_120px_-20px_rgba(0,0,0,0.9)]">
           {/* Window chrome */}
           <div className="flex items-center gap-2 px-4 py-3 border-b border-white/6 bg-white/[0.02]">
             <span className="h-2.5 w-2.5 rounded-full bg-[#ff5f57]/70" />

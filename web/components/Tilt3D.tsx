@@ -30,6 +30,7 @@ export function Tilt3D({
   className?: string;
 }) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  const innerRef = useRef<HTMLDivElement | null>(null);
   const raf = useRef<number>(0);
 
   const onMove = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -50,16 +51,30 @@ export function Tilt3D({
     });
   };
 
+  const onEnter = () => {
+    // Promote to its own compositor layer only for the duration of
+    // the interaction. Leaving `will-change: transform` on
+    // permanently meant every card on the page (6 features + 3
+    // pricing + 3 pipeline) held a dedicated GPU layer at all times,
+    // which is real memory for an effect that only runs on hover.
+    innerRef.current?.style.setProperty("will-change", "transform");
+  };
+
   const onLeave = () => {
     const el = wrapRef.current;
     if (!el) return;
     el.style.setProperty("--tilt-rx", "0deg");
     el.style.setProperty("--tilt-ry", "0deg");
+    // Drop the promotion once the return transition has finished.
+    window.setTimeout(() => {
+      innerRef.current?.style.removeProperty("will-change");
+    }, 400);
   };
 
   return (
     <div
       ref={wrapRef}
+      onMouseEnter={onEnter}
       onMouseMove={onMove}
       onMouseLeave={onLeave}
       className={"relative " + className}
@@ -69,6 +84,7 @@ export function Tilt3D({
       }}
     >
       <div
+        ref={innerRef}
         className="h-full"
         style={{
           transform:
@@ -78,7 +94,6 @@ export function Tilt3D({
             (scale !== 1 ? ` scale(${scale})` : ""),
           transition: "transform 0.35s cubic-bezier(0.16, 1, 0.3, 1)",
           transformStyle: "preserve-3d",
-          willChange: "transform",
         }}
       >
         {children}

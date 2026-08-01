@@ -18,7 +18,7 @@ export function PricingCard({ tier, ctaHref }: { tier: Tier; ctaHref: string }) 
         "relative rounded-3xl border p-8 h-full transition-[border-color,box-shadow] duration-500 " +
         (tier.highlight
           ? "border-accent/25 bg-gradient-to-b from-accent/[0.04] to-white/[0.01] shadow-[0_30px_80px_rgba(0,0,0,0.4),0_0_50px_rgba(167,139,250,0.08)]"
-          : "border-white/6 bg-white/[0.015] backdrop-blur-3xl hover:border-white/12")
+          : "border-white/6 bg-white/[0.022] hover:border-white/12")
       }>
         {tier.highlight && (
           <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-gradient-to-r from-accent to-accent-glow text-white px-3.5 py-1 rounded-full text-[10px] font-semibold tracking-[0.14em] uppercase shadow-[0_4px_20px_rgba(167,139,250,0.3)]">
