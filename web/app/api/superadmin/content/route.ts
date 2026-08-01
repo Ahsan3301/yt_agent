@@ -19,6 +19,7 @@ const CONTENT_ID = "landingcontent0";  // 15-char alphanumeric PB id
 type LandingContent = {
   hero_badge?: string;
   hero_title?: string;
+  hero_tail?: string;
   hero_sub?: string;
   hero_cta_text?: string;
   hero_cta_href?: string;
@@ -57,6 +58,7 @@ export async function PUT(req: NextRequest) {
   const clean = {
     hero_badge:     String(body.hero_badge    || "").slice(0, 120),
     hero_title:     String(body.hero_title    || "").slice(0, 200),
+    hero_tail:      String(body.hero_tail     || "").slice(0, 200),
     hero_sub:       String(body.hero_sub      || "").slice(0, 500),
     hero_cta_text:  String(body.hero_cta_text || "").slice(0, 60),
     hero_cta_href:  String(body.hero_cta_href || "").slice(0, 200),

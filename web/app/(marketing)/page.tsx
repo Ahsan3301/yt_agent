@@ -1,55 +1,65 @@
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { adminDb } from "@/lib/firebase-admin";
 import { Reveal } from "@/components/Reveal";
 import { MarketingNav } from "@/components/MarketingNav";
-import { AnimatedInfinity } from "@/components/AnimatedInfinity";
 import { Tilt3D } from "@/components/Tilt3D";
+import { PricingCard } from "@/components/PricingCard";
+import { ArrowRight, Sparkles, Zap, Layers, Waves } from "lucide-react";
 
 /**
- * Yven — public landing page.
+ * Yven — public landing.
  *
- * Server component so we can hydrate hero + features + pricing
- * from `landing_content` (editable at /superadmin/content, 60s
- * revalidate). Copy falls back to DEFAULT_CONTENT below — pulled
- * from the master design in /Design/1.html.
+ * Editorial hero (Instrument Serif accent) + WebGL infinity centre-
+ * piece (Three.js, lazy-loaded so the initial bundle stays fast).
+ * Product-forward feature sections instead of a generic 6-icon grid.
+ * Trust strip with real metrics. Pricing wired to CMS.
  *
- * Visual system lives in web/app/globals.css. This file assembles
- * the aurora blobs + neon grid + orb hero + feature/pipeline/pricing
- * sections and stitches CMS copy in.
+ * Content still hydrated from `landing_content` (60s revalidate) —
+ * see /superadmin/content.
  */
 export const revalidate = 60;
 
 const CONTENT_ID = "landingcontent0";
+
+// Three.js is dynamically imported client-side only — its ~140kb of
+// WebGL machinery must not ship in the initial page bundle.
+const InfinityScene = dynamic(() => import("@/components/InfinityScene"), {
+  ssr: false,
+  loading: () => <div className="w-[min(760px,92vw)] aspect-[16/10] mb-8" aria-hidden />,
+});
 
 type Feature = { title: string; body: string; icon?: string };
 type Tier = { name: string; price: string; sub?: string; features?: string[]; highlight?: boolean };
 type PipelineStep = { n: string; title: string; sub: string };
 
 const DEFAULT_CONTENT = {
-  hero_badge:    "Now Live — 1,247 videos published today",
-  hero_title:    "The First Complete Video Automation Engine",
-  hero_sub:      "Attach your channel. Yven researches trends, writes scripts, generates visuals, edits, adds subtitles, and publishes — while you sleep.",
+  hero_badge:    "In private beta — 1,247 videos published today",
+  hero_title:    "The end of video production.",
+  hero_tail:     "Ship YouTube on autopilot.",
+  hero_sub:      "Attach a channel. Yven researches, writes, narrates, edits and publishes — while you sleep. One engine replaces the entire stack.",
   hero_cta_text: "Get Early Access",
   hero_cta_href: "/signup",
   features: [
-    { icon: "🔍", title: "Trending & SEO Research",  body: "Scans millions of data points across platforms to identify high-intent, low-competition topics before they peak." },
-    { icon: "✍️", title: "Script & Hook Creation",   body: "AI writes retention-optimized scripts with hooks, story arcs, and CTAs tailored to your channel's voice." },
-    { icon: "🎨", title: "Storyboard & Visuals",     body: "Auto storyboard prep with custom image generation prompts. Finds or creates visuals matching your style." },
-    { icon: "🎙️", title: "Voiceover & Audio",        body: "Studio-quality AI voice synced to script. Multiple voices, tone matching, background music." },
-    { icon: "🎬", title: "Edit, Compile & Publish",  body: "Full editing with transitions, subtitles, QA, and multi-platform publishing. Wake up to done." },
+    { icon: "research",  title: "Research that reads the room", body: "Scans trends across YouTube, TikTok, X, and Reddit to find high-intent, low-competition topics before they peak. Every video starts with a market-validated angle." },
+    { icon: "voice",     title: "Written in your voice",         body: "Channel DNA analysis studies your existing videos — tone, pacing, humour, hook patterns — and writes new scripts that sound like you, not like a robot." },
+    { icon: "visual",    title: "Cinema-grade visuals",          body: "Storyboard prep + custom image generation matched to your channel's visual style. Zero stock footage that feels stock." },
+    { icon: "audio",     title: "Studio-quality narration",      body: "Neural voices in 40+ languages, tone-matched per channel, with music that ducks under the voiceover automatically." },
+    { icon: "edit",      title: "Editing you'd pay $500 for",    body: "Full cut with transitions, captions, quality checks. Fixes low-contrast thumbnails and re-shoots weak intros before anyone sees them." },
+    { icon: "publish",   title: "Publish without touching it",   body: "Multi-account YouTube today, TikTok + Reels next. Schedules to peak-hour publish times per channel." },
   ] as Feature[],
   pipeline_steps: [
-    { n: "1", title: "Connect",   sub: "Attach your channel" },
-    { n: "2", title: "Analyze",   sub: "Channel DNA scan"    },
-    { n: "3", title: "Autopilot", sub: "AI takes over"       },
+    { n: "01", title: "Connect",   sub: "Attach your YouTube — one OAuth click. Yven scans your last 20 videos." },
+    { n: "02", title: "Analyze",   sub: "Channel DNA extraction — tone, pacing, hook patterns, upload cadence." },
+    { n: "03", title: "Autopilot", sub: "Approve each video, or hand over the keys. Runs on your schedule." },
   ] as PipelineStep[],
   pricing_tiers: [
-    { name: "Starter", price: "$49",  sub: "For solo creators",  features: ["1 channel connected", "10 videos/month", "YouTube publishing", "Basic analytics"] },
+    { name: "Starter", price: "$49",  sub: "For solo creators",  features: ["1 channel", "10 videos / month", "YouTube publishing", "Basic analytics"] },
     { name: "Pro",     price: "$149", sub: "For serious creators", highlight: true,
-      features: ["3 channels connected", "Unlimited videos", "All platforms (soon)", "Channel DNA analysis", "Approval mode"] },
-    { name: "Agency",  price: "$399", sub: "For teams & clients", features: ["10 channels", "Unlimited videos", "API access (soon)", "White-label (soon)", "Dedicated manager"] },
+      features: ["3 channels", "Unlimited videos", "Channel DNA analysis", "Approval mode", "Priority render queue"] },
+    { name: "Agency",  price: "$399", sub: "For teams & clients", features: ["10 channels", "Unlimited videos", "White-label", "API access", "Dedicated support"] },
   ] as Tier[],
   footer_links: [] as Array<{ label: string; href: string }>,
 };
@@ -62,6 +72,7 @@ async function _loadContent() {
     return {
       hero_badge:    String(d.hero_badge    || DEFAULT_CONTENT.hero_badge),
       hero_title:    String(d.hero_title    || DEFAULT_CONTENT.hero_title),
+      hero_tail:     String(d.hero_tail     || DEFAULT_CONTENT.hero_tail),
       hero_sub:      String(d.hero_sub      || DEFAULT_CONTENT.hero_sub),
       hero_cta_text: String(d.hero_cta_text || DEFAULT_CONTENT.hero_cta_text),
       hero_cta_href: String(d.hero_cta_href || DEFAULT_CONTENT.hero_cta_href),
@@ -69,8 +80,8 @@ async function _loadContent() {
                        ? (d.features as Feature[])
                        : DEFAULT_CONTENT.features,
       pipeline_steps: Array.isArray(d.pipeline_steps) && d.pipeline_steps.length > 0
-                       ? (d.pipeline_steps as PipelineStep[])
-                       : DEFAULT_CONTENT.pipeline_steps,
+                        ? (d.pipeline_steps as PipelineStep[])
+                        : DEFAULT_CONTENT.pipeline_steps,
       pricing_tiers: Array.isArray(d.pricing_tiers) && d.pricing_tiers.length > 0
                        ? (d.pricing_tiers as Tier[])
                        : DEFAULT_CONTENT.pricing_tiers,
@@ -90,254 +101,302 @@ export default async function LandingPage() {
 
   return (
     <div className="flex-1 flex flex-col relative">
-      {/* ── Ambient aurora backdrop (fixed, cheap CSS) ─────────────── */}
-      <div aria-hidden className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
-        <div className="blob top-[-10%] left-[-5%] h-[600px] w-[600px] opacity-35"
-             style={{ background: "radial-gradient(circle, #a78bfa 0%, transparent 70%)", animationDuration: "14s" }} />
-        <div className="blob bottom-[-10%] right-[-5%] h-[500px] w-[500px] opacity-35"
-             style={{ background: "radial-gradient(circle, #67e8f9 0%, transparent 70%)", animationDuration: "16s", animationDelay: "-4s" }} />
-        <div className="blob top-[40%] left-[45%] h-[400px] w-[400px] opacity-35"
-             style={{ background: "radial-gradient(circle, #f0abfc 0%, transparent 70%)", animationDuration: "18s", animationDelay: "-8s" }} />
+      {/* Ambient backdrop — subtle grain + a single vignetted lavender
+          radial. Restrained on purpose; premium sites do not slather
+          gradients on every surface. */}
+      <div aria-hidden className="pointer-events-none fixed inset-0 -z-10">
+        <div className="absolute inset-0"
+             style={{
+               background:
+                 "radial-gradient(1200px 700px at 50% -10%, rgba(167,139,250,0.14), transparent 60%), " +
+                 "radial-gradient(900px 600px at 95% 40%, rgba(103,232,249,0.06), transparent 60%)",
+             }} />
       </div>
 
       <MarketingNav ctaHref={c.hero_cta_href} ctaText={c.hero_cta_text} />
 
       {/* ── Hero ─────────────────────────────────────────────────── */}
-      <section className="relative z-10 min-h-[100svh] flex flex-col items-center justify-center text-center px-6 pt-32 pb-32">
-        <div className="absolute inset-0 neon-grid pointer-events-none" aria-hidden />
-        {/* Floating mini orbs */}
-        <div aria-hidden className="absolute inset-0 pointer-events-none overflow-hidden">
-          <div className="absolute top-[10%] left-[10%] h-20 w-20 rounded-full blur-[40px] opacity-25 animate-[float_20s_ease-in-out_infinite]"
-               style={{ background: "#a78bfa" }} />
-          <div className="absolute top-[60%] left-[80%] h-16 w-16 rounded-full blur-[40px] opacity-25 animate-[float_24s_ease-in-out_infinite]"
-               style={{ background: "#67e8f9", animationDelay: "-5s" }} />
-          <div className="absolute top-[80%] left-[20%] h-24 w-24 rounded-full blur-[40px] opacity-25 animate-[float_22s_ease-in-out_infinite]"
-               style={{ background: "#f0abfc", animationDelay: "-10s" }} />
-          <div className="absolute top-[30%] left-[85%] h-12 w-12 rounded-full blur-[40px] opacity-25 animate-[float_18s_ease-in-out_infinite]"
-               style={{ background: "#fbbf24", animationDelay: "-15s" }} />
-        </div>
+      <section className="relative z-10 min-h-[100svh] flex flex-col items-center justify-center text-center px-6 pt-32 pb-24 overflow-hidden">
+        {/* Very faint neon grid — 3% opacity, radial-mask so it fades
+            out at the edges. Only used here, nowhere else on the page. */}
+        <div aria-hidden className="absolute inset-0 neon-grid opacity-[0.03]" />
 
-        <AnimatedInfinity />
+        <InfinityScene />
 
-        <Reveal delay={300}>
-          <div className="inline-flex items-center gap-2 rounded-full border border-accent/15 bg-white/[0.02] backdrop-blur-xl px-4 py-2 text-xs font-medium text-neutral-400 mb-7">
+        <Reveal delay={200}>
+          <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.02] backdrop-blur-xl px-3.5 py-1.5 text-[11px] font-medium text-neutral-400 mb-8">
             <span className="relative flex h-1.5 w-1.5">
               <span className="absolute inline-flex h-full w-full rounded-full bg-success opacity-75 animate-ping" />
-              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-success shadow-[0_0_10px_#22c55e]" />
+              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-success" />
             </span>
             {c.hero_badge}
           </div>
         </Reveal>
 
-        <Reveal delay={400}>
-          <h1 className="text-5xl md:text-7xl font-extrabold tracking-tight leading-[1.05] max-w-4xl mx-auto mb-5 text-gradient-hero">
+        <Reveal delay={300}>
+          <h1 className="max-w-5xl mx-auto text-[clamp(2.75rem,6.5vw,5.75rem)] font-semibold tracking-[-0.035em] leading-[1.02] mb-6 text-white">
             {c.hero_title}
+            <br />
+            <span className="serif-accent text-transparent bg-clip-text bg-gradient-to-br from-white via-accent to-accent-glow">
+              {c.hero_tail}
+            </span>
           </h1>
         </Reveal>
 
-        <Reveal delay={500}>
-          <p className="text-lg text-neutral-400 max-w-xl mx-auto leading-relaxed mb-10">
+        <Reveal delay={400}>
+          <p className="max-w-2xl mx-auto text-lg md:text-xl text-neutral-400 leading-relaxed mb-10 font-light">
             {c.hero_sub}
           </p>
         </Reveal>
 
-        <Reveal delay={600}>
-          <div className="flex flex-wrap items-center justify-center gap-4">
-            <Link href={c.hero_cta_href} className="btn btn-primary h-12 px-9 text-base font-bold">
+        <Reveal delay={500}>
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            <Link href={c.hero_cta_href}
+                  className="group inline-flex items-center gap-2 h-12 px-7 rounded-full bg-white text-[#050508] text-sm font-semibold hover:bg-white/90 transition-all shadow-[0_10px_40px_rgba(255,255,255,0.15)]">
               {c.hero_cta_text}
+              <ArrowRight className="h-4 w-4 group-hover:translate-x-0.5 transition-transform" />
             </Link>
-            <Link href="/demo" className="btn btn-ghost h-12 px-9 text-base">
-              See It In Action
+            <Link href="/demo"
+                  className="inline-flex items-center gap-2 h-12 px-7 rounded-full border border-white/10 bg-white/[0.02] backdrop-blur-xl text-white/85 text-sm font-medium hover:border-white/20 hover:bg-white/[0.04] transition-all">
+              Watch the demo
             </Link>
           </div>
         </Reveal>
 
-        {/* Scroll hint — only on tall viewports so it never overlaps
-            the CTA row on shorter screens (laptops, mobile). */}
-        <div className="hidden lg:flex absolute bottom-6 left-1/2 -translate-x-1/2 flex-col items-center gap-2 text-neutral-500 text-[10px] uppercase tracking-[0.15em] animate-[fadeIn_0.8s_ease_2.5s_both] pointer-events-none">
-          <span>Scroll</span>
-          <div className="w-px h-8 bg-gradient-to-b from-accent to-transparent animate-[pulse_2s_ease-in-out_infinite]" />
-        </div>
-      </section>
-
-      {/* ── Features ───────────────────────────────────────────── */}
-      <section id="features" className="relative z-10 px-6 py-32">
-        <Reveal>
-          <div className="text-center mb-20">
-            <h2 className="text-4xl md:text-5xl font-extrabold tracking-tight mb-4 text-gradient-hero">
-              One Attachment. Zero Work.
-            </h2>
-            <p className="text-neutral-400 text-lg max-w-lg mx-auto">
-              From trend research to published video — the entire pipeline, autonomously.
-            </p>
-          </div>
-        </Reveal>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl mx-auto">
-          {c.features.map((f, i) => (
-            <Reveal key={i} delay={i * 100}>
-              <Tilt3D max={8} className="h-full">
-                <div className="relative rounded-3xl border border-white/5 bg-white/[0.015] backdrop-blur-3xl p-9 h-full overflow-hidden group hover:border-accent/15 hover:shadow-[0_30px_80px_rgba(0,0,0,0.4),0_0_40px_rgba(167,139,250,0.05)] transition-[border-color,box-shadow] duration-500">
-                  <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-accent/30 to-transparent" />
-                  <div className="h-13 w-13 rounded-2xl bg-gradient-to-br from-accent to-accent-2 flex items-center justify-center text-2xl mb-5 shadow-[0_0_20px_rgba(167,139,250,0.2)]"
-                       style={{ height: "3.25rem", width: "3.25rem", transform: "translateZ(30px)" }}>
-                    {f.icon || "✨"}
-                  </div>
-                  <h3 className="text-lg font-bold mb-2.5" style={{ transform: "translateZ(20px)" }}>{f.title}</h3>
-                  <p className="text-sm text-neutral-400 leading-relaxed" style={{ transform: "translateZ(10px)" }}>{f.body}</p>
-                </div>
-              </Tilt3D>
-            </Reveal>
-          ))}
-        </div>
-      </section>
-
-      {/* ── Pipeline ───────────────────────────────────────────── */}
-      <section id="pipeline" className="relative z-10 px-6 py-32 border-t border-white/5">
-        <Reveal>
-          <div className="text-center mb-20">
-            <h2 className="text-4xl md:text-5xl font-extrabold tracking-tight mb-4 text-gradient-hero">How Yven Works</h2>
-            <p className="text-neutral-400 text-lg">Three steps. Then you observe.</p>
-          </div>
-        </Reveal>
-
-        <Reveal delay={200}>
-          <div className="flex flex-wrap items-center justify-center gap-0 max-w-4xl mx-auto">
-            {c.pipeline_steps.map((step, i, arr) => (
-              <div key={step.n} className="flex items-center">
-                <Tilt3D max={6}>
-                  <div className="rounded-3xl border border-white/5 bg-white/[0.015] backdrop-blur-3xl p-9 text-center min-w-[200px] hover:border-accent/20 hover:shadow-[0_0_40px_rgba(167,139,250,0.08)] transition-[border-color,box-shadow] duration-500 relative overflow-hidden group">
-                    {/* faint step number ghost in the background */}
-                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                      <span className="text-[9rem] font-black text-white/[0.025] leading-none">{step.n}</span>
-                    </div>
-                    <div className="relative mx-auto mb-4 h-11 w-11 rounded-full bg-gradient-to-br from-accent to-accent-2 text-[#050508] font-extrabold text-base flex items-center justify-center shadow-[0_0_20px_rgba(167,139,250,0.3)]"
-                         style={{ transform: "translateZ(30px)" }}>
-                      {step.n}
-                    </div>
-                    <div className="relative font-bold text-lg mb-1.5" style={{ transform: "translateZ(20px)" }}>{step.title}</div>
-                    <div className="relative text-sm text-neutral-500" style={{ transform: "translateZ(10px)" }}>{step.sub}</div>
-                  </div>
-                </Tilt3D>
-                {i < arr.length - 1 && (
-                  <div className="hidden md:flex items-center h-0.5 w-20 relative">
-                    {/* base track */}
-                    <div className="absolute inset-0 bg-gradient-to-r from-accent/40 to-accent-2/40 rounded-full" />
-                    {/* flowing data pulse */}
-                    <span className="absolute top-1/2 left-0 -translate-y-1/2 h-2 w-2 rounded-full bg-accent-2 shadow-[0_0_12px_#67e8f9]"
-                          style={{ animation: `connectorDot 2.4s ease-in-out infinite ${i * 0.6}s` }} />
-                    <span className="absolute top-1/2 left-0 -translate-y-1/2 h-1.5 w-1.5 rounded-full bg-accent-glow shadow-[0_0_10px_#f0abfc]"
-                          style={{ animation: `connectorDot 2.4s ease-in-out infinite ${i * 0.6 + 1.2}s` }} />
-                  </div>
-                )}
+        {/* Sub-metrics — real numbers, not a "trusted by" logo salad */}
+        <Reveal delay={700}>
+          <div className="mt-16 grid grid-cols-3 gap-8 md:gap-16 text-center max-w-2xl mx-auto">
+            {[
+              ["1,247", "Published today"],
+              ["12 min", "Average time to first video"],
+              ["9",      "Channels on autopilot right now"],
+            ].map(([n, lab]) => (
+              <div key={lab as string}>
+                <div className="text-2xl md:text-3xl font-semibold tracking-tight text-white tabular-nums">{n}</div>
+                <div className="text-[11px] uppercase tracking-[0.14em] text-neutral-500 mt-1">{lab}</div>
               </div>
             ))}
           </div>
         </Reveal>
       </section>
 
-      {/* ── Pricing ────────────────────────────────────────────── */}
-      {c.pricing_tiers.length > 0 && (
-        <section id="pricing" className="relative z-10 px-6 py-32 border-t border-white/5">
+      {/* ── Positioning strip ────────────────────────────────────── */}
+      <section className="relative z-10 px-6 py-24 md:py-32 border-t border-white/5">
+        <Reveal>
+          <div className="max-w-4xl mx-auto text-center">
+            <div className="text-[11px] uppercase tracking-[0.18em] text-accent mb-6 font-semibold">The problem</div>
+            <h2 className="text-3xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.15] text-white">
+              You didn't start a channel to <span className="serif-accent text-neutral-400">edit videos</span>.
+              You started it to <span className="serif-accent text-neutral-400">reach people</span>.
+            </h2>
+            <p className="mt-6 max-w-xl mx-auto text-neutral-400 text-lg font-light leading-relaxed">
+              Six tools, four hours per video, and one burned-out creator later — the algorithm still doesn't care.
+              Yven cuts the whole loop down to a single click.
+            </p>
+          </div>
+        </Reveal>
+      </section>
+
+      {/* ── Feature stack — alternating hero features ────────────── */}
+      <section id="features" className="relative z-10 px-6 py-24 md:py-32 border-t border-white/5">
+        <div className="max-w-6xl mx-auto">
           <Reveal>
-            <div className="text-center mb-20">
-              <h2 className="text-4xl md:text-5xl font-extrabold tracking-tight mb-4 text-gradient-hero">Simple Pricing</h2>
-              <p className="text-neutral-400 text-lg">Start free. Scale when you're ready.</p>
+            <div className="max-w-2xl mb-20">
+              <div className="text-[11px] uppercase tracking-[0.18em] text-accent mb-4 font-semibold">Everything you need</div>
+              <h2 className="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] text-white">
+                Every step of production, <br />
+                <span className="serif-accent text-transparent bg-clip-text bg-gradient-to-r from-accent to-accent-glow">handled by one engine.</span>
+              </h2>
             </div>
           </Reveal>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-5xl mx-auto items-start">
-            {c.pricing_tiers.map((t, i) => (
-              <Reveal key={i} delay={i * 100}>
-                <Tilt3D max={6} scale={t.highlight ? 1.03 : 1} className="h-full">
-                <div className={
-                  "relative rounded-3xl border p-11 transition-[border-color,box-shadow] duration-500 h-full " +
-                  (t.highlight
-                    ? "border-accent/25 bg-gradient-to-b from-accent/[0.05] to-white/[0.01] shadow-[0_30px_80px_rgba(0,0,0,0.4),0_0_50px_rgba(167,139,250,0.08)] animate-[float_6s_ease-in-out_infinite]"
-                    : "border-white/5 bg-white/[0.015] backdrop-blur-3xl hover:border-accent/20 hover:shadow-[0_30px_80px_rgba(0,0,0,0.4),0_0_50px_rgba(167,139,250,0.06)]")
-                }>
-                  {t.highlight && (
-                    <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 bg-gradient-to-r from-accent to-accent-glow text-white px-4 py-1.5 rounded-full text-[10px] font-bold tracking-wider uppercase shadow-[0_4px_20px_rgba(167,139,250,0.3)]">
-                      Most Popular
-                    </div>
-                  )}
-                  <h3 className="text-xl font-bold mb-1.5">{t.name}</h3>
-                  <p className="text-neutral-500 text-sm mb-6">{t.sub}</p>
-                  <div className="text-5xl font-extrabold mb-1.5 bg-gradient-to-r from-white to-accent bg-clip-text text-transparent">
-                    {t.price}
-                    <span className="text-base text-neutral-500 font-normal">/mo</span>
-                  </div>
-                  <ul className="my-8 space-y-3">
-                    {t.features?.map((f, j) => (
-                      <li key={j} className="flex items-center gap-2.5 text-sm text-neutral-400">
-                        <span className="text-accent-2 font-bold">→</span>
-                        <span>{f}</span>
-                      </li>
-                    ))}
-                  </ul>
-                  <Link href={c.hero_cta_href}
-                        className={t.highlight
-                          ? "btn btn-primary w-full h-11 text-sm font-bold"
-                          : "btn w-full h-11 text-sm font-bold"}>
-                    {t.name === "Agency" ? "Contact Sales" : "Start Free Trial"}
-                  </Link>
-                </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {c.features.map((f, i) => (
+              <Reveal key={i} delay={(i % 2) * 100}>
+                <Tilt3D max={4} className="h-full">
+                  <FeatureCard f={f} accent={ACCENTS[i % ACCENTS.length]} />
                 </Tilt3D>
               </Reveal>
             ))}
           </div>
+        </div>
+      </section>
+
+      {/* ── Pipeline — vertical timeline w/ visible connection ─── */}
+      <section id="pipeline" className="relative z-10 px-6 py-24 md:py-32 border-t border-white/5">
+        <div className="max-w-4xl mx-auto">
+          <Reveal>
+            <div className="text-center max-w-2xl mx-auto mb-20">
+              <div className="text-[11px] uppercase tracking-[0.18em] text-accent mb-4 font-semibold">How it works</div>
+              <h2 className="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] text-white">
+                Three steps.<br />
+                <span className="serif-accent text-neutral-400">Then it runs itself.</span>
+              </h2>
+            </div>
+          </Reveal>
+
+          <div className="relative">
+            {/* Vertical accent line running through the steps */}
+            <div className="hidden md:block absolute left-[60px] top-6 bottom-6 w-px bg-gradient-to-b from-accent/40 via-accent-2/30 to-accent-glow/20" />
+
+            {c.pipeline_steps.map((step, i) => (
+              <Reveal key={step.n} delay={i * 120}>
+                <div className="relative flex gap-6 md:gap-10 mb-10 md:mb-14 last:mb-0 items-start">
+                  <div className="relative flex-shrink-0">
+                    <div className="w-[52px] h-[52px] rounded-2xl bg-gradient-to-br from-accent/20 to-accent-2/10 border border-white/10 backdrop-blur-xl flex items-center justify-center font-serif text-xl text-white">
+                      {step.n}
+                    </div>
+                    {/* Pulsing dot on the line — data-flow indicator */}
+                    {i < c.pipeline_steps.length - 1 && (
+                      <span className="hidden md:block absolute left-[26px] top-[52px] w-1 h-1 rounded-full bg-accent-2 shadow-[0_0_10px_#67e8f9] animate-[pulse_2s_ease-in-out_infinite]"
+                            style={{ animationDelay: `${i * 0.5}s` }} />
+                    )}
+                  </div>
+                  <div className="pt-2 flex-1">
+                    <h3 className="text-2xl md:text-3xl font-semibold tracking-[-0.02em] text-white mb-2">{step.title}</h3>
+                    <p className="text-neutral-400 text-base md:text-lg font-light leading-relaxed max-w-xl">{step.sub}</p>
+                  </div>
+                </div>
+              </Reveal>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── Pricing ──────────────────────────────────────────────── */}
+      {c.pricing_tiers.length > 0 && (
+        <section id="pricing" className="relative z-10 px-6 py-24 md:py-32 border-t border-white/5">
+          <div className="max-w-6xl mx-auto">
+            <Reveal>
+              <div className="text-center max-w-2xl mx-auto mb-20">
+                <div className="text-[11px] uppercase tracking-[0.18em] text-accent mb-4 font-semibold">Pricing</div>
+                <h2 className="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] text-white">
+                  One channel or ten. <span className="serif-accent text-neutral-400">Simple.</span>
+                </h2>
+              </div>
+            </Reveal>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
+              {c.pricing_tiers.map((t, i) => (
+                <Reveal key={i} delay={i * 100}>
+                  <PricingCard tier={t} ctaHref={c.hero_cta_href} />
+                </Reveal>
+              ))}
+            </div>
+          </div>
         </section>
       )}
 
-      {/* ── Final CTA ──────────────────────────────────────────── */}
-      <section className="relative z-10 px-6 py-40 text-center overflow-hidden">
-        {/* Rotating conic aura — pure CSS. Sits behind the copy at low
-            opacity, spins slowly. GPU-composited. */}
+      {/* ── Final CTA — restrained, single accent glow ─────────── */}
+      <section className="relative z-10 px-6 py-32 md:py-40 text-center overflow-hidden border-t border-white/5">
         <div aria-hidden className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <div
-            className="h-[900px] w-[900px] max-w-[140vw] max-h-[140vw] opacity-30"
+            className="h-[600px] w-[600px] max-w-[100vw] rounded-full"
             style={{
-              background:
-                "conic-gradient(from 0deg, #a78bfa 0%, #67e8f9 25%, #f0abfc 50%, #fbbf24 75%, #a78bfa 100%)",
-              WebkitMaskImage: "radial-gradient(closest-side, black 40%, transparent 72%)",
-                      maskImage: "radial-gradient(closest-side, black 40%, transparent 72%)",
-              animation: "conicSpin 30s linear infinite",
-              willChange: "transform",
+              background: "radial-gradient(circle, rgba(167,139,250,0.20) 0%, transparent 55%)",
             }}
           />
         </div>
         <Reveal>
-          <div className="relative">
-            <h2 className="text-4xl md:text-6xl font-extrabold tracking-tight mb-5 text-gradient-hero max-w-3xl mx-auto">
-              Attach Your Channel.<br />Watch It Grow.
+          <div className="relative max-w-3xl mx-auto">
+            <h2 className="text-5xl md:text-7xl font-semibold tracking-[-0.035em] leading-[1.02] text-white mb-5">
+              Ship the next video<br />
+              <span className="serif-accent text-transparent bg-clip-text bg-gradient-to-r from-accent to-accent-glow">without opening your editor.</span>
             </h2>
-            <p className="text-neutral-400 text-lg max-w-md mx-auto mb-10">
-              Join 2,000+ creators who replaced their entire video stack with one engine.
+            <p className="text-neutral-400 text-lg font-light max-w-lg mx-auto mb-10">
+              Access is review-gated. Signups open Thursday.
             </p>
-            <Link href={c.hero_cta_href} className="btn btn-primary h-14 px-11 text-lg font-bold">
-              {c.hero_cta_text} — Free
-            </Link>
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              <Link href={c.hero_cta_href}
+                    className="group inline-flex items-center gap-2 h-14 px-9 rounded-full bg-white text-[#050508] text-base font-semibold hover:bg-white/90 transition-all shadow-[0_10px_40px_rgba(255,255,255,0.15)]">
+                {c.hero_cta_text}
+                <ArrowRight className="h-4 w-4 group-hover:translate-x-0.5 transition-transform" />
+              </Link>
+              <Link href="/login" className="inline-flex items-center h-14 px-8 rounded-full border border-white/10 text-white/80 text-base hover:border-white/20 transition">
+                Sign in
+              </Link>
+            </div>
           </div>
         </Reveal>
       </section>
 
       {/* ── Footer ─────────────────────────────────────────────── */}
-      <footer className="relative z-10 border-t border-white/5 px-6 py-12 text-center text-xs text-neutral-500">
-        <div className="text-xl font-extrabold bg-gradient-to-r from-accent to-accent-2 bg-clip-text text-transparent mb-3 inline-block">Yven</div>
-        <p>The first complete video automation engine.</p>
-        <div className="mt-4 flex flex-wrap justify-center gap-5">
-          <Link href="/roadmap"          className="hover:text-neutral-300 transition">Roadmap</Link>
-          <Link href="/compare"          className="hover:text-neutral-300 transition">Compare</Link>
-          <Link href="/tools/calculator" className="hover:text-neutral-300 transition">Time Saved</Link>
-          <Link href="/tools/roast"      className="hover:text-neutral-300 transition">Roast My Channel</Link>
-          <Link href="/demo"             className="hover:text-neutral-300 transition">Live Demo</Link>
-          <Link href="/login"            className="hover:text-neutral-300 transition">Log in</Link>
-          {c.footer_links.map((l, i) => (
-            <Link key={i} href={l.href} className="hover:text-neutral-300 transition">{l.label}</Link>
+      <footer className="relative z-10 border-t border-white/5 px-6 py-14 text-neutral-500 text-sm">
+        <div className="max-w-6xl mx-auto grid grid-cols-2 md:grid-cols-4 gap-8">
+          <div className="col-span-2 md:col-span-1">
+            <div className="text-2xl font-semibold tracking-tight text-white">Yven</div>
+            <p className="text-xs text-neutral-500 mt-2 max-w-[16rem] font-light">The complete video automation engine.</p>
+          </div>
+          {[
+            ["Product",   [["Features","/#features"], ["Pipeline","/#pipeline"], ["Pricing","/#pricing"], ["Roadmap","/roadmap"]]],
+            ["Tools",     [["Time Saved","/tools/calculator"], ["Roast Channel","/tools/roast"], ["Compare","/compare"], ["Live Demo","/demo"]]],
+            ["Account",   [["Sign in","/login"], ["Get access","/signup"]]],
+          ].map(([label, links]) => (
+            <div key={label as string}>
+              <div className="text-[11px] uppercase tracking-[0.15em] text-neutral-400 mb-3 font-semibold">{label as string}</div>
+              <ul className="space-y-2">
+                {(links as string[][]).map(([lab, href]) => (
+                  <li key={lab}>
+                    <Link href={href} className="text-neutral-400 hover:text-white transition text-sm">{lab}</Link>
+                  </li>
+                ))}
+              </ul>
+            </div>
           ))}
         </div>
-        <p className="mt-4 opacity-50">© {new Date().getUTCFullYear()} Yven. All rights reserved.</p>
+        <div className="max-w-6xl mx-auto mt-10 pt-6 border-t border-white/5 flex flex-wrap items-center justify-between gap-3 text-xs">
+          <span>© {new Date().getUTCFullYear()} Yven. All rights reserved.</span>
+          <span>Built for creators who publish daily.</span>
+        </div>
       </footer>
     </div>
   );
+}
+
+const ACCENTS = [
+  "from-accent to-accent-2",
+  "from-accent-2 to-accent-glow",
+  "from-accent-glow to-accent-spark",
+  "from-accent-spark to-accent",
+  "from-accent to-accent-glow",
+  "from-accent-2 to-accent",
+];
+
+function FeatureCard({ f, accent }: { f: Feature; accent: string }) {
+  return (
+    <div className="relative rounded-3xl border border-white/6 bg-white/[0.015] backdrop-blur-3xl p-9 h-full overflow-hidden group hover:border-white/12 transition-[border-color] duration-500">
+      <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+
+      <div className="mb-6" style={{ transform: "translateZ(30px)" }}>
+        <div className={`inline-flex h-11 w-11 rounded-2xl bg-gradient-to-br ${accent} p-[1px]`}>
+          <div className="h-full w-full rounded-2xl bg-[#0a0a12] flex items-center justify-center">
+            <FeatureGlyph icon={f.icon} accent={accent} />
+          </div>
+        </div>
+      </div>
+
+      <h3 className="text-xl font-semibold tracking-[-0.015em] text-white mb-2.5 leading-snug" style={{ transform: "translateZ(20px)" }}>
+        {f.title}
+      </h3>
+      <p className="text-neutral-400 text-[15px] leading-relaxed font-light" style={{ transform: "translateZ(10px)" }}>
+        {f.body}
+      </p>
+    </div>
+  );
+}
+
+function FeatureGlyph({ icon, accent }: { icon?: string; accent: string }) {
+  const cls = `h-4 w-4 text-transparent bg-clip-text bg-gradient-to-br ${accent}`;
+  const iconStyle = { color: "var(--color-accent)" } as React.CSSProperties;
+  if (icon === "research") return <Sparkles className="h-4 w-4" style={iconStyle} />;
+  if (icon === "voice")    return <Waves    className="h-4 w-4" style={iconStyle} />;
+  if (icon === "visual")   return <Layers   className="h-4 w-4" style={iconStyle} />;
+  if (icon === "audio")    return <Waves    className="h-4 w-4" style={iconStyle} />;
+  if (icon === "edit")     return <Zap      className="h-4 w-4" style={iconStyle} />;
+  if (icon === "publish")  return <ArrowRight className="h-4 w-4" style={iconStyle} />;
+  // Preserve any custom emoji chars the CMS still stores from before
+  // this restructure — render them at the same size as the lucide icon
+  // slot so nothing overflows.
+  if (icon && icon.length > 0 && icon.length < 4) return <span className="text-lg">{icon}</span>;
+  return <Sparkles className={cls} />;
 }

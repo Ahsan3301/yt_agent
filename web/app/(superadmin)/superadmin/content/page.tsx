@@ -17,6 +17,7 @@ type PipelineStep = { n: string; title: string; sub: string };
 type Content = {
   hero_badge: string;
   hero_title: string;
+  hero_tail: string;
   hero_sub: string;
   hero_cta_text: string;
   hero_cta_href: string;
@@ -29,6 +30,7 @@ type Content = {
 const EMPTY: Content = {
   hero_badge: "",
   hero_title: "",
+  hero_tail: "",
   hero_sub: "",
   hero_cta_text: "Get Early Access",
   hero_cta_href: "/signup",
@@ -114,8 +116,14 @@ export default function ContentEditor() {
                  onChange={(e) => setC({ ...c, hero_badge: e.target.value })} />
         </div>
         <div>
-          <label className="label">Title</label>
+          <label className="label">Title <span className="text-neutral-500 normal-case">(main headline · first line)</span></label>
           <input className="input" value={c.hero_title} onChange={(e) => setC({ ...c, hero_title: e.target.value })} />
+        </div>
+        <div>
+          <label className="label">Tail <span className="text-neutral-500 normal-case">(italicised standout · second line · leave empty to hide)</span></label>
+          <input className="input" value={c.hero_tail}
+                 placeholder="Ship YouTube on autopilot."
+                 onChange={(e) => setC({ ...c, hero_tail: e.target.value })} />
         </div>
         <div>
           <label className="label">Subtitle</label>
