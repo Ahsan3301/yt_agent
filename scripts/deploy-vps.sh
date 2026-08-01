@@ -81,12 +81,29 @@ try:
     entries = json.loads(sys.stdin.read())
 except Exception:
     sys.exit(0)
-bad = [e for e in entries
-       if e.get('type') == 'stderr'
-       or 'error' in e.get('output','').lower()
-       or 'failed'  in e.get('output','').lower()]
-for e in bad[-12:]:
-    print('---'); print(e.get('output',''))
+# Compile errors arrive on stdout inside the buildkit stream, not on
+# stderr — filtering on type=='stderr' missed them entirely and the
+# dump was useless. Match on content instead, and prefer the lines
+# around a TypeScript/Next failure over the Laravel stack trace.
+NEEDLES = ('type error', 'failed to compile', 'failed to type check',
+           'error:', 'cannot find', 'module not found', 'syntaxerror',
+           'build worker exited')
+NOISE   = ('executecommandwithprocess', 'illuminate\\\\', 'app\\\\jobs\\\\',
+           'stack trace', '#0 ', '#1 ', '#2 ', '#3 ', '#4 ')
+hits = []
+for e in entries:
+    out = e.get('output','') or ''
+    low = out.lower()
+    if any(n in low for n in NOISE):
+        continue
+    if any(n in low for n in NEEDLES) or e.get('type') == 'stderr':
+        hits.append(out)
+for out in (hits[-25:] if hits else []):
+    print(out)
+if not hits:
+    print('(no matching lines — dumping last 20 build-log entries)')
+    for e in entries[-20:]:
+        print(e.get('output',''))
 "
   exit 1
 fi

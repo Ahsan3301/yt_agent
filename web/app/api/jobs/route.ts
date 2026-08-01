@@ -201,7 +201,9 @@ export async function POST(req: NextRequest) {
       let chq = adminDb().collection("channels").limit(50);
       for (const [f, op, v] of tenantWhereClauses(auth.tenant)) chq = chq.where(f, op, v);
       const chSnap = await chq.get();
-      const rows = chSnap.docs.map((d) => ({ _id: d.id, ...(d.data() as Record<string, unknown>) }));
+      // `_id` last so a stray data field can't shadow the doc id.
+      const rows: Array<Record<string, unknown> & { _id: string }> =
+        chSnap.docs.map((d) => ({ ...(d.data() as Record<string, unknown>), _id: d.id }));
       // Explicit channel_id wins; otherwise fall back to the legacy
       // first-enabled-match-on-niche behaviour, now tenant-scoped.
       const match = channel_id

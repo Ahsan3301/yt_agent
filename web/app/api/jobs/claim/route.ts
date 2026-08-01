@@ -201,9 +201,10 @@ export async function POST(req: NextRequest) {
           // is now stamped at creation, so an unowned row here is
           // either pre-fix backlog or a bug. Skip it and say so rather
           // than routing someone else's render to the wrong worker.
-          logRoute(reqId, "skipping unowned job under tenant enforcement", {
-            job_id: String(data.id || doc.id),
-          });
+          console.warn(
+            "[claim] skipping unowned job under tenant enforcement",
+            JSON.stringify({ job_id: String(data.id || doc.id) }),
+          );
           continue;
         }
       }

@@ -1,8 +1,8 @@
-@import "tailwindcss";
-
-/* Editorial accent — Instrument Serif for italicised standout words
-   in the hero and section headlines. Loaded from Google Fonts. */
+/* Fonts first: CSS requires @import rules to precede all others, and
+   Tailwind's import expands into rules. Inter for UI, Instrument
+   Serif for the italicised editorial accents in headlines. */
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Instrument+Serif:ital@0;1&display=swap");
+@import "tailwindcss";
 
 /* ──────────────────────────────────────────────────────────────────
    Yven design system — Tailwind v4 tokens in CSS.
