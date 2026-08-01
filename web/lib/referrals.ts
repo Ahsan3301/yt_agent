@@ -139,9 +139,12 @@ export async function getReferralStatsFor(userId: string): Promise<{
   threshold: number;
 }> {
   const row = await getOrCreateReferral(userId);
+  // Sorting via .orderBy() against the PB shim requires a matching
+  // index on the collection; on an empty collection PB returns 400.
+  // Cheap workaround: sort client-side (max ~200 rows per referrer
+  // in practice; the 5-friend unlock caps most users well below that).
   const snap = await adminDb().collection("referral_signups")
     .where("referrer_user_id", "==", userId)
-    .orderBy("created_at", "desc")
     .get();
   const signups = snap.docs.map((d) => {
     const x = d.data() as { referred_email?: string; status?: string; created_at?: number; joined_at?: number };
@@ -151,7 +154,7 @@ export async function getReferralStatsFor(userId: string): Promise<{
       created_at: Number(x.created_at || 0),
       joined_at:  x.joined_at ? Number(x.joined_at) : undefined,
     };
-  });
+  }).sort((a, b) => b.created_at - a.created_at);
   const joined = signups.filter((s) => s.status === "joined").length;
   return {
     code: row.code,
