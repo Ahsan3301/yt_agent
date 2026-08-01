@@ -463,7 +463,7 @@ function JobRow({
         <div className="flex items-center gap-1.5">
           <KindPill kind={kind} />
           <a
-            href={`/queue/${encodeURIComponent(job.id)}`}
+            href={`/app/queue/${encodeURIComponent(job.id)}`}
             className="font-mono text-xs text-accent hover:underline"
             title="Open detail view"
           >

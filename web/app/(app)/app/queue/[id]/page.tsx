@@ -121,7 +121,7 @@ export default function JobDetailPage({
       });
       const d = await r.json();
       if (r.ok && d.id) {
-        window.location.href = `/queue/${d.id}`;
+        window.location.href = `/app/queue/${d.id}`;
       } else {
         setErr(d.error || `HTTP ${r.status}`);
       }
@@ -151,7 +151,7 @@ export default function JobDetailPage({
   return (
     <div className="space-y-5">
       <div>
-        <Link href="/queue" className="text-xs text-neutral-400 hover:text-accent inline-flex items-center gap-1">
+        <Link href="/app/queue" className="text-xs text-neutral-400 hover:text-accent inline-flex items-center gap-1">
           <ArrowLeft className="h-3 w-3" /> Back to queue
         </Link>
       </div>

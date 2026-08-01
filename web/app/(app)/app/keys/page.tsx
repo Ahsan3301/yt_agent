@@ -425,10 +425,17 @@ export default function KeysPage() {
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
+  // Operator-only sections are hidden from customers. Default false so
+  // nothing operator-facing flashes before the role resolves.
+  const [isAdmin, setIsAdmin] = useState(false);
 
   const refresh = () => getKeys().then(setKeys).catch(() => {});
   useEffect(() => {
     refresh();
+    fetch("/api/auth/me", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setIsAdmin(!!d?.is_admin))
+      .catch(() => setIsAdmin(false));
   }, []);
 
   const save = async () => {
@@ -564,11 +571,19 @@ export default function KeysPage() {
         </div>
       ))}
 
-      {/* ── Platform-level secrets ── */}
+      {/* ── Platform-level secrets — OPERATORS ONLY ──────────────────
+          These cards contain host-infrastructure runbooks and linked
+          directly to the operator's own private GitHub repository
+          (settings/secrets/actions) and Kaggle notebook docs. Every
+          paying customer could see them. They are irrelevant to a
+          customer and disclose internal infrastructure, so they are
+          now gated on the admin role. */}
+      {isAdmin && (
       <div className="space-y-3">
         <div className="flex items-center gap-2 pt-4">
           <Server className="h-5 w-5 text-neutral-400" />
           <h2 className="text-lg font-semibold">Platform-level secrets</h2>
+          <span className="pill pill-warn">Operators only</span>
         </div>
         <p className="text-sm text-neutral-400 max-w-2xl">
           These can't be set from the dashboard because they're read at
@@ -581,6 +596,7 @@ export default function KeysPage() {
           <PlatformCard key={sec.section} sec={sec} />
         ))}
       </div>
+      )}
     </div>
   );
 }

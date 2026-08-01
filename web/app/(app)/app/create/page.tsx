@@ -35,7 +35,7 @@ export default function CreatePage() {
   const [topic, setTopic] = useState("");
   const [script, setScript] = useState("");
   const [title, setTitle] = useState("");
-  const [dryRun, setDryRun] = useState(true);
+  const [dryRun, setDryRun] = useState(false);
   // Web research override. `null` = use channel default. Switching
   // channels resets to that channel's default unless the user has
   // already manually toggled it (the toggle below flips to a concrete
@@ -188,7 +188,7 @@ export default function CreatePage() {
           providers, and renders the final Short.
         </p>
         <Link
-          href="/create/wizard"
+          href="/app/create/wizard"
           className="inline-flex items-center gap-1.5 text-xs text-accent hover:underline mt-2"
         >
           Or use the step-by-step wizard for full control →

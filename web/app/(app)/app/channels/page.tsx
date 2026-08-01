@@ -174,11 +174,11 @@ export default function ChannelsPage() {
         "YouTube connected",
         bind ? `Linked to channel "${bind}".` : "Account added.",
       );
-      window.history.replaceState({}, "", "/channels");
+      window.history.replaceState({}, "", "/app/channels");
       refresh();
     } else if (yt === "error") {
       toast.error("YouTube OAuth failed", params.get("reason") || "");
-      window.history.replaceState({}, "", "/channels");
+      window.history.replaceState({}, "", "/app/channels");
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 

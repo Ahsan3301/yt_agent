@@ -145,8 +145,18 @@ export async function POST(req: NextRequest) {
       ? body.voice_override.trim().slice(0, 80)
       : null;
     // YouTube account id — which connected account to upload to.
-    const youtube_account_id = (typeof body.youtube_account_id === "string" && body.youtube_account_id.trim())
+    // NOTE: this is caller-supplied and is NOT trusted until verified
+    // against the caller's own youtube_accounts below. Before that
+    // check existed, any authenticated user could pass an arbitrary
+    // account id and publish a video to another tenant's channel.
+    const requestedYt = (typeof body.youtube_account_id === "string" && body.youtube_account_id.trim())
       ? body.youtube_account_id.trim().slice(0, 80)
+      : null;
+    // Explicit destination channel row id. Preferred over matching on
+    // niche name, which is ambiguous once a tenant has two channels in
+    // the same niche.
+    const channel_id = (typeof body.channel_id === "string" && body.channel_id.trim())
+      ? body.channel_id.trim().slice(0, 80)
       : null;
 
     // Idempotency check.
@@ -180,10 +190,23 @@ export async function POST(req: NextRequest) {
     let chanYt: string | null = null;
     let chanStamp: Record<string, unknown> = {};
     try {
-      const chSnap = await adminDb().collection("channels").limit(50).get();
-      const match = chSnap.docs
-        .map((d) => d.data() as Record<string, unknown>)
-        .find((c) => c.enabled !== false && String(c.niche || "").trim() === channel);
+      // SECURITY (2026-08-01): this lookup previously scanned channels
+      // across EVERY tenant and matched purely on niche name. A caller
+      // asking for channel:"horror" would inherit the first matching
+      // channel found — potentially another tenant's — and the job was
+      // then stamped with THAT tenant's cloudflare_api_token,
+      // oracle_password_hash and youtube_account_id. Net effect: the
+      // video published to someone else's YouTube channel, billed to
+      // someone else's Cloudflare account. Scope to the caller.
+      let chq = adminDb().collection("channels").limit(50);
+      for (const [f, op, v] of tenantWhereClauses(auth.tenant)) chq = chq.where(f, op, v);
+      const chSnap = await chq.get();
+      const rows = chSnap.docs.map((d) => ({ _id: d.id, ...(d.data() as Record<string, unknown>) }));
+      // Explicit channel_id wins; otherwise fall back to the legacy
+      // first-enabled-match-on-niche behaviour, now tenant-scoped.
+      const match = channel_id
+        ? rows.find((c) => c._id === channel_id || String(c.id || "") === channel_id)
+        : rows.find((c) => c.enabled !== false && String(c.niche || "").trim() === channel);
       if (match) {
         chanAllowed = Array.isArray(match.allowed_workers)
           ? (match.allowed_workers as unknown[]).filter((x): x is string => typeof x === "string")
@@ -210,6 +233,34 @@ export async function POST(req: NextRequest) {
         };
       }
     } catch { /* soft-fail → legacy shape, claim gate stays permissive */ }
+
+    // Verify any caller-supplied youtube_account_id actually belongs to
+    // the caller. Without this, a crafted POST could publish straight
+    // to another tenant's connected channel. Falls back to the channel's
+    // own bound account (already tenant-scoped above) when the request
+    // asks for one it doesn't own.
+    let verifiedYt: string | null = null;
+    if (requestedYt) {
+      try {
+        let yq = adminDb().collection("youtube_accounts").limit(100);
+        for (const [f, op, v] of tenantWhereClauses(auth.tenant)) yq = yq.where(f, op, v);
+        const ySnap = await yq.get();
+        const owned = ySnap.docs.some(
+          (d) => d.id === requestedYt || String((d.data() || {}).youtube_channel_id || "") === requestedYt,
+        );
+        if (owned) {
+          verifiedYt = requestedYt;
+        } else {
+          logRoute(reqId, "rejected unowned youtube_account_id", {
+            requested: requestedYt, user: auth.tenant.userId,
+          });
+        }
+      } catch {
+        // Fail closed: if we cannot prove ownership, do not honour the
+        // caller's binding.
+        verifiedYt = null;
+      }
+    }
 
     // Synthesize the job row (same shape as backend/jobs.py's submit).
     const jobId = _shortId();
@@ -248,9 +299,9 @@ export async function POST(req: NextRequest) {
       voice_override,
       // Explicit body binding wins; else inherit the channel's bound
       // account so gateway-created jobs publish to the right channel.
-      youtube_account_id: youtube_account_id || chanYt,
+      youtube_account_id: verifiedYt || chanYt,
       // Same publish-warning chip semantics as render-now + scheduled-render.
-      unbound: !(youtube_account_id || chanYt),
+      unbound: !(verifiedYt || chanYt),
     };
 
     // Pick a URL-based worker (tunnel mode) for direct HTTP dispatch.
@@ -322,7 +373,7 @@ export async function POST(req: NextRequest) {
             manual_topic, manual_script, manual_title,
             manual_channel_desc, manual_images, web_research,
             real_events, language, voice_override,
-            youtube_account_id: youtube_account_id || chanYt,
+            youtube_account_id: verifiedYt || chanYt,
           }),
         });
         if (r.ok) {
@@ -341,7 +392,7 @@ export async function POST(req: NextRequest) {
           const finalId = workerJob.id || jobId;
           await upsertJob(finalId, {
             ...chanStamp,
-            unbound: !(youtube_account_id || chanYt),
+            unbound: !(verifiedYt || chanYt),
             ...workerJob,
             backend_instance_id: target.instance_id,
             backend_url: target.url,

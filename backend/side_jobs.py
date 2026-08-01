@@ -70,7 +70,7 @@ def _get_run_video(run_id: str) -> str | None:
     # convention the frontend's storage-list.ts + the worker's uploader
     # both use: {S3_PUBLIC_BASE}/videos/<run_id>.mp4.
     if not url:
-        pub_base = (os.getenv("S3_PUBLIC_BASE") or "").rstrip("/")
+        pub_base = (os.getenv("S3_PUBLIC_BASE") or os.getenv("NEXT_PUBLIC_S3_PUBLIC_BASE") or "").rstrip("/")
         if not pub_base:
             # Derive from PUBLIC_BASE_URL + bucket for MinIO on Coolify.
             pb = (os.getenv("PUBLIC_BASE_URL") or "").rstrip("/")
@@ -307,7 +307,7 @@ def _publish_youtube(job: dict[str, Any]) -> tuple[bool, str]:
             #    Create a minimal row so the Library card renders the
             #    YouTube link + video_url preview.
             if not row_touched:
-                pub_base = (os.getenv("S3_PUBLIC_BASE") or "").rstrip("/")
+                pub_base = (os.getenv("S3_PUBLIC_BASE") or os.getenv("NEXT_PUBLIC_S3_PUBLIC_BASE") or "").rstrip("/")
                 video_url = f"{pub_base}/videos/{run_id}.mp4" if pub_base else ""
                 try:
                     c.collection("runs_index").document(run_id).set({

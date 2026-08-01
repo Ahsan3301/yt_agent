@@ -37,6 +37,10 @@ type Channel = {
   enabled: boolean;
   description?: string;
   web_research?: boolean | null;
+  // Which connected YouTube account this channel publishes to. Sent
+  // with the job so the render lands on the channel the user picked
+  // in step 1 rather than the legacy default account.
+  youtube_account_id?: string | null;
 };
 
 type WizardState = {
@@ -111,7 +115,7 @@ export default function WizardPage() {
     realEvents: false,
     images: [],
     webResearch: "default",
-    dryRun: true,
+    dryRun: false,
     voice: "",
   });
   const [channels, setChannels] = useState<Channel[]>([]);
@@ -160,7 +164,7 @@ export default function WizardPage() {
           </select>
           <div className="text-[11px] text-neutral-500 mt-1">
             Or skip this and just pick a niche below.
-            <Link href="/channels" className="text-accent hover:underline ml-2">Manage channels →</Link>
+            <Link href="/app/channels" className="text-accent hover:underline ml-2">Manage channels →</Link>
           </div>
         </div>
       )}
@@ -478,7 +482,7 @@ export default function WizardPage() {
         </select>
         <div className="text-[10px] text-neutral-500 mt-1">
           Voices are Microsoft Edge neural TTS. Music is set per-niche in
-          <Link href="/settings" className="text-accent hover:underline ml-1">Settings → Voice</Link>.
+          <Link href="/app/settings" className="text-accent hover:underline ml-1">Settings → Voice</Link>.
         </div>
       </div>
     </div>
@@ -492,6 +496,16 @@ export default function WizardPage() {
         channel: state.niche,
         dry_run: state.dryRun,
       };
+      // Step 1 asks the user which channel to publish to, and the
+      // Review screen shows it back to them — but this was never sent,
+      // so every wizard job fell back to the legacy default account.
+      // Send both the channel row and its bound YouTube account; the
+      // API verifies ownership of the latter before honouring it.
+      if (state.channelId) {
+        body.channel_id = state.channelId;
+        const ch = channels.find((c) => c.id === state.channelId);
+        if (ch?.youtube_account_id) body.youtube_account_id = ch.youtube_account_id;
+      }
       if (state.mode === "topic" && state.topic.trim()) {
         body.manual_topic = state.topic.trim();
       }
@@ -518,7 +532,7 @@ export default function WizardPage() {
         toast.error("Queue failed", d.error || `HTTP ${r.status}`);
       } else if (d.id) {
         toast.success("Queued", `Job ${d.id.slice(0, 8)} is on its way.`);
-        window.location.href = `/queue/${d.id}`;
+        window.location.href = `/app/queue/${d.id}`;
       }
     } catch (e) {
       toast.error("Queue failed", String(e));
@@ -582,7 +596,7 @@ export default function WizardPage() {
   return (
     <div className="space-y-6 max-w-3xl">
       <div>
-        <Link href="/create" className="text-xs text-neutral-400 hover:text-accent inline-flex items-center gap-1">
+        <Link href="/app/create" className="text-xs text-neutral-400 hover:text-accent inline-flex items-center gap-1">
           <ArrowLeft className="h-3 w-3" /> Back to quick create
         </Link>
         <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2 mt-2">
@@ -591,7 +605,7 @@ export default function WizardPage() {
         </h1>
         <p className="text-sm text-neutral-400 max-w-2xl mt-1">
           Step through every option with control at each stage. For a one-click
-          submit, use <Link href="/create" className="text-accent hover:underline">Quick create</Link> instead.
+          submit, use <Link href="/app/create" className="text-accent hover:underline">Quick create</Link> instead.
         </p>
       </div>
 

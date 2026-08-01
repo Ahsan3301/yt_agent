@@ -48,6 +48,7 @@ export async function POST(req: NextRequest) {
     errors: [] as string[],
     orphan_queued_failed: 0,
     errors_deleted: 0,
+    run_logs_deleted: 0,
   };
 
   // ── runs_index + run_summaries ──
@@ -181,6 +182,38 @@ export async function POST(req: NextRequest) {
     }
   } catch (e) {
     summary.errors.push(`errors cleanup: ${String(e)}`);
+  }
+
+  // ── run_logs ────────────────────────────────────────────────────
+  // RETENTION_DAYS.run_logs was declared from the start but never
+  // actually used — no sweep existed anywhere in the codebase. The
+  // table therefore grew without bound: one render writes up to 200
+  // batches x 200 rows (backend/logbuf.py), all into the single
+  // PocketBase SQLite file. It reached 111k rows on a single-user
+  // install, and it is the table that fills the VPS disk first.
+  //
+  // Paged so a large backlog is drained gradually across cron ticks
+  // rather than in one query that would time out the whole route
+  // (and with it the orphan-job reaper that shares this request).
+  try {
+    const cutoff = now - RETENTION_DAYS.run_logs * 86400;
+    let deleted = 0;
+    for (let page = 0; page < 20; page++) {          // <= 10k rows per tick
+      const snap = await adminDb()
+        .collection("run_logs")
+        .where("ts", "<", cutoff)
+        .limit(500)
+        .get();
+      if (snap.empty) break;
+      const batch = adminDb().batch();
+      snap.forEach((doc) => batch.delete(doc.ref));
+      await batch.commit();
+      deleted += snap.size;
+      if (snap.size < 500) break;                    // drained
+    }
+    summary.run_logs_deleted = deleted;
+  } catch (e) {
+    summary.errors.push(`run_logs cleanup: ${String(e)}`);
   }
 
   // ── idempotency ──

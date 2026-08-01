@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminDb, FieldValue } from "@/lib/firebase-admin";
 import { pickWorkers, newRequestId, logRoute } from "@/app/api/_lib/orchestrator";
 import { requireMaintenanceKey } from "@/app/api/_lib/auth";
+import { FOUNDER } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -88,6 +89,12 @@ export async function POST(req: NextRequest) {
     const targets: Record<string, number> = {};
     const channelMeta: Array<{
       niche: string;
+      // Tenant that owns the channel this job was scheduled from.
+      // Cron-created jobs previously carried NO owner at all, which
+      // meant (a) they bypassed plan quotas entirely, and (b) the
+      // claim gate treated them as unowned and let ANY tenant's
+      // worker pick them up.
+      owner_user_id: string;
       channel_name: string;
       description: string;
       web_research: boolean | null;
@@ -189,6 +196,7 @@ export async function POST(req: NextRequest) {
         for (let i = 0; i < count; i++) {
           channelMeta.push({
             niche,
+            owner_user_id: String(c.user_id || ""),
             channel_name: String(c.name || doc.id),
             description: (typeof c.description === "string" ? c.description : "").slice(0, 500),
             web_research:
@@ -234,6 +242,9 @@ export async function POST(req: NextRequest) {
         const inherited = bindingByNiche[niche] || null;
         for (let i = 0; i < n; i++) {
           channelMeta.push({
+            // Legacy path fires only when the channels collection is
+            // empty, which is the founder's pre-multi-tenant setup.
+            owner_user_id: FOUNDER,
             niche, channel_name: niche, description: "",
             web_research: null, real_events: null, language: null, voice: null,
             tone: null, privacy: null,
@@ -344,6 +355,10 @@ export async function POST(req: NextRequest) {
         status: "queued" as const,
         channel: cleanChannel,
         dry_run,
+        // Tenant stamps. Without these the job is invisible to its
+        // owner under tenant filtering AND claimable by any worker.
+        user_id: slot.owner_user_id || FOUNDER,
+        owner_user_id: slot.owner_user_id || FOUNDER,
         // Space by ms per slot so orderBy(queued_at) tie-breaks are
         // deterministic in the claim loop (matches render-now).
         queued_at: Date.now() / 1000 + slotIdx * 0.001,

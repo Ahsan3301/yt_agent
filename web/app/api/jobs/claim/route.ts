@@ -193,6 +193,18 @@ export async function POST(req: NextRequest) {
           const workerIsShared = !workerOwner && (workerScope === "shared" || workerScope === "");
           const workerMatches = workerOwner && workerOwner === jobOwner;
           if (!workerMatches && !workerIsShared) continue;
+        } else {
+          // Unowned job under tenant enforcement. This used to fall
+          // through the `if (jobOwner)` guard entirely, so ANY tenant's
+          // worker could claim it — and the scheduled-render cron was
+          // creating every one of its jobs without an owner. Ownership
+          // is now stamped at creation, so an unowned row here is
+          // either pre-fix backlog or a bug. Skip it and say so rather
+          // than routing someone else's render to the wrong worker.
+          logRoute(reqId, "skipping unowned job under tenant enforcement", {
+            job_id: String(data.id || doc.id),
+          });
+          continue;
         }
       }
 
