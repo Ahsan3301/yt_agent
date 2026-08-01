@@ -78,6 +78,10 @@ export async function POST(req: NextRequest) {
       ? Math.max(0, Math.min(23, Number(hourParam) || 0))
       : new Date().getUTCHours();
     const DEFAULT_HOUR = 9;
+    // How late a missed slot may still be fired. Wide enough to cover a
+    // deploy, a restart, or a few failed ticks; narrow enough that a
+    // catch-up never lands next to the following day's slot.
+    const CATCHUP_MAX_HOURS = 6;
 
     // PRIMARY source of targets: the channels collection (per-channel
     // niche + daily_count + enabled). Each enabled channel with
@@ -206,6 +210,26 @@ export async function POST(req: NextRequest) {
         if (!forceAll) {
           if (lastDay === todayInTz) return;          // already ran today
           if (currentHourInTz < channelHour) return;  // not due yet today
+          // Bounded catch-up. Without a limit, "due and not yet run
+          // today" fires a channel at ANY later hour of the day — so a
+          // midnight channel that missed its slot would fire at 22:00,
+          // and then again at 00:00 when the date rolls over an hour
+          // later. Two videos within two hours is not the daily cadence
+          // anyone configured.
+          //
+          // This is not hypothetical: last_scheduled_day starts unset
+          // for every existing channel, and six of them sit at hour 0
+          // having last run 2026-07-26. Deploying the catch-up without
+          // this bound would have queued twelve renders tonight.
+          //
+          // A slot missed by more than CATCHUP_MAX_HOURS is better left
+          // to tomorrow's slot than fired next to it.
+          if (currentHourInTz - channelHour > CATCHUP_MAX_HOURS) {
+            logRoute(reqId, "scheduled-render: missed slot too old, waiting for tomorrow", {
+              channel: c.name, scheduled_hour: channelHour, current_hour: currentHourInTz,
+            });
+            return;
+          }
         }
         pendingDayStamp.push({ id: doc.id, day: todayInTz });
         if (channelHour !== currentHourInTz) {
