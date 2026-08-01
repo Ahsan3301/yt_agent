@@ -307,9 +307,17 @@ export default function HistoryPage() {
 
               {open && (
                 <div className="mt-4 space-y-3 border-t border-line pt-4">
-                  {r.video_url && (
+                  {(r.has_video || r.video_url) && (
                     <div className="text-sm">
-                      Published: <a className="text-accent underline" href={r.video_url} target="_blank">{r.video_url}</a>
+                      {/* Points at the ownership-checked route rather
+                          than the raw bucket URL — the bucket is now
+                          private, so a stored public_url from before
+                          this change would 403 if linked directly. */}
+                      <a className="text-accent underline"
+                         href={`/api/runs/${r.run_id}/video`}
+                         target="_blank" rel="noreferrer">
+                        Download the video file
+                      </a>
                     </div>
                   )}
                   {(r.has_video || r.video_url || r.youtube_video_id || (r.mirrors && r.mirrors.length > 0)) && (

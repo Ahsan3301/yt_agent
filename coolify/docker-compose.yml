@@ -199,7 +199,13 @@ services:
           echo "waiting for minio..."; sleep 2;
         done
         /usr/bin/mc mb --ignore-existing local/$$S3_BUCKET
-        /usr/bin/mc anonymous set download local/$$S3_BUCKET
+        # Bucket is PRIVATE. It used to be `mc anonymous set download`,
+        # i.e. world-readable — and object keys are videos/<run_id>.mp4
+        # with URLs handed out in Discord embeds and API responses, so
+        # any customer's video was fetchable by anyone who saw a link.
+        # Access now goes through /api/runs/<id>/video, which checks
+        # ownership and issues a short-lived presigned URL.
+        /usr/bin/mc anonymous set none local/$$S3_BUCKET
         echo "minio-init: bucket $$S3_BUCKET ready"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}

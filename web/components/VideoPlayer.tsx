@@ -44,6 +44,20 @@ export default function VideoPlayer({
 }) {
   const sources: Source[] = useMemo(() => {
     const out: Source[] = [];
+    // Prefer the ownership-checked route over a raw bucket URL.
+    //
+    // The bucket used to be world-readable and those URLs leaked
+    // widely — into Discord notifications, API responses and
+    // runs_index — so anyone who saw one could fetch that customer's
+    // video indefinitely. /api/runs/<id>/video verifies the caller
+    // owns the run and 302s to a short-lived presigned URL, so the
+    // bucket can stay closed.
+    //
+    // publicUrl is kept as a secondary source for rows written before
+    // this existed, and for mirrors on storage we don't control.
+    if (runId) {
+      out.push({ kind: "mp4", label: "Yven", url: `/api/runs/${runId}/video` });
+    }
     if (publicUrl) {
       out.push({ kind: "mp4", label: _labelForUrl(publicUrl), url: publicUrl });
     }
@@ -64,7 +78,7 @@ export default function VideoPlayer({
       });
     }
     return out;
-  }, [publicUrl, mirrors, youtubeVideoId]);
+  }, [runId, publicUrl, mirrors, youtubeVideoId]);
 
   const [selected, setSelected] = useState<number>(0);
   const [playing, setPlaying] = useState(false);
