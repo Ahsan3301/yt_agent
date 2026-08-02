@@ -53,6 +53,7 @@ def write_seo_metadata(
     research_data: Optional[dict] = None,
     borrowed_titles: Optional[list[str]] = None,
     borrowed_tags: Optional[list[str]] = None,
+    own_performance: Optional[str] = None,
 ) -> dict:
     """Build the publish-ready metadata block for one run.
 
@@ -68,6 +69,11 @@ def write_seo_metadata(
               first. These are the keywords YouTube already associates with
               the topic, so echoing the relevant ones is what puts this
               video into the same suggestion graph.
+      own_performance: optional prompt block listing THIS channel's own
+              above-median titles with real view counts (see
+              modules/performance.py). Stronger evidence than competitor
+              titles, because it is the same audience — but only present
+              once the channel has enough settled videos to mean anything.
 
     Returns:
       dict — always populated, never raises.
@@ -78,7 +84,7 @@ def write_seo_metadata(
     # Try NIM first (up to 2 attempts with error feedback), then regex fallback.
     problems = []
     for attempt in range(1, 3):
-        raw = _call_llm(narration, script, channel_cfg, viral, research_data, borrowed_titles, problems, borrowed_tags)
+        raw = _call_llm(narration, script, channel_cfg, viral, research_data, borrowed_titles, problems, borrowed_tags, own_performance)
         if not raw:
             break
         try:
@@ -111,7 +117,7 @@ def write_seo_metadata(
 
 # ── NIM path ──────────────────────────────────────────────────────
 
-def _call_llm(narration, script, channel_cfg, viral, research_data, borrowed_titles, problems, borrowed_tags=None):
+def _call_llm(narration, script, channel_cfg, viral, research_data, borrowed_titles, problems, borrowed_tags=None, own_performance=None):
     """Single call. Returns raw model text on success, None on failure."""
     try:
         from modules import nim
@@ -120,7 +126,7 @@ def _call_llm(narration, script, channel_cfg, viral, research_data, borrowed_tit
     if not nim.is_available():
         return None
 
-    prompt = _build_prompt(narration, script, channel_cfg, viral, research_data, borrowed_titles, problems, borrowed_tags)
+    prompt = _build_prompt(narration, script, channel_cfg, viral, research_data, borrowed_titles, problems, borrowed_tags, own_performance)
     try:
         return nim.chat(
             [
@@ -151,7 +157,7 @@ _LANG_NAMES = {
 }
 
 
-def _build_prompt(narration, script, channel_cfg, viral, research_data, borrowed_titles, problems, borrowed_tags=None):
+def _build_prompt(narration, script, channel_cfg, viral, research_data, borrowed_titles, problems, borrowed_tags=None, own_performance=None):
     niche = channel_cfg.get("display_name") or channel_cfg.get("name") or "content"
     tone = channel_cfg.get("tone") or "engaging"
     language = channel_cfg.get("language") or "en"
@@ -209,6 +215,12 @@ def _build_prompt(narration, script, channel_cfg, viral, research_data, borrowed
             + "\n".join(f"- {x}" for x in borrowed_tags[:25])
         )
 
+    # Placed AFTER the competitor block in the prompt on purpose: this
+    # is the channel's own audience responding to its own videos, which
+    # is stronger evidence than what worked for somebody else, and the
+    # last thing before the narration carries the most weight.
+    own_perf_block = f"\n{own_performance}" if own_performance else ""
+
     problem_block = ""
     if problems:
         problem_block = "\nFIX these problems from your previous attempt:\n" + "\n".join(f"- {p}" for p in problems)
@@ -233,7 +245,7 @@ HASHTAG SEEDS (return exactly {_HASHTAGS_COUNT}, may swap for niche-relevant one
 DESCRIPTION FIRST-2-LINES STYLE: {first_two}
 
 ENGAGEMENT CTA style: {cta}
-{facts}{borrowed}{borrowed_tag_block}
+{facts}{borrowed}{borrowed_tag_block}{own_perf_block}
 NARRATION (this is the ACTUAL video — every metadata field must be tied to this content):
 \"\"\"{narration.strip()}\"\"\"
 {problem_block}

@@ -71,6 +71,8 @@ export default function ReportsPage() {
         </button>
       </div>
 
+      <PerformancePanel />
+
       {/* Filters */}
       <div className="card space-y-3">
         <div className="flex items-center gap-2 text-sm font-medium">
@@ -610,4 +612,160 @@ function StackedBarChart({ data }: {
 function _pct(part: number, total: number): number {
   if (!total) return 0;
   return Math.max(2, Math.round((part / total) * 100));
+}
+
+/**
+ * What is actually working, from real YouTube view counts.
+ *
+ * The product could publish indefinitely without anyone being able to
+ * answer "which of this is worth making more of". Measured on
+ * 2026-08-02: the history niche averaged 427 views, horror averaged 1.
+ * A ~400x difference that decides where the render budget should go,
+ * invisible until the stats sweep started recording it.
+ *
+ * Videos younger than the settle window are excluded from the averages
+ * and counted separately — a batch published an hour ago has no views
+ * yet, and letting those into the mean makes an active niche look like
+ * it is collapsing.
+ */
+function PerformancePanel() {
+  const [d, setD] = useState<{
+    settle_hours: number;
+    totals: { published: number; measured: number; settled: number; too_fresh: number;
+              awaiting_first_check: number; total_views: number };
+    niches: Array<{ niche: string; videos: number; avg_views: number; total_views: number;
+                    total_likes: number; best_title: string; best_views: number }>;
+    top: Array<{ title: string; views: number; likes: number; niche: string; video_id: string }>;
+    bottom: Array<{ title: string; views: number; likes: number; niche: string; video_id: string }>;
+    problems: Array<{ title: string; video_id: string; niche: string }>;
+  } | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch("/api/analytics/performance", { cache: "no-store" });
+        if (r.ok) setD(await r.json());
+      } catch { /* informational panel — never block the page */ }
+    })();
+  }, []);
+
+  if (!d) return null;
+
+  if (d.totals.settled === 0) {
+    return (
+      <div className="card text-xs text-neutral-500">
+        <div className="text-sm font-medium text-neutral-300 mb-1">Performance</div>
+        {d.totals.published === 0
+          ? "Nothing published yet."
+          : `${d.totals.published} video(s) published, but none are older than ${d.settle_hours}h yet — view counts need time to mean anything. Check back tomorrow.`}
+      </div>
+    );
+  }
+
+  const best = d.niches[0];
+  const worst = d.niches[d.niches.length - 1];
+  const spread = worst && worst.avg_views > 0
+    ? Math.round(best.avg_views / worst.avg_views)
+    : null;
+
+  return (
+    <div className="card space-y-4">
+      <div>
+        <div className="text-sm font-medium">Performance</div>
+        <p className="text-xs text-neutral-500 mt-0.5">
+          Real YouTube views, refreshed every 6 hours. Averages use only
+          videos older than {d.settle_hours}h
+          {d.totals.too_fresh > 0 && ` — ${d.totals.too_fresh} too fresh to judge`}
+          {d.totals.awaiting_first_check > 0 && `, ${d.totals.awaiting_first_check} not yet checked`}.
+        </p>
+      </div>
+
+      <div className="flex gap-6 flex-wrap text-xs">
+        <div>
+          <div className="text-lg font-mono text-neutral-200">{d.totals.total_views.toLocaleString()}</div>
+          <div className="text-neutral-500">total views</div>
+        </div>
+        <div>
+          <div className="text-lg font-mono text-neutral-200">{d.totals.settled}</div>
+          <div className="text-neutral-500">videos measured</div>
+        </div>
+        {best && (
+          <div>
+            <div className="text-lg font-mono text-emerald-300">{best.niche}</div>
+            <div className="text-neutral-500">best niche ({best.avg_views} avg)</div>
+          </div>
+        )}
+      </div>
+
+      {/* The comparison is the actionable part: which niche earns more
+          renders. Only shown with enough niches to compare. */}
+      {d.niches.length > 1 && (
+        <div className="space-y-1">
+          {d.niches.map((n) => {
+            const pct = best.avg_views > 0 ? Math.round((n.avg_views / best.avg_views) * 100) : 0;
+            return (
+              <div key={n.niche} className="flex items-center gap-2 text-xs">
+                <span className="w-24 shrink-0 text-neutral-300">{n.niche}</span>
+                <div className="h-1.5 rounded bg-white/5 grow overflow-hidden">
+                  <div className="h-full bg-accent/60" style={{ width: `${Math.max(2, pct)}%` }} />
+                </div>
+                <span className="w-32 shrink-0 text-right text-neutral-400">
+                  <b className="text-neutral-200">{n.avg_views}</b> avg · {n.videos} video{n.videos === 1 ? "" : "s"}
+                </span>
+              </div>
+            );
+          })}
+          {spread && spread >= 3 && (
+            <p className="text-[11px] text-amber-400 pt-1">
+              {best.niche} is averaging {spread}× {worst.niche}. Shifting render
+              budget toward it is the highest-leverage change available.
+            </p>
+          )}
+        </div>
+      )}
+
+      <div className="grid md:grid-cols-2 gap-4 pt-1">
+        <div>
+          <div className="text-xs font-medium text-neutral-300 mb-1">Best performing</div>
+          <div className="space-y-1">
+            {d.top.slice(0, 5).map((t) => (
+              <a key={t.video_id} href={`https://youtube.com/watch?v=${t.video_id}`}
+                 target="_blank" rel="noreferrer"
+                 className="flex gap-2 text-xs hover:underline">
+                <span className="font-mono text-emerald-300 w-14 shrink-0 text-right">{t.views.toLocaleString()}</span>
+                <span className="text-neutral-400 truncate">{t.title || <em className="text-neutral-600">(title not recorded)</em>}</span>
+              </a>
+            ))}
+          </div>
+        </div>
+        <div>
+          {/* The bottom is where the pattern to STOP repeating lives. */}
+          <div className="text-xs font-medium text-neutral-300 mb-1">Worst performing</div>
+          <div className="space-y-1">
+            {d.bottom.slice(0, 5).map((t) => (
+              <a key={t.video_id} href={`https://youtube.com/watch?v=${t.video_id}`}
+                 target="_blank" rel="noreferrer"
+                 className="flex gap-2 text-xs hover:underline">
+                <span className="font-mono text-neutral-500 w-14 shrink-0 text-right">{t.views.toLocaleString()}</span>
+                <span className="text-neutral-500 truncate">{t.title || <em className="text-neutral-600">(title not recorded)</em>}</span>
+              </a>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {d.problems.length > 0 && (
+        <div className="text-xs text-red-400 border-t border-line/60 pt-2">
+          {d.problems.length} published video{d.problems.length === 1 ? " is" : "s are"} no
+          longer on YouTube (removed, blocked, or made private).
+        </div>
+      )}
+
+      <p className="text-[11px] text-neutral-600 border-t border-line/60 pt-2">
+        These numbers feed back into writing: once a niche has 5+ settled
+        videos, its above-median titles are shown to the SEO writer as
+        proven examples for that audience.
+      </p>
+    </div>
+  );
 }

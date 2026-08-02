@@ -769,6 +769,7 @@ def run_pipeline(
             # Optional: borrow top-ranking peer title(s) to inform tone.
             borrowed_titles = None
             borrowed_tags = None
+            own_performance = None
             try:
                 from modules.config import load_settings as _ls
                 _seo_cfg = (_ls().get("seo") or {})
@@ -800,6 +801,20 @@ def run_pipeline(
                             # why this feature could be entirely dead
                             # without leaving a single trace.
                             log.warning(f"seo_borrower.find_viral_pool failed: {_sb_e!r}")
+                # What has actually worked on THIS channel. Stronger
+                # signal than competitor titles — same audience — but
+                # only once enough videos have settled view counts.
+                # Returns None on a young channel rather than inventing
+                # guidance from three data points.
+                try:
+                    from modules import performance as _perf
+                    own_performance = _perf.summary_for_prompt(
+                        str(channel_cfg.get("niche") or channel_type or "").strip()
+                    )
+                    if own_performance:
+                        log.info("performance: feeding this channel's own top titles into the SEO prompt")
+                except Exception as _pf_e:
+                    log.warning(f"performance: own-results lookup skipped: {_pf_e!r}")
             except Exception as _borrow_e:
                 # Was a bare `except Exception: pass`. The competitor
                 # lookup produced no log line of ANY kind on 2026-08-02
@@ -814,6 +829,7 @@ def run_pipeline(
                 research_data=content,
                 borrowed_titles=borrowed_titles,
                 borrowed_tags=borrowed_tags,
+                own_performance=own_performance,
             ), run_id=run_id)
         except Exception as _seo_err:
             log.warning(f"SEO writer failed hard, using script metadata only: {_seo_err}")
