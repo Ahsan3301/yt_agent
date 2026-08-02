@@ -43,10 +43,14 @@ export async function POST(req: NextRequest) {
   const staleSeconds    = Number(url.searchParams.get("stale_seconds") || 600);
   const orphanRetention = Number(url.searchParams.get("orphan_retention") || 604800);
   const dryRun          = url.searchParams.get("dry_run") === "1";
-  // How long a running job may go without writing a log line before it
-  // counts as wedged. Renders log every ~1s (36s worst observed gap),
-  // and a whole render takes ~20 min, so 30 min of silence cannot be
-  // normal work.
+  // Window over which BOTH progress signals must be flat before a job
+  // counts as wedged: percent unchanged AND nothing logged.
+  //
+  // Sized against measurements, not intuition. An early version used
+  // log silence alone at 30 min, which would have killed healthy work:
+  // the "Editing video" stage was observed going 14 min without a log
+  // line while progressing 75% -> 82%, and renders on the CPU
+  // side-worker run for HOURS, not the ~20 min a GPU render takes.
   const stallSeconds    = Number(url.searchParams.get("stall_seconds") || 1800);
   const nowSec = Date.now() / 1000;
 
@@ -126,6 +130,7 @@ export async function POST(req: NextRequest) {
         status?: string; backend_instance_id?: string;
         started_at?: unknown; claimed_at?: unknown;
         run_id?: string; orphan_count?: number;
+        percent?: number; stall_probe_percent?: number; stall_probe_at?: number;
       };
       const st = String(j.status || "");
       if (st !== "running" && st !== "claimed") continue;
@@ -133,22 +138,51 @@ export async function POST(req: NextRequest) {
       // Worker still alive — but that only proves the WORKER is up, not
       // that the render is progressing. A pipeline wedged on a hung API
       // call keeps its worker heartbeating happily, so this branch used
-      // to mean "stuck forever, invisible". Job records carry no usable
-      // progress timestamp either (PB's `updated`/`created` are not
-      // exposed through the adapter, and there is no updated_at field
-      // on the collection), so the only real progress signal is whether
-      // the run is still writing logs.
+      // to mean "stuck forever, invisible".
       //
-      // Measured cadence during an active render: median gap 1s,
-      // max 36s. Silence for STALL_SECONDS (default 30 min) is
-      // therefore unambiguous, with roughly a 50x safety margin.
+      // Judging that needs care, because "slow" and "stuck" look alike
+      // from outside. There is no progress timestamp to read (PB's
+      // `updated`/`created` are not exposed through the adapter and the
+      // collection has no updated_at), so the sweep records percent
+      // each tick in stall_probe_* and compares against last time.
+      //
+      // Two independent signals must BOTH be flat for the full window —
+      // percent unchanged and no log output. Either alone gives false
+      // positives: the encode stage goes quiet for many minutes while
+      // working, and percent can legitimately sit still across one tick.
       if (instId && liveInstanceIds.has(instId)) {
         const ageSec = nowSec - (toEpochMs(j.started_at ?? j.claimed_at) || 0) / 1000;
-        // Don't judge a job that has not had time to produce logs yet.
+        // Don't judge a job that has not had time to make progress yet.
         if (!Number.isFinite(ageSec) || ageSec < stallSeconds) continue;
         const runId = String(j.run_id || "");
         if (!runId) continue;
-        let loggedRecently = true;   // fail SAFE: unknown => leave it alone
+
+        const pct       = Number(j.percent || 0);
+        const probePct  = Number(j.stall_probe_percent ?? -1);
+        const probeAt   = Number(j.stall_probe_at || 0);
+
+        // First sighting, or progress since last sighting → re-arm the
+        // probe and judge nothing this tick.
+        if (probeAt === 0 || pct > probePct) {
+          if (!dryRun) {
+            try {
+              await adminDb().collection("jobs").doc(doc.id).update({
+                stall_probe_percent: pct,
+                stall_probe_at: nowSec,
+              });
+            } catch { /* best-effort — worst case we re-arm next tick */ }
+          }
+          continue;
+        }
+        // Percent unchanged, but not for long enough yet.
+        if (nowSec - probeAt < stallSeconds) continue;
+
+        // Percent frozen for the whole window. Require log silence too
+        // before acting — two independent signals, because either one
+        // alone is wrong: renders on the CPU side-worker run for hours
+        // and the encode stage was measured going 14 min without a log
+        // line while progressing normally.
+        let loggedRecently = true;   // fail SAFE: unknown => leave alone
         try {
           const lg = await adminDb()
             .collection("run_logs")
@@ -161,9 +195,10 @@ export async function POST(req: NextRequest) {
           continue;   // can't tell => never kill it
         }
         if (loggedRecently) continue;
-        // Silent past the threshold on a live worker: wedged. Fall
-        // through to the same requeue/fail path as a lost worker, so
-        // orphan_count still bounds it to one retry.
+
+        // Frozen percent AND no log output for the full window on a
+        // live worker: wedged. Falls through to the same requeue/fail
+        // path as a lost worker, so orphan_count bounds it to one retry.
         stalledJobIds.add(doc.id);
       }
       // Also skip when the job just started (< staleSeconds ago) —
@@ -189,6 +224,11 @@ export async function POST(req: NextRequest) {
             current_step: null,
             current_step_label: null,
             orphan_count: prevOrphanCount + 1,
+            // Re-arm the probe: the retry must be judged on its own
+            // progress, not inherit the frozen reading that condemned
+            // the previous attempt.
+            stall_probe_percent: 0,
+            stall_probe_at: 0,
             error: `${why}; requeued for retry`,
           }
         : {
