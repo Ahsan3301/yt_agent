@@ -76,9 +76,12 @@ export default function LoginPage() {
             Every video — <span className="text-gradient-static">researched, cut, and published</span> — while you sleep.
           </h1>
           <ul className="space-y-3 text-sm text-neutral-400">
+            {/* Was "Channel DNA learns your voice" and "Approval mode
+                or full autopilot" — neither exists. Replaced with two
+                things the product actually does. */}
             <TrustLine>Attach any YouTube channel</TrustLine>
-            <TrustLine>Channel DNA learns your voice</TrustLine>
-            <TrustLine>Approval mode or full autopilot</TrustLine>
+            <TrustLine>Titles scored against what already ranks</TrustLine>
+            <TrustLine>Real view counts feed the next script</TrustLine>
           </ul>
         </div>
 

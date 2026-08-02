@@ -19,8 +19,15 @@ export type Item = { status: Status; title: string; body: string; tag?: string; 
 const DEFAULT_ITEMS: Item[] = [
   { status: "live", sort_order: 0, title: "Complete video pipeline",       body: "Research → Script → Storyboard → Visuals → Audio → Edit → QA → Publish. Fully autonomous." },
   { status: "live", sort_order: 1, title: "Multi-channel management",      body: "Attach any number of YouTube channels. Each gets its own tone, voice, and schedule." },
-  { status: "live", sort_order: 2, title: "YouTube auto-publishing",       body: "Per-channel OAuth. Auto-title, description, tags, thumbnail." },
-  { status: "live", sort_order: 3, title: "Approval mode",                 body: "Review every video before it goes live. Switch to autopilot when ready." },
+  // Thumbnail setting is attempted but YouTube rejects it with 403 on
+  // channels that have not completed phone verification, so it is not
+  // claimed here as a shipped capability.
+  { status: "live", sort_order: 2, title: "YouTube auto-publishing",       body: "Per-channel OAuth. Writes the title, description, tags and hashtags for every upload." },
+  { status: "live", sort_order: 3, title: "Performance feedback loop",     body: "Reads real view counts back from YouTube and feeds the titles that beat your median into the next script." },
+  // Moved out of "live": video approval mode is not built. The only
+  // approval flow in the codebase is an admin approving new USER
+  // signups, which is a different thing entirely.
+  { status: "next", sort_order: 3, title: "Approval mode",                 body: "Review every video before it goes live. Switch to autopilot when ready.", tag: "Q4 2026" },
 
   { status: "next", sort_order: 0, title: "Channel DNA analysis",          body: "AI learns your voice, pacing, humor, and style from existing content.", tag: "Q3 2026" },
   { status: "next", sort_order: 1, title: "AI thumbnail generator",        body: "CTR-optimized thumbnails with face detection, contrast analysis, and A/B testing.", tag: "Q3 2026" },
