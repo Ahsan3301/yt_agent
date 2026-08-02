@@ -101,7 +101,12 @@ export function withHeartbeat<TReq extends Request, TRes extends Response>(
         const body = await res.clone().json() as Record<string, unknown>;
         detail = summarise(body);
       } catch { /* non-JSON or already consumed — timestamp still lands */ }
-      await recordMaintenanceRun(job, res.status < 400, detail || `HTTP ${res.status}`);
+      // A healthy run that found nothing to do is the common case, and
+      // "HTTP 200" describes the transport rather than the outcome.
+      // Say so plainly — an operator scanning this column wants to know
+      // the job ran and had no work, not that a request succeeded.
+      const fallback = res.status < 400 ? "ok, nothing to do" : `HTTP ${res.status}`;
+      await recordMaintenanceRun(job, res.status < 400, detail || fallback);
       return res;
     } catch (e) {
       // A throw is the most important outcome to record, and the one
