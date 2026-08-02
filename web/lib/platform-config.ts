@@ -148,6 +148,8 @@ export const CONFIG_SCHEMA: Array<{
   // Blank = use the built-in default. Values below 1 are ignored
   // rather than obeyed: "0 days" would mean delete everything on the
   // next nightly sweep, which nobody means to type.
+  { key: "STORAGE_MAX_GB", category: "retention", label: "Cap video storage at (GB)",
+    help: "A hard ceiling on the video bucket, enforced nightly after the age rules. Blank or 0 disables it. Age alone does not bound disk: renders here average ~300 MB and ~17/day is ~5 GB/day, so a 30-day window implies ~150 GB — more than this server has, and it would fill in under two weeks. When over the cap, oldest videos are removed, PUBLISHED ones first, because those keep playing in the Library from YouTube. Unpublished files are only touched if the cap still cannot be met." },
   { key: "RETENTION_VIDEOS_DAYS", category: "retention", label: "Keep video files for (days)",
     help: "How long rendered .mp4 files stay in storage. Default 30. Deleting the file does NOT remove the video from your Library — anything already published keeps playing via its YouTube embed. Videos that were never published are gone for good, so raise this if you rely on the local copies." },
   { key: "RETENTION_RUNS_DAYS", category: "retention", label: "Keep run history for (days)",

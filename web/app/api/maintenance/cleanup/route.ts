@@ -3,6 +3,7 @@ import { adminDb } from "@/lib/firebase-admin";
 import { newRequestId, logRoute } from "@/app/api/_lib/orchestrator";
 import { requireMaintenanceKey } from "@/app/api/_lib/auth";
 import { deleteVideosByRunIds } from "@/lib/storage-delete";
+import { listStorageVideos } from "@/lib/storage-list";
 import { withHeartbeat } from "@/lib/maintenance-heartbeat";
 import { getConfig } from "@/lib/platform-config";
 
@@ -75,6 +76,12 @@ async function _handler(req: NextRequest) {
     videos_already_absent: 0,
     videos_freed_mb: 0,
     rows_marked_youtube_only: 0,
+    // Size-cap enforcement, reported separately from age-based deletes
+    // so it is obvious WHY something was removed.
+    storage_cap_gb: 0,
+    storage_used_mb: 0,
+    cap_deleted: 0,
+    cap_deleted_unpublished: 0,
     errors: [] as string[],
     orphan_queued_failed: 0,
     errors_deleted: 0,
@@ -338,6 +345,76 @@ async function _handler(req: NextRequest) {
       summary.videos_deleted = res.deleted;
       summary.videos_already_absent = res.missing;
       summary.videos_freed_mb = res.freed_mb_estimate;
+    }
+
+    // ── Size cap ─────────────────────────────────────────────
+    // Age alone does not bound disk. Measured here: ~308 MB per render
+    // at ~17 renders/day is ~5.2 GB/day, so a 30-day window implies
+    // ~150 GB on a 96 GB disk — it fills in under a fortnight and the
+    // retention sweep never gets the chance to help. A cap is what
+    // actually keeps the box alive.
+    //
+    // Deletes oldest-first and PUBLISHED-first, because removing a
+    // published video costs nothing that matters: the Library row
+    // survives and plays from YouTube. Unpublished files are only
+    // touched if the cap still cannot be met, since those are the only
+    // copy — and that case is reported loudly rather than done quietly.
+    const capGb = Number(await getConfig("STORAGE_MAX_GB", "")) || 0;
+    if (capGb > 0) {
+      const capBytes = capGb * 1e9;
+      const vids = await listStorageVideos().catch(() => []);
+      let total = vids.reduce((n, v) => n + v.size, 0);
+      summary.storage_cap_gb = capGb;
+      summary.storage_used_mb = Math.round(total / 1e6);
+
+      if (total > capBytes) {
+        const ytByRun = new Map<string, string>();
+        const docByRun2 = new Map<string, string>();
+        try {
+          const snap = await adminDb().collection("runs_index").limit(2000).get();
+          snap.forEach((d) => {
+            const r = (d.data() || {}) as Record<string, unknown>;
+            const rid = String(r.run_id || d.id);
+            ytByRun.set(rid, String(r.youtube_video_id || ""));
+            docByRun2.set(rid, d.id);
+          });
+        } catch { /* treat unknown as unpublished — the cautious read */ }
+
+        const ordered = [...vids].sort((a, b) => {
+          const aPub = ytByRun.get(a.run_id) ? 0 : 1;
+          const bPub = ytByRun.get(b.run_id) ? 0 : 1;
+          if (aPub !== bPub) return aPub - bPub;      // published first
+          return a.last_modified - b.last_modified;   // then oldest
+        });
+
+        const overflow: string[] = [];
+        for (const v of ordered) {
+          if (total <= capBytes) break;
+          overflow.push(v.run_id);
+          total -= v.size;
+          if (!ytByRun.get(v.run_id)) summary.cap_deleted_unpublished += 1;
+        }
+        if (overflow.length > 0) {
+          const capRes = await deleteVideosByRunIds(overflow);
+          for (const runId of capRes.deletedIds) {
+            const docId = docByRun2.get(runId);
+            if (!docId) continue;
+            try {
+              await adminDb().collection("runs_index").doc(docId).update({
+                has_video: false, video_url: "", public_url: "",
+                video_storage: ytByRun.get(runId) ? "youtube_only" : "deleted",
+              });
+            } catch { /* bytes are gone regardless */ }
+          }
+          summary.cap_deleted = capRes.deleted;
+          summary.videos_freed_mb += capRes.freed_mb_estimate;
+          logRoute(reqId, "cleanup: size cap enforced", {
+            cap_gb: capGb, deleted: capRes.deleted,
+            unpublished: summary.cap_deleted_unpublished,
+            freed_mb: capRes.freed_mb_estimate,
+          });
+        }
+      }
     }
   } catch (e) {
     summary.errors.push(`videos cleanup: ${String(e)}`);
