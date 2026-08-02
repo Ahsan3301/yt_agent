@@ -43,6 +43,11 @@ export async function POST(req: NextRequest) {
   const staleSeconds    = Number(url.searchParams.get("stale_seconds") || 600);
   const orphanRetention = Number(url.searchParams.get("orphan_retention") || 604800);
   const dryRun          = url.searchParams.get("dry_run") === "1";
+  // How long a running job may go without writing a log line before it
+  // counts as wedged. Renders log every ~1s (36s worst observed gap),
+  // and a whole render takes ~20 min, so 30 min of silence cannot be
+  // normal work.
+  const stallSeconds    = Number(url.searchParams.get("stall_seconds") || 1800);
   const nowSec = Date.now() / 1000;
 
   // ── 1. Stale backends rows ───────────────────────────────
@@ -74,7 +79,11 @@ export async function POST(req: NextRequest) {
   // is now gone from backends. Move any such job back to 'queued' so
   // the next available worker picks it up. If the same job orphans
   // twice → mark failed so we don't loop forever.
-  const orphanedJobs: { id: string; run_id: string | null; prev_status: string; action: "requeued" | "failed" }[] = [];
+  const orphanedJobs: { id: string; run_id: string | null; prev_status: string; action: "requeued" | "failed"; reason?: "worker_gone" | "stalled" }[] = [];
+  // Jobs whose worker is alive but which have stopped making progress.
+  // Tracked separately only so the recorded error says which it was —
+  // "worker vanished" and "pipeline wedged" need different debugging.
+  const stalledJobIds = new Set<string>();
   try {
     const staleInstanceIds = new Set<string>(
       staleBackends.map((b) => b.instance_id || "").filter(Boolean),
@@ -115,13 +124,48 @@ export async function POST(req: NextRequest) {
     for (const doc of jobDocs) {
       const j = doc.data() as {
         status?: string; backend_instance_id?: string;
-        started_at?: unknown; run_id?: string; orphan_count?: number;
+        started_at?: unknown; claimed_at?: unknown;
+        run_id?: string; orphan_count?: number;
       };
       const st = String(j.status || "");
       if (st !== "running" && st !== "claimed") continue;
       const instId = String(j.backend_instance_id || "");
-      // Skip if the worker is still alive.
-      if (instId && liveInstanceIds.has(instId)) continue;
+      // Worker still alive — but that only proves the WORKER is up, not
+      // that the render is progressing. A pipeline wedged on a hung API
+      // call keeps its worker heartbeating happily, so this branch used
+      // to mean "stuck forever, invisible". Job records carry no usable
+      // progress timestamp either (PB's `updated`/`created` are not
+      // exposed through the adapter, and there is no updated_at field
+      // on the collection), so the only real progress signal is whether
+      // the run is still writing logs.
+      //
+      // Measured cadence during an active render: median gap 1s,
+      // max 36s. Silence for STALL_SECONDS (default 30 min) is
+      // therefore unambiguous, with roughly a 50x safety margin.
+      if (instId && liveInstanceIds.has(instId)) {
+        const ageSec = nowSec - (toEpochMs(j.started_at ?? j.claimed_at) || 0) / 1000;
+        // Don't judge a job that has not had time to produce logs yet.
+        if (!Number.isFinite(ageSec) || ageSec < stallSeconds) continue;
+        const runId = String(j.run_id || "");
+        if (!runId) continue;
+        let loggedRecently = true;   // fail SAFE: unknown => leave it alone
+        try {
+          const lg = await adminDb()
+            .collection("run_logs")
+            .where("run_id", "==", runId)
+            .where("ts", ">", nowSec - stallSeconds)
+            .limit(1)
+            .get();
+          loggedRecently = !lg.empty;
+        } catch {
+          continue;   // can't tell => never kill it
+        }
+        if (loggedRecently) continue;
+        // Silent past the threshold on a live worker: wedged. Fall
+        // through to the same requeue/fail path as a lost worker, so
+        // orphan_count still bounds it to one retry.
+        stalledJobIds.add(doc.id);
+      }
       // Also skip when the job just started (< staleSeconds ago) —
       // the worker may still be registering. Uses started_at OR the
       // doc's updated field as a proxy.
@@ -130,6 +174,10 @@ export async function POST(req: NextRequest) {
 
       const prevOrphanCount = Number(j.orphan_count || 0);
       const action: "requeued" | "failed" = prevOrphanCount >= 1 ? "failed" : "requeued";
+      const stalled = stalledJobIds.has(doc.id);
+      const why = stalled
+        ? `no log output for ${Math.round(stallSeconds / 60)} min while worker ${instId || "?"} was still alive (pipeline wedged)`
+        : `worker ${instId || "?"} disappeared mid-run`;
       const patch: Record<string, unknown> = action === "requeued"
         ? {
             status: "queued",
@@ -141,12 +189,12 @@ export async function POST(req: NextRequest) {
             current_step: null,
             current_step_label: null,
             orphan_count: prevOrphanCount + 1,
-            error: `worker ${instId || "?"} disappeared mid-run; requeued for retry`,
+            error: `${why}; requeued for retry`,
           }
         : {
             status: "failed",
             finished_at: nowSec,
-            error: `worker ${instId || "?"} disappeared twice; giving up`,
+            error: `${why}; second occurrence, giving up`,
             current_step: "done",
             current_step_label: "Failed",
           };
@@ -157,6 +205,7 @@ export async function POST(req: NextRequest) {
       }
       orphanedJobs.push({
         id: doc.id, run_id: j.run_id || null, prev_status: st, action,
+        reason: stalled ? "stalled" : "worker_gone",
       });
     }
   } catch (e) {
