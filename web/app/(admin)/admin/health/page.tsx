@@ -31,8 +31,22 @@ type ErrorEntry = {
   level: string;
 };
 
+type Heartbeat = {
+  job: string;
+  last_run_at: number;
+  last_ok_at: number;
+  ok: boolean;
+  detail: string;
+  fail_streak: number;
+  age_seconds: number | null;
+  expected_seconds: number | null;
+  stale: boolean;
+  never_ran: boolean;
+};
+
 type Summary = {
   ts: number;
+  scheduled?: Heartbeat[];
   workers: {
     online: number;
     gpu_alive: boolean;
@@ -175,6 +189,63 @@ export default function HealthPage() {
             </div>
           </div>
 
+          {/* Scheduled jobs — the "is anything quietly not running" panel.
+              Every failure that cost real money here was a cron that had
+              stopped: silence looked exactly like nothing being due. */}
+          <div className="card space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="font-medium text-sm">Scheduled jobs</div>
+              {(data.scheduled || []).some((h) => h.stale) && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded border border-red-500/30 bg-red-500/10 text-red-300">
+                  {(data.scheduled || []).filter((h) => h.stale).length} not running
+                </span>
+              )}
+            </div>
+            {!data.scheduled || data.scheduled.length === 0 ? (
+              <div className="text-xs text-neutral-500">
+                No heartbeat data yet — each job records one the next time it runs.
+              </div>
+            ) : (
+              <div className="space-y-1">
+                {data.scheduled.map((h) => (
+                  <div key={h.job} className="flex items-center gap-2 text-xs">
+                    <span
+                      className={`h-1.5 w-1.5 rounded-full shrink-0 ${
+                        h.stale ? "bg-red-400" : h.ok ? "bg-emerald-400" : "bg-amber-400"
+                      }`}
+                    />
+                    <span className="font-mono text-neutral-300 w-44 shrink-0">{h.job}</span>
+                    <span
+                      className={`w-28 shrink-0 ${h.stale ? "text-red-400" : "text-neutral-500"}`}
+                      title={
+                        h.expected_seconds
+                          ? `Expected about every ${fmtDuration(h.expected_seconds)}`
+                          : undefined
+                      }
+                    >
+                      {/* fmtAge takes a TIMESTAMP and adds "ago" itself —
+                          passing age_seconds here would both double the
+                          suffix and compute a nonsense age. */}
+                      {h.never_ran ? "never ran" : fmtAge(h.last_run_at)}
+                    </span>
+                    <span className="text-neutral-500 truncate">
+                      {h.fail_streak > 0 && (
+                        <span className="text-red-400 mr-1">
+                          failing x{h.fail_streak} —
+                        </span>
+                      )}
+                      {h.detail}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="text-[10px] text-neutral-600">
+              Flagged when a job has not run in twice its expected interval.
+              A job that stops shows up here instead of just going quiet.
+            </div>
+          </div>
+
           {/* Workers fleet */}
           <div className="card space-y-3">
             <div className="font-medium text-sm">Worker fleet</div>
@@ -293,6 +364,17 @@ function StatusCount({ label, value, cls }: { label: string; value: number; cls:
       <div className={clsx("text-lg font-mono font-semibold", cls)}>{value}</div>
     </div>
   );
+}
+
+/** A LENGTH of time ("15m"), not a point in it. Kept separate from
+ *  fmtAge because the two take different units and mixing them up
+ *  renders confidently wrong values rather than failing. */
+function fmtDuration(sec: number | null | undefined): string {
+  if (!sec || sec <= 0) return "—";
+  if (sec < 60) return `${Math.floor(sec)}s`;
+  if (sec < 3600) return `${Math.floor(sec / 60)}m`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)}h`;
+  return `${Math.floor(sec / 86400)}d`;
 }
 
 function fmtAge(ts: number | undefined): string {

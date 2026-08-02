@@ -3,6 +3,7 @@ import { adminDb } from "@/lib/firebase-admin";
 import { toEpochMs } from "@/lib/timestamps";
 import { listStorageVideos } from "@/lib/storage-list";
 import { S3Client, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import { withHeartbeat } from "@/lib/maintenance-heartbeat";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -34,7 +35,7 @@ export const runtime = "nodejs";
  *    ?orphan_retention=604800   orphan video retention (default 7 days)
  *    ?dry_run=1                 report what would be deleted, delete nothing
  */
-export async function POST(req: NextRequest) {
+async function _handler(req: NextRequest) {
   const url  = new URL(req.url);
   const apiKey = req.headers.get("x-api-key") || "";
   if (!process.env.RENDER_TRIGGER_KEY || apiKey !== process.env.RENDER_TRIGGER_KEY) {
@@ -317,3 +318,7 @@ export async function POST(req: NextRequest) {
     },
   });
 }
+
+// Heartbeat wrapper: records that this job ran, and what it did,
+// so a job that silently stops shows up as stale on the health page.
+export const POST = withHeartbeat("cleanup-stale", _handler);

@@ -3,6 +3,7 @@ import { adminDb, FieldValue } from "@/lib/firebase-admin";
 import { pickWorkers, newRequestId, logRoute } from "@/app/api/_lib/orchestrator";
 import { requireMaintenanceKey } from "@/app/api/_lib/auth";
 import { FOUNDER } from "@/lib/tenant";
+import { withHeartbeat } from "@/lib/maintenance-heartbeat";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -27,7 +28,7 @@ const DEFAULT_SCHEDULE = {
   buffer_seconds: 0,
 };
 
-export async function POST(req: NextRequest) {
+async function _handler(req: NextRequest) {
   const auth = await requireMaintenanceKey(req);
   if (auth !== true) return auth;
 
@@ -544,3 +545,7 @@ function _shortId(): string {
   for (let i = 0; i < 12; i++) out += a[Math.floor(Math.random() * a.length)];
   return out;
 }
+
+// Heartbeat wrapper: records that this job ran, and what it did,
+// so a job that silently stops shows up as stale on the health page.
+export const POST = withHeartbeat("scheduled-render", _handler);

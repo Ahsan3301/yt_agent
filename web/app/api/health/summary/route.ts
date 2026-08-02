@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase-admin";
 import { toEpochMs } from "@/lib/timestamps";
 import { requireTenant } from "@/lib/tenant";
+import { readHeartbeats } from "@/lib/maintenance-heartbeat";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -144,8 +145,18 @@ export async function GET(req: NextRequest) {
       errors_count = a.data().count;
     } catch { /* noop */ }
 
+    // Scheduled-job heartbeats. Answers "is anything quietly not
+    // running", which is the question this page could not answer when
+    // three jobs were found dead on 2026-08-02 — one of them never
+    // having run at all.
+    let scheduled: Awaited<ReturnType<typeof readHeartbeats>> = [];
+    try {
+      scheduled = await readHeartbeats();
+    } catch { /* best-effort — never break the health page over this */ }
+
     const body = {
       ts: now,
+      scheduled,
       workers: {
         online,
         gpu_alive,

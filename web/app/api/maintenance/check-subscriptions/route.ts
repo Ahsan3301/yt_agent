@@ -4,6 +4,7 @@ import { requireMaintenanceKey } from "@/app/api/_lib/auth";
 import { newRequestId, logRoute } from "@/app/api/_lib/orchestrator";
 import { bustQuotaCache } from "@/lib/quota";
 import { getConfig } from "@/lib/platform-config";
+import { withHeartbeat } from "@/lib/maintenance-heartbeat";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -28,7 +29,7 @@ export const runtime = "nodejs";
  */
 const WARN_WINDOW_DAYS = 7;
 
-export async function POST(req: NextRequest) {
+async function _handler(req: NextRequest) {
   const auth = await requireMaintenanceKey(req);
   if (auth !== true) return auth;
 
@@ -111,3 +112,7 @@ async function _alertAsync(
     });
   } catch { /* silent */ }
 }
+
+// Heartbeat wrapper: records that this job ran, and what it did,
+// so a job that silently stops shows up as stale on the health page.
+export const POST = withHeartbeat("check-subscriptions", _handler);

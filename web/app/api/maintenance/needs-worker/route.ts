@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase-admin";
 import { requireMaintenanceKey } from "@/app/api/_lib/auth";
 import { toEpochMs as _toEpochMs } from "@/lib/timestamps";
+import { withHeartbeat } from "@/lib/maintenance-heartbeat";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -22,7 +23,7 @@ export const runtime = "nodejs";
  *
  * Auth: same X-API-Key as the other maintenance routes.
  */
-export async function GET(req: NextRequest) {
+async function _handler(req: NextRequest) {
   const authed = await requireMaintenanceKey(req);
   if (authed !== true) return authed;
 
@@ -185,3 +186,7 @@ export async function GET(req: NextRequest) {
     woke,
   });
 }
+
+// Heartbeat wrapper: records that this job ran, and what it did,
+// so a job that silently stops shows up as stale on the health page.
+export const GET = withHeartbeat("needs-worker", _handler);

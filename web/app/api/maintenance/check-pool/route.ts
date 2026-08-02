@@ -3,6 +3,7 @@ import { requireMaintenanceKey } from "@/app/api/_lib/auth";
 import { newRequestId, logRoute } from "@/app/api/_lib/orchestrator";
 import { checkPool, readPoolHealth } from "@/lib/pool-health";
 import { getConfig } from "@/lib/platform-config";
+import { withHeartbeat } from "@/lib/maintenance-heartbeat";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -20,7 +21,7 @@ export const runtime = "nodejs";
  * Alerts fire only on transitions into a broken state, so a key that
  * stays broken doesn't generate a message every hour.
  */
-export async function POST(req: NextRequest) {
+async function _handler(req: NextRequest) {
   const auth = await requireMaintenanceKey(req);
   if (auth !== true) return auth;
 
@@ -100,3 +101,7 @@ async function _alertAsync(
     });
   } catch { /* silent */ }
 }
+
+// Heartbeat wrapper: records that this job ran, and what it did,
+// so a job that silently stops shows up as stale on the health page.
+export const POST = withHeartbeat("check-pool", _handler);

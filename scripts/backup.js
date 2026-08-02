@@ -352,6 +352,52 @@ async function main() {
   }
 
   log("summary", JSON.stringify(summary));
+
+  // Heartbeat. This job is the reason heartbeats exist: it was
+  // documented as a host crontab entry, the host has no cron daemon,
+  // and so "nightly offsite backups" had never run once. Nothing
+  // anywhere showed that — the only copy of every tenant's data sat on
+  // a single VPS and the dashboard looked healthy.
+  //
+  // Best-effort and last: a failure to RECORD the backup must never
+  // change the backup's own exit status.
+  try {
+    const okRun = summary.pb_bytes > 0 && summary.errors.length === 0;
+    const detail = `pb ${(summary.pb_bytes / 1e6).toFixed(1)}MB, media +${summary.videos_copied}`
+      + (summary.errors.length ? `, errors ${summary.errors.length}` : "");
+    const now = Math.floor(Date.now() / 1000);
+    const auth = await fetch(`${PB_URL}/api/collections/_superusers/auth-with-password`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        identity: process.env.POCKETBASE_ADMIN_EMAIL,
+        password: process.env.POCKETBASE_ADMIN_PASSWORD,
+      }),
+    }).then((r) => r.json());
+    if (auth && auth.token) {
+      const H = { Authorization: auth.token, "Content-Type": "application/json" };
+      const body = {
+        job: "backup", last_run_at: now, ok: okRun,
+        detail: detail.slice(0, 300), fail_streak: okRun ? 0 : 1,
+        ...(okRun ? { last_ok_at: now } : {}),
+      };
+      // Upsert on the unique `job` index: try create, fall back to patch.
+      const create = await fetch(`${PB_URL}/api/collections/maintenance_runs/records`,
+        { method: "POST", headers: H, body: JSON.stringify(body) });
+      if (!create.ok) {
+        const found = await fetch(
+          `${PB_URL}/api/collections/maintenance_runs/records?perPage=1&filter=${encodeURIComponent('job="backup"')}`,
+          { headers: H }).then((r) => r.json());
+        const id = ((found.items || [])[0] || {}).id;
+        if (id) {
+          await fetch(`${PB_URL}/api/collections/maintenance_runs/records/${id}`,
+            { method: "PATCH", headers: H, body: JSON.stringify(body) });
+        }
+      }
+    }
+  } catch (e) {
+    log("heartbeat write failed (not fatal):", e.message);
+  }
+
   // Non-zero exit if the database itself failed to back up — that is
   // the part with no other copy anywhere.
   process.exit(summary.pb_bytes > 0 ? 0 : 1);

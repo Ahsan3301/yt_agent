@@ -4,6 +4,7 @@ import { requireMaintenanceKey } from "@/app/api/_lib/auth";
 import { newRequestId, logRoute } from "@/app/api/_lib/orchestrator";
 import { checkAccounts } from "@/lib/youtube-health";
 import { getConfig } from "@/lib/platform-config";
+import { withHeartbeat } from "@/lib/maintenance-heartbeat";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -23,7 +24,7 @@ export const runtime = "nodejs";
  * Alerts fire only on TRANSITIONS into a broken state, so a channel
  * that stays disconnected doesn't generate a message every single day.
  */
-export async function POST(req: NextRequest) {
+async function _handler(req: NextRequest) {
   // Returns `true` when authorised, or a Response to send back.
   const auth = await requireMaintenanceKey(req);
   if (auth !== true) return auth;
@@ -96,3 +97,7 @@ async function _alertAsync(lines: string[]): Promise<void> {
     });
   } catch { /* silent */ }
 }
+
+// Heartbeat wrapper: records that this job ran, and what it did,
+// so a job that silently stops shows up as stale on the health page.
+export const POST = withHeartbeat("check-connections", _handler);

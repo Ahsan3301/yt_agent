@@ -3,6 +3,7 @@ import { adminDb } from "@/lib/firebase-admin";
 import { newRequestId, logRoute } from "@/app/api/_lib/orchestrator";
 import { requireMaintenanceKey } from "@/app/api/_lib/auth";
 import { deleteVideosByRunIds } from "@/lib/storage-delete";
+import { withHeartbeat } from "@/lib/maintenance-heartbeat";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -32,7 +33,7 @@ const RETENTION_DAYS = {
 // for a job it can never claim.
 const ORPHAN_QUEUED_HOURS = 2;
 
-export async function POST(req: NextRequest) {
+async function _handler(req: NextRequest) {
   const auth = await requireMaintenanceKey(req);
   if (auth !== true) return auth;
 
@@ -276,3 +277,7 @@ function _toEpoch(v: unknown): number | null {
   }
   return null;
 }
+
+// Heartbeat wrapper: records that this job ran, and what it did,
+// so a job that silently stops shows up as stale on the health page.
+export const POST = withHeartbeat("cleanup", _handler);

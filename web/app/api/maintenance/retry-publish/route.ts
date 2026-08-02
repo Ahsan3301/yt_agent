@@ -4,6 +4,7 @@ import { requireMaintenanceKey } from "@/app/api/_lib/auth";
 import { newRequestId, logRoute } from "@/app/api/_lib/orchestrator";
 import { listStorageVideos, storageConfigured } from "@/lib/storage-list";
 import { customAlphabet } from "nanoid";
+import { withHeartbeat } from "@/lib/maintenance-heartbeat";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -54,7 +55,7 @@ type Outcome =
   | { job_id: string; run_id: string; action: "failed_no_video" }
   | { job_id: string; run_id: string; action: "skipped"; reason: string };
 
-export async function POST(req: NextRequest) {
+async function _handler(req: NextRequest) {
   const auth = await requireMaintenanceKey(req);
   if (auth !== true) return auth;
 
@@ -228,3 +229,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }
 }
+
+// Heartbeat wrapper: records that this job ran, and what it did,
+// so a job that silently stops shows up as stale on the health page.
+export const POST = withHeartbeat("retry-publish", _handler);
