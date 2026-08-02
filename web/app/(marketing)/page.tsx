@@ -139,6 +139,31 @@ async function _loadPlans(): Promise<Tier[]> {
   }
 }
 
+
+/** Real platform totals for the trust strip. Same source as
+ *  /api/marketing/stats; read directly here to avoid a self-fetch
+ *  during SSR. Returns show:false below the threshold so the strip
+ *  renders nothing rather than something small and sad. */
+async function _loadStats(): Promise<{published:number;views:number;languages:number;show:boolean}> {
+  try {
+    const snap = await adminDb().collection("runs_index").limit(2000).get();
+    let published = 0, views = 0;
+    const langs = new Set<string>();
+    snap.forEach((d) => {
+      const r = (d.data() || {}) as Record<string, unknown>;
+      if (!r.youtube_video_id) return;
+      published += 1;
+      views += Math.max(0, Number(r.view_count || 0));
+      const l = String(r.language || "").trim();
+      if (l) langs.add(l);
+    });
+    return { published, views, languages: langs.size,
+             show: published >= 100 && views >= 1000 };
+  } catch {
+    return { published: 0, views: 0, languages: 0, show: false };
+  }
+}
+
 async function _loadContent() {
   try {
     const snap = await adminDb().collection("landing_content").doc(CONTENT_ID).get();
@@ -177,6 +202,7 @@ export default async function LandingPage() {
   // piece of copy where being out of date is a promise you cannot keep,
   // so it is sourced from the same table that grants the entitlement.
   const realPlans = await _loadPlans();
+  const stats = await _loadStats();
   const tiers = realPlans.length > 0 ? realPlans : c.pricing_tiers;
 
   return (
@@ -256,20 +282,32 @@ export default async function LandingPage() {
           <ProductShowcase />
         </Reveal>
 
-        <Reveal delay={750}>
-          <div className="relative mt-24 grid grid-cols-3 gap-8 md:gap-16 text-center max-w-2xl mx-auto">
-            {[
-              ["1,247",  "Published today"],
-              ["12 min", "Topic to published"],
-              ["9",      "Channels on autopilot"],
-            ].map(([n, lab]) => (
-              <div key={lab as string}>
-                <div className="text-2xl md:text-3xl font-semibold tracking-tight text-white tabular-nums">{n}</div>
-                <div className="text-[11px] uppercase tracking-[0.14em] text-neutral-500 mt-1.5">{lab}</div>
-              </div>
-            ))}
-          </div>
-        </Reveal>
+        {/* Measured, not asserted.
+            This strip previously read "1,247 published today", "12 min
+            topic to published", "9 channels on autopilot" — all
+            hardcoded. The first was invented; the second is wrong by an
+            order of magnitude for CPU renders, which take hours; the
+            third was the operator's own channel count presented as
+            platform traction.
+            It now renders only when real figures clear a threshold, and
+            renders nothing at all below it. A young product is better
+            served by silence than by numbers it has to invent. */}
+        {stats.show && (
+          <Reveal delay={750}>
+            <div className="relative mt-24 grid grid-cols-3 gap-8 md:gap-16 text-center max-w-2xl mx-auto">
+              {[
+                [stats.published.toLocaleString(), "Videos published"],
+                [stats.views.toLocaleString(),     "Views earned"],
+                [String(stats.languages || 1),     stats.languages === 1 ? "Language" : "Languages"],
+              ].map(([n, lab]) => (
+                <div key={lab as string}>
+                  <div className="text-2xl md:text-3xl font-semibold tracking-tight text-white tabular-nums">{n}</div>
+                  <div className="text-[11px] uppercase tracking-[0.14em] text-neutral-500 mt-1.5">{lab}</div>
+                </div>
+              ))}
+            </div>
+          </Reveal>
+        )}
       </section>
 
       {/* ── Positioning strip ────────────────────────────────────── */}
