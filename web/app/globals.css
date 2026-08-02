@@ -264,6 +264,39 @@ body::before {
   }
   .textarea { @apply font-mono; }
 
+  /* Native <select> popup readability.
+     ---------------------------------
+     The closed control looks right, but the OPEN dropdown is drawn by
+     the browser/OS, not by us, and it takes its colours from the
+     select's computed style. `.select` uses bg-white/[0.02] — a
+     semi-transparent white — which the popup composites over a white
+     backdrop, producing a near-white panel. The option text meanwhile
+     inherits the body's near-white colour, so the list rendered white
+     on white: every option invisible except the one being hovered.
+
+     `color-scheme: dark` on <html> is not enough on its own, because an
+     explicit (even barely-visible) background on the control wins over
+     the scheme default. Options therefore need solid, opaque colours of
+     their own.
+
+     Targets the ELEMENT, not the .select class: there are 26 <select>s
+     in the app and only 19 carry the class, so a class-scoped rule
+     would leave the rest broken in exactly the way this fixes. */
+  select {
+    color-scheme: dark;
+  }
+  select option,
+  select optgroup {
+    background-color: var(--color-bg-2);
+    color: rgb(241 245 249);
+  }
+  /* Firefox renders a disabled option at ~40% opacity, which on this
+     palette is unreadable. Give placeholder rows a deliberate muted
+     colour instead of relying on the default dimming. */
+  select option:disabled {
+    color: rgb(120 120 140);
+  }
+
   .label {
     @apply block text-xs font-medium uppercase tracking-wider text-neutral-400 mb-1.5;
   }
