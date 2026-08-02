@@ -54,6 +54,21 @@ def write_run(run_id: str, summary: dict, index_entry: dict) -> bool:
 
         idx_ref = c.collection("runs_index").document(run_id)
         entry = dict(index_entry)
+        # Stamp run_id into the ROW, not just the doc id.
+        #
+        # No caller passes it (backend/jobs.py and the side-worker both
+        # build index_entry without it), so every row was inserted with
+        # run_id="". runs_index has a UNIQUE index on run_id, and one
+        # empty-run_id row already existed — so the second such insert
+        # collided, and every insert after it collided forever. The
+        # recovery below then searched for the REAL run_id, found
+        # nothing, wrote nothing, and still reported success.
+        #
+        # Net effect: 17 renders on 2026-08-02 published to YouTube but
+        # produced zero runs_index rows. The Library looked empty while
+        # everything "succeeded". Setting it here fixes every call site
+        # at once and is what the doc-id already encodes anyway.
+        entry["run_id"] = run_id
         entry["updated_at"] = db.server_timestamp()
         batch.set(idx_ref, entry, merge=True)
 
@@ -82,29 +97,58 @@ def write_run(run_id: str, summary: dict, index_entry: dict) -> bool:
                 c = db.client()
                 # runs_index — find existing row by run_id field, update it.
                 for coll_name, payload in (
-                    ("runs_index", {**index_entry, "updated_at": db.server_timestamp()}),
-                    ("run_summaries", {"data": summary, "updated_at": db.server_timestamp()}),
+                    ("runs_index", {**index_entry, "run_id": run_id,
+                                    "updated_at": db.server_timestamp()}),
+                    ("run_summaries", {"data": summary,
+                                       "updated_at": db.server_timestamp()}),
                 ):
                     coll = c.collection(coll_name)
+                    wrote = False
                     # Prefer the ref by doc_id first — the hashed PB id
                     # may already exist under the same run_id even if
                     # the batch adapter couldn't find it via filter.
                     try:
                         coll.document(run_id).update(payload)
-                        continue
+                        wrote = True
                     except Exception:
                         pass
                     # Otherwise walk by explicit filter using the wrapper's
                     # where() API and update the first match.
-                    for hit in coll.where("run_id", "==", run_id).limit(1).stream():
+                    if not wrote:
+                        for hit in coll.where("run_id", "==", run_id).limit(1).stream():
+                            try:
+                                hit.reference.update(payload)  # type: ignore[attr-defined]
+                            except Exception:
+                                # Some wrapper flavours don't expose .reference —
+                                # fall back to doc(hit.id).update().
+                                coll.document(hit.id).update(payload)
+                            wrote = True
+                            break
+                    # Neither path found anything to update. That is the
+                    # PHANTOM-INDEX case: PB reports the field as taken
+                    # while no row actually holds it. Previously this
+                    # loop simply fell through, wrote nothing, and the
+                    # code below still logged "recovered" and returned
+                    # True — a silent write loss reported as success.
+                    #
+                    # Create it instead, clearing our doc-id first so a
+                    # half-existing row can't block the insert.
+                    if not wrote:
                         try:
-                            hit.reference.update(payload)  # type: ignore[attr-defined]
+                            coll.document(run_id).delete()
                         except Exception:
-                            # Some wrapper flavours don't expose .reference —
-                            # fall back to doc(hit.id).update().
-                            coll.document(hit.id).update(payload)
-                        break
-                log.info(f"runs_db.write_run({run_id}) recovered from unique-index conflict via update")
+                            pass
+                        coll.document(run_id).set(payload, merge=True)
+                        wrote = True
+                        log.warning(
+                            f"runs_db.write_run({run_id}): {coll_name} phantom "
+                            f"unique-index conflict — recreated the row"
+                        )
+                    if not wrote:
+                        # Should be unreachable, but never claim success
+                        # we did not verify.
+                        raise RuntimeError(f"{coll_name}: nothing written for {run_id}")
+                log.info(f"runs_db.write_run({run_id}) recovered from unique-index conflict")
                 return True
             except Exception as e2:
                 log.warning(f"runs_db.write_run({run_id}) unique-conflict recovery failed: {e2}")

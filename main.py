@@ -772,9 +772,13 @@ def run_pipeline(
             try:
                 from modules.config import load_settings as _ls
                 _seo_cfg = (_ls().get("seo") or {})
+                if not _seo_cfg.get("borrow_from_ranking", True):
+                    log.info("seo_borrower: disabled by settings (seo.borrow_from_ranking=false)")
                 if _seo_cfg.get("borrow_from_ranking", True):
                     from modules import seo_borrower as _sb
                     topic_seed = (content or {}).get("raw_title") or script.get("youtube_title") or ""
+                    if not topic_seed:
+                        log.info("seo_borrower: skipped — no topic seed (raw_title and youtube_title both empty)")
                     if topic_seed:
                         try:
                             # Use the whole qualifying pool, not just the
@@ -792,9 +796,17 @@ def run_pipeline(
                                     len(borrowed_titles), len(borrowed_tags or []),
                                 )
                         except Exception as _sb_e:
-                            log.debug(f"seo_borrower.find_viral_pool skipped: {_sb_e}")
-            except Exception:
-                pass
+                            # Was log.debug — invisible at INFO, which is
+                            # why this feature could be entirely dead
+                            # without leaving a single trace.
+                            log.warning(f"seo_borrower.find_viral_pool failed: {_sb_e!r}")
+            except Exception as _borrow_e:
+                # Was a bare `except Exception: pass`. The competitor
+                # lookup produced no log line of ANY kind on 2026-08-02
+                # and there was no way to tell whether it was disabled,
+                # seeded empty, or throwing before it reached its own
+                # logging. Silence is not a diagnosis.
+                log.warning(f"seo_borrower: borrow block skipped: {_borrow_e!r}")
             publish_ready = _step(summary, "seo", lambda: seo_writer.write_seo_metadata(
                 narration=script["narration"],
                 script=script,
