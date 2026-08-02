@@ -162,3 +162,14 @@
 
 # Trailing newline is required — Linux crontab silently ignores the last
 # line if it doesn't end with one.
+
+# Every 6 hours - refresh view/like counts and publish status for every
+# video we have published, and flag any that YouTube has removed,
+# blocked or flipped to private (none of which emit an event, so a dead
+# video otherwise reads as "published" forever).
+#
+# Cheap: videos.list returns 50 ids per quota unit, so a full sweep of
+# the catalogue costs a couple of units against a 10,000/day budget.
+# The expensive call in this system is search.list at 100 units, used
+# only by the SEO borrower.
+25 */6 * * * curl -fsS -X POST -H "X-API-Key: $RENDER_TRIGGER_KEY" "$DASHBOARD_INTERNAL_URL/api/maintenance/youtube-stats" >> /proc/1/fd/1 2>&1

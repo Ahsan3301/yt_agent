@@ -470,6 +470,29 @@ export default function HistoryPage() {
                           <Upload className="h-3 w-3" /> YouTube ✓
                         </a>
                       )}
+                      {/* Real performance, refreshed every 6h. The
+                          platform used to publish and forget — nothing
+                          showed that one upload had 600 views while its
+                          siblings had none. */}
+                      {r.youtube_video_id && typeof r.view_count === "number" && (
+                        <span className="text-neutral-400 flex items-center gap-2">
+                          <span title="Views on YouTube">
+                            <b className="text-neutral-200">{r.view_count.toLocaleString()}</b> views
+                          </span>
+                          {(r.like_count ?? 0) > 0 && <span>{r.like_count} likes</span>}
+                          {(r.comment_count ?? 0) > 0 && <span>{r.comment_count} comments</span>}
+                        </span>
+                      )}
+                      {/* A video YouTube removed, blocked or flipped to
+                          private emits no event — without this the run
+                          would keep reading "published" forever. */}
+                      {r.yt_upload_status === "deleted" ? (
+                        <span className="text-red-400" title="YouTube no longer returns this video">
+                          no longer on YouTube
+                        </span>
+                      ) : r.yt_privacy_status && r.yt_privacy_status !== "public" ? (
+                        <span className="text-amber-400">{r.yt_privacy_status} on YouTube</span>
+                      ) : null}
                       {r.mirrors && r.mirrors.map((m, i) => (
                         <a key={i} href={m.url} target="_blank" rel="noreferrer"
                            className="text-sky-300 hover:underline flex items-center gap-1">

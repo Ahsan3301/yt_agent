@@ -323,6 +323,18 @@ export type Run = {
   title?: string;
   // Populated by side_jobs.publish_youtube on success.
   youtube_video_id?: string;
+  // Refreshed by /api/maintenance/youtube-stats every 6h. Absent until
+  // that sweep has seen the video at least once.
+  view_count?: number;
+  like_count?: number;
+  comment_count?: number;
+  /** "public" | "unlisted" | "private" — anything but public means it
+   *  was changed on YouTube's side after publishing. */
+  yt_privacy_status?: string;
+  /** "processed" | "uploaded" | "rejected" | "failed" | "deleted".
+   *  "deleted" is ours: the API stopped returning the id at all. */
+  yt_upload_status?: string;
+  stats_checked_at?: number;
   youtube_url?: string;
   youtube_account_id?: string;
   published_at?: number;

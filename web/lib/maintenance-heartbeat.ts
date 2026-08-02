@@ -29,6 +29,7 @@ export const MAINTENANCE_INTERVALS: Record<string, number> = {
   "check-connections":  86400,     // 06:30 daily
   "check-subscriptions":86400,     // 06:45 daily
   "check-pool":         14400,     // every 4h
+  "youtube-stats":      21600,     // every 6h
   "cleanup":            86400,     // 05:00 daily
   "backup":             86400,     // 03:15 daily
 };
