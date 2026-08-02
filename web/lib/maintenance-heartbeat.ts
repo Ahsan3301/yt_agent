@@ -96,6 +96,16 @@ export function withHeartbeat<TReq extends Request, TRes extends Response>(
   return async (req: TReq) => {
     try {
       const res = await handler(req);
+      // A rejected caller never ran the job, so it must not be able to
+      // write to the operator's monitoring. Without this, any
+      // unauthenticated request can make a healthy job read as broken —
+      // and that is not hypothetical: a stale GitHub Actions workflow
+      // hits these same routes hourly with an old key, and its 401 was
+      // overwriting the successful run the in-cluster cron had just
+      // recorded seconds earlier. The panel showed
+      // "scheduled-render: error: unauthorized" while the scheduler was
+      // in fact working perfectly.
+      if (res.status === 401 || res.status === 403) return res;
       let detail = "";
       try {
         const body = await res.clone().json() as Record<string, unknown>;
