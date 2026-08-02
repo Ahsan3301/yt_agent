@@ -144,6 +144,23 @@ export const CONFIG_SCHEMA: Array<{
   { key: "BACKUP_RETENTION_DAYS", category: "backup", label: "Keep backups for (days)",
     help: "Older snapshots are pruned locally and offsite. Default 14." },
 
+  // ── Retention ──────────────────────────────────────────────────
+  // Blank = use the built-in default. Values below 1 are ignored
+  // rather than obeyed: "0 days" would mean delete everything on the
+  // next nightly sweep, which nobody means to type.
+  { key: "RETENTION_VIDEOS_DAYS", category: "retention", label: "Keep video files for (days)",
+    help: "How long rendered .mp4 files stay in storage. Default 30. Deleting the file does NOT remove the video from your Library — anything already published keeps playing via its YouTube embed. Videos that were never published are gone for good, so raise this if you rely on the local copies." },
+  { key: "RETENTION_RUNS_DAYS", category: "retention", label: "Keep run history for (days)",
+    help: "Library rows and their summaries, including the YouTube links. Default 90. This is what preserves the record after the video file itself is deleted — keep it comfortably longer than the video window." },
+  { key: "RETENTION_RUN_LOGS_DAYS", category: "retention", label: "Keep run logs for (days)",
+    help: "Per-render log lines. Default 14. This is the fastest-growing table by far — it reached 112,000 rows on a single account — so shortening this is the most effective way to keep the database small." },
+  { key: "RETENTION_JOBS_DAYS", category: "retention", label: "Keep finished jobs for (days)",
+    help: "Completed, failed and cancelled queue entries. Default 14." },
+  { key: "RETENTION_ERRORS_DAYS", category: "retention", label: "Keep error records for (days)",
+    help: "Default 30." },
+  { key: "RETENTION_IDEMPOTENCY_DAYS", category: "retention", label: "Keep idempotency keys for (days)",
+    help: "Duplicate-submission guards. Default 7. Rarely worth changing." },
+
   // ── OAuth / integrations ───────────────────────────────────────
   { key: "YOUTUBE_OAUTH_CLIENT_ID",     category: "oauth", label: "YouTube OAuth client ID",
     help: "From Google Cloud Console → Credentials. Needed to connect channels." },

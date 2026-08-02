@@ -179,6 +179,8 @@ export default function StoragePage() {
         )}
       </div>
 
+      <StorageUsagePanel />
+
       {!loading && !hasPrimary && providers.length > 0 && (
         <div className="card border-amber-500/30 bg-amber-500/5 text-sm">
           <AlertCircle className="h-4 w-4 inline text-amber-300 mr-2" />
@@ -618,6 +620,133 @@ function ProviderForm({
         <button onClick={submit} disabled={!name.trim()} className="btn btn-primary h-8 text-xs">
           <Save className="h-3 w-3" /> {initial ? "Save changes" : "Add provider"}
         </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Bucket usage + a manual sweep.
+ *
+ * "Will storage fill up?" used to be answerable only over SSH, and the
+ * honest answer was worse than expected: retention had been deleting
+ * nothing for weeks while reporting success. This surfaces the real
+ * numbers and lets the sweep be run from here.
+ *
+ * Published and unpublished deletions are shown separately on purpose.
+ * Removing a published video is safe — the Library keeps the row and
+ * plays it from YouTube. Removing an unpublished one destroys the only
+ * copy, and that should never be a surprise.
+ */
+function StorageUsagePanel() {
+  const toast = useToast();
+  const [u, setU] = useState<{
+    configured: boolean;
+    retention_days?: number;
+    videos?: { count: number; mb: number; oldest_age_days: number | null };
+    next_sweep?: { published: number; unpublished: number; mb: number };
+    orphaned?: { count: number; mb: number };
+    note?: string;
+  } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = async () => {
+    try {
+      const r = await fetch("/api/storage/usage", { cache: "no-store" });
+      if (r.ok) setU(await r.json());
+    } catch { /* panel is informational — never block the page */ }
+  };
+  useEffect(() => { load(); }, []);
+
+  const sweep = async () => {
+    if (!confirm(
+      "Run the cleanup sweep now?\n\n" +
+      "Removes data past its retention window. Published videos stay " +
+      "watchable in the Library via YouTube; unpublished ones are " +
+      "deleted permanently."
+    )) return;
+    setBusy(true);
+    try {
+      const r = await fetch("/api/maintenance/cleanup-now", { method: "POST" });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) toast.error("Cleanup failed", d.error || `HTTP ${r.status}`);
+      else toast.info("Cleanup finished", (d.detail || []).join(" · ") || "Nothing was past retention.");
+      await load();
+    } catch (e) {
+      toast.error("Cleanup failed", String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!u) return null;
+  if (!u.configured) {
+    return (
+      <div className="card text-xs text-neutral-500">
+        {u.note || "Storage not configured."}
+      </div>
+    );
+  }
+
+  const sweepTotal = (u.next_sweep?.published || 0) + (u.next_sweep?.unpublished || 0);
+  return (
+    <div className="card space-y-3">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="text-sm font-medium">Storage usage</div>
+        <button onClick={sweep} disabled={busy} className="btn btn-ghost h-7 text-xs">
+          {busy ? "Running…" : "Run cleanup now"}
+        </button>
+      </div>
+
+      <div className="flex gap-6 flex-wrap text-xs">
+        <div>
+          <div className="text-lg font-mono text-neutral-200">{u.videos?.count ?? 0}</div>
+          <div className="text-neutral-500">videos stored</div>
+        </div>
+        <div>
+          <div className="text-lg font-mono text-neutral-200">{u.videos?.mb ?? 0} MB</div>
+          <div className="text-neutral-500">total size</div>
+        </div>
+        <div>
+          <div className="text-lg font-mono text-neutral-200">
+            {u.videos?.oldest_age_days ?? "—"}
+            {u.videos?.oldest_age_days != null && <span className="text-xs text-neutral-500">d</span>}
+          </div>
+          <div className="text-neutral-500">oldest file</div>
+        </div>
+        <div>
+          <div className="text-lg font-mono text-neutral-200">{u.retention_days ?? 30}<span className="text-xs text-neutral-500">d</span></div>
+          <div className="text-neutral-500">kept for</div>
+        </div>
+      </div>
+
+      <div className="text-xs text-neutral-500 border-t border-line/60 pt-2 space-y-1">
+        {sweepTotal === 0 ? (
+          <div>Nothing is past its retention window yet.</div>
+        ) : (
+          <div>
+            Next sweep removes <b className="text-neutral-300">{sweepTotal}</b> video
+            {sweepTotal === 1 ? "" : "s"} ({u.next_sweep?.mb} MB)
+            {(u.next_sweep?.published || 0) > 0 && (
+              <> — {u.next_sweep?.published} still watchable afterwards via YouTube</>
+            )}
+            {(u.next_sweep?.unpublished || 0) > 0 && (
+              <span className="text-amber-400">
+                {" "}— {u.next_sweep?.unpublished} never published, so those copies are the only ones
+              </span>
+            )}
+            .
+          </div>
+        )}
+        {(u.orphaned?.count || 0) > 0 && (
+          <div>
+            {u.orphaned?.count} file{u.orphaned?.count === 1 ? "" : "s"} ({u.orphaned?.mb} MB)
+            have no Library entry and are removed separately after 7 days.
+          </div>
+        )}
+        <div className="text-neutral-600">
+          Change how long things are kept in Configuration → Retention.
+        </div>
       </div>
     </div>
   );

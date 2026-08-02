@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import {
   Loader2, Save, SlidersHorizontal, Database, Lock, HardDriveDownload,
-  KeyRound, Wrench, CheckCircle2, AlertTriangle,
+  KeyRound, Wrench, CheckCircle2, AlertTriangle, Trash2,
 } from "lucide-react";
 
 /**
@@ -37,6 +37,8 @@ const CATEGORIES: Array<{ id: string; label: string; blurb: string; icon: React.
     blurb: "Nightly offsite copies of the database and rendered media. Until these are set, the backup job runs and exits without doing anything." },
   { id: "oauth",  label: "Connections",  icon: KeyRound,
     blurb: "Credentials for the services Yven talks to on your behalf." },
+  { id: "retention", label: "Retention", icon: Trash2,
+    blurb: "How long each kind of data is kept before the nightly sweep removes it. Blank uses the built-in default; values under 1 day are ignored rather than obeyed. Deleting a video file does not remove it from the Library — published videos keep playing from YouTube." },
   { id: "ops",    label: "Operations",   icon: Wrench,
     blurb: "Internal plumbing — alerting, maintenance auth, worker access." },
 ];

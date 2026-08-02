@@ -4,6 +4,7 @@ import { newRequestId, logRoute } from "@/app/api/_lib/orchestrator";
 import { requireMaintenanceKey } from "@/app/api/_lib/auth";
 import { deleteVideosByRunIds } from "@/lib/storage-delete";
 import { withHeartbeat } from "@/lib/maintenance-heartbeat";
+import { getConfig } from "@/lib/platform-config";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -19,7 +20,10 @@ export const runtime = "nodejs";
  *
  * Auth: X-API-Key matching api_keys/RENDER_TRIGGER_KEY.
  */
-const RETENTION_DAYS = {
+/** Defaults. Every one is overridable from the dashboard
+ *  (Configuration → Retention) so changing how long videos are kept
+ *  does not require a code change and a deploy. */
+const RETENTION_DEFAULTS = {
   runs: 90,
   jobs: 14,
   idempotency: 7,
@@ -27,6 +31,25 @@ const RETENTION_DAYS = {
   errors: 30,            // Firestore errors collection
   run_logs: 14,          // runs_index/<id>/logs subcollections
 };
+
+/** Read the retention window for one bucket of data, in days.
+ *  Falls back to the default on anything unparseable — a typo in the
+ *  config UI must not silently mean "delete everything". */
+async function _retentionDays(
+  key: keyof typeof RETENTION_DEFAULTS,
+  configKey: string,
+): Promise<number> {
+  const fallback = RETENTION_DEFAULTS[key];
+  try {
+    const raw = await getConfig(configKey, "");
+    const n = Number(String(raw).trim());
+    // Reject 0 and negatives explicitly: "0 days" would mean delete
+    // everything on the next tick, which is never what someone means
+    // to type into a retention box.
+    if (Number.isFinite(n) && n >= 1) return Math.floor(n);
+  } catch { /* fall through */ }
+  return fallback;
+}
 // Orphaned queued jobs — queued for too long with no backend ever
 // claiming them. Usually leftovers from a failed worker start. Clearing
 // them prevents Kaggle's watchdog from staying alive forever waiting
@@ -46,11 +69,32 @@ async function _handler(req: NextRequest) {
     jobs_deleted: 0,
     idempotency_deleted: 0,
     videos_requested: 0,
+    // Split out because "requested" used to be the only number reported
+    // and it counted rows considered, not bytes actually reclaimed.
+    videos_deleted: 0,
+    videos_already_absent: 0,
+    videos_freed_mb: 0,
+    rows_marked_youtube_only: 0,
     errors: [] as string[],
     orphan_queued_failed: 0,
     errors_deleted: 0,
     run_logs_deleted: 0,
+    // Echoed back so the operator can confirm which windows this run
+    // actually used, rather than trusting that a config edit took.
+    retention_days: {} as Record<string, number>,
   };
+
+  // Resolved once per run so a config edit mid-sweep can't have one
+  // section using the old window and another the new one.
+  const RETENTION_DAYS = {
+    runs:        await _retentionDays("runs",        "RETENTION_RUNS_DAYS"),
+    jobs:        await _retentionDays("jobs",        "RETENTION_JOBS_DAYS"),
+    idempotency: await _retentionDays("idempotency", "RETENTION_IDEMPOTENCY_DAYS"),
+    videos:      await _retentionDays("videos",      "RETENTION_VIDEOS_DAYS"),
+    errors:      await _retentionDays("errors",      "RETENTION_ERRORS_DAYS"),
+    run_logs:    await _retentionDays("run_logs",    "RETENTION_RUN_LOGS_DAYS"),
+  };
+  summary.retention_days = RETENTION_DAYS;
 
   // ── runs_index + run_summaries ──
   try {
@@ -243,18 +287,57 @@ async function _handler(req: NextRequest) {
   // Works even when Kaggle + Colab are both offline.
   try {
     const cutoff = now - RETENTION_DAYS.videos * 86400;
-    const snap = await adminDb().collection("runs_index").get();
+    const snap = await adminDb().collection("runs_index").limit(2000).get();
+    // run_id -> doc id, so rows can be marked after their bytes go.
+    const docByRun = new Map<string, string>();
     const toDelete: string[] = [];
     snap.forEach((doc) => {
       const d = doc.data() as Record<string, unknown>;
       const fin = _toEpoch(d.finished_at);
-      if (fin != null && fin < cutoff && d.has_video) toDelete.push(doc.id);
+      if (fin == null || fin >= cutoff || !d.has_video) return;
+      // The storage key is videos/<run_id>.mp4. This used to push
+      // doc.id, which is a 15-char HASH of run_id — so no key ever
+      // matched. And S3/MinIO answer DeleteObject on a missing key
+      // with 204, so every one of those "succeeded". Retention has
+      // been reporting deleted videos while the bucket only grew.
+      const runId = String(d.run_id || doc.id);
+      docByRun.set(runId, doc.id);
+      toDelete.push(runId);
     });
     summary.videos_requested = toDelete.length;
     if (toDelete.length > 0) {
       const res = await deleteVideosByRunIds(toDelete);
       logRoute(reqId, "cleanup: server-side video delete",
-        { deleted: res.deleted, failed: res.failed });
+        { deleted: res.deleted, failed: res.failed, missing: res.missing,
+          freed_mb: res.freed_mb_estimate });
+
+      // Reclaiming disk must not mean losing the video from the
+      // Library. The row survives; it just stops advertising a local
+      // file. VideoPlayer builds its source list from public_url,
+      // mirrors, then the YouTube embed — so clearing the dead URL
+      // makes the YouTube tab the default and playback keeps working
+      // for anything that was published.
+      for (const runId of res.deletedIds) {
+        const docId = docByRun.get(runId);
+        if (!docId) continue;
+        try {
+          const cur = await adminDb().collection("runs_index").doc(docId).get();
+          const c = (cur.data() || {}) as Record<string, unknown>;
+          const yt = String(c.youtube_video_id || "");
+          await adminDb().collection("runs_index").doc(docId).update({
+            has_video: false,
+            video_url: "",
+            public_url: "",
+            // Distinguishes "still watchable on YouTube" from "the only
+            // copy is gone" — the second is worth seeing in the UI.
+            video_storage: yt ? "youtube_only" : "deleted",
+          });
+          if (yt) summary.rows_marked_youtube_only += 1;
+        } catch { /* best-effort — bytes are already gone either way */ }
+      }
+      summary.videos_deleted = res.deleted;
+      summary.videos_already_absent = res.missing;
+      summary.videos_freed_mb = res.freed_mb_estimate;
     }
   } catch (e) {
     summary.errors.push(`videos cleanup: ${String(e)}`);
