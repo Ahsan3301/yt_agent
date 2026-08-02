@@ -61,6 +61,14 @@ MANAGED_KEYS = [
     "OPENROUTER_MODEL",          # Optional model override (default llama-3.3-70b-instruct:free)
     "DISCORD_WEBHOOK_URL",       # alerting channel for renders + cleanup
     "YOUTUBE_REFRESH_TOKEN",     # auto-publish to YouTube
+    "AGNES_API_KEY",             # Agnes AI — image generation provider. The
+                                 # provider has been implemented in
+                                 # shotfinder.py all along; it was never in
+                                 # MANAGED_KEYS, so no key could reach a
+                                 # worker and it silently never ran. Same
+                                 # shape as the YOUTUBE_API_KEY gap.
+    "AGNES_API_BASE",            # override; defaults to apihub.agnes-ai.com/v1
+    "AGNES_IMAGE_MODEL",         # override; defaults to agnes-image-2.1-flash
     "YOUTUBE_API_KEY",           # Data API v3 — competitor keyword lookup in
                                  # seo_borrower (search.list + videos.list).
                                  # Was missing here, so a key saved in the

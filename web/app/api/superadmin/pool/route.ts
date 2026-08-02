@@ -47,6 +47,8 @@ export const POOL_SCHEMA: Array<{
     help: "Fallback image generation via Inference API." },
   { key: "STABLEHORDE_API_KEY", group: "Visuals", label: "Stable Horde",
     help: "Free distributed fallback. Slow but costs nothing." },
+  { key: "AGNES_API_KEY", group: "Visuals", label: "Agnes AI",
+    help: "Multimodal provider (apihub.agnes-ai.com). Used for image generation in the shot pipeline. Verified working on text and image; the video model is blocked at the account level and returns 403 until the plan allows it." },
   { key: "PEXELS_API_KEY", group: "Visuals", label: "Pexels",
     help: "Stock footage and photos." },
   { key: "PIXABAY_API_KEY", group: "Visuals", label: "Pixabay",

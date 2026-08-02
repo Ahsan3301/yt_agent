@@ -150,6 +150,17 @@ async function probeOne(key: string, value: string): Promise<KeyHealth> {
         return { key, status: "error", detail: `Unreachable (${String(e).slice(0, 50)}).` };
       }
 
+    case "AGNES_API_KEY":
+      // /models is the cheapest authenticated call and proves the key
+      // is live without generating anything (image calls cost credits).
+      try {
+        const r = await get("https://apihub.agnes-ai.com/v1/models",
+                            { Authorization: `Bearer ${value}` });
+        return { key, ...classify(r.status) };
+      } catch (e) {
+        return { key, status: "error", detail: `Unreachable (${String(e).slice(0, 50)}).` };
+      }
+
     case "PEXELS_API_KEY":
       try {
         const r = await get("https://api.pexels.com/v1/curated?per_page=1", { Authorization: value });
