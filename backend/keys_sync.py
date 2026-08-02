@@ -253,7 +253,24 @@ def get_key(name: str, user_id: str | None = None) -> str | None:
         return None
     try:
         v = (_read_all(user_id=user_id) or {}).get(name)
-        return str(v).strip() or None if v else None
+        if v and str(v).strip():
+            return str(v).strip()
+        # _read_all only consults the platform pool when a user_id is
+        # supplied — without one it falls through to the legacy
+        # singleton, which does not carry pooled credentials. That made
+        # this fallback useless for exactly the keys it exists to serve:
+        # get_key("YOUTUBE_API_KEY") returned None while the key sat in
+        # the pool. A fallback that cannot reach the pool is not a
+        # fallback.
+        if not user_id:
+            try:
+                blob = _blob_of(db.client(), _POOL_DOC_ID)
+                pv = (blob or {}).get(name)
+                if pv and str(pv).strip():
+                    return str(pv).strip()
+            except Exception:
+                pass
+        return None
     except Exception as e:
         log.debug(f"keys_sync.get_key({name}) failed: {e}")
         return None
