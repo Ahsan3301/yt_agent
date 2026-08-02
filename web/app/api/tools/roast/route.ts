@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase-admin";
+import { youtubeApiKey } from "@/lib/youtube-stats";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -55,7 +56,10 @@ export async function POST(req: NextRequest) {
   const url = String(body?.url || "").trim();
   if (!url) return NextResponse.json({ error: "please supply a channel URL" }, { status: 400 });
 
-  const YT_KEY = process.env.YOUTUBE_API_KEY || "";
+  // Pool first, env second. The key is stored in the shared credential
+  // pool, not in this container's environment, so reading env alone made
+  // this tool permanently serve canned preview tips.
+  const YT_KEY = (await youtubeApiKey()) || process.env.YOUTUBE_API_KEY || "";
   const channelIdent = _parseChannelIdent(url);
   if (!channelIdent) {
     return NextResponse.json({ error: "couldn't parse a channel handle from that URL" }, { status: 400 });

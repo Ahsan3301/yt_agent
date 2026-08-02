@@ -25,7 +25,17 @@ export type VideoStat = {
 const API = "https://www.googleapis.com/youtube/v3/videos";
 
 /** Read the pooled key. Mirrors seo_borrower's resolution order so both
- *  sides of the product use the same credential. */
+ *  sides of the product use the same credential.
+ *
+ *  Exported because every consumer must resolve it the SAME way. The
+ *  Roast tool read `process.env.YOUTUBE_API_KEY` directly, which is
+ *  never set on the dashboard container — the key lives in the pool —
+ *  so it silently served canned "preview tips" instead of analysing the
+ *  channel, with no indication anything was missing. */
+export async function youtubeApiKey(): Promise<string> {
+  return _apiKey();
+}
+
 async function _apiKey(): Promise<string> {
   const fromEnv = (process.env.YOUTUBE_API_KEY || "").trim();
   if (fromEnv) return fromEnv;

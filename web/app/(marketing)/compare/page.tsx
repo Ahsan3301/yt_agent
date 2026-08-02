@@ -11,16 +11,23 @@ export const metadata = {
   description: "Why juggle 6+ tools when one engine does it all? See how Yven replaces the traditional creator video stack.",
 };
 
+// Every Yven column states something the pipeline does today. Removed:
+// "Channel DNA analysis / Learns your voice" (never built) and the "+ QA"
+// on subtitles (the vision judge is deliberately disabled because it
+// rejected everything). Competitor costs were specific figures for named
+// products — Buffer at $99, research tools at $49 — which we have not
+// verified and which change constantly, so they are described in kind
+// rather than asserted as prices.
 const ROWS: Array<[string, string, string]> = [
-  ["Trend & title research",     "Manual / separate tool ($49/mo)",         "Built-in AI research"],
-  ["Script writing",             "ChatGPT + copy/paste",                    "Auto-generated with hooks"],
-  ["Storyboard & visuals",       "Midjourney + manual prompt",              "Auto storyboard + image gen"],
-  ["Voiceover & audio",          "ElevenLabs + sync manually",              "Auto-synced AI voice"],
-  ["Video editing",              "Premiere / DaVinci (4h+)",                "Automated editing"],
-  ["Subtitles & QA",             "Manual review",                           "Auto subtitles + QA"],
-  ["Channel DNA analysis",       "Not available",                           "Learns your voice"],
-  ["Multi-platform publish",     "Buffer / Hootsuite ($99/mo)",             "YouTube today · TikTok / Reels soon"],
-  ["Total monthly cost",         "$300 – $600 + your time",                 "From $49/mo"],
+  ["Topic research",             "Manual, or a separate subscription",      "Built in — pulls live topics and checks what already ranks"],
+  ["Script writing",             "ChatGPT, then copy/paste",                "Written to the channel's tone, with the hook up front"],
+  ["Titles",                     "Whatever you think of",                   "Three angles scored on length, specificity and keyword position"],
+  ["Visuals",                    "Midjourney, one prompt at a time",        "Generated per shot, with provider failover"],
+  ["Voiceover",                  "Separate tool, synced by hand",           "Neural narration timed to the script automatically"],
+  ["Editing",                    "Premiere or DaVinci, hours per video",    "Assembled, captioned and rendered unattended"],
+  ["Publishing",                 "Upload and fill the fields yourself",     "Posts to YouTube with title, description, tags and hashtags"],
+  ["Knowing what worked",        "Check Studio and guess",                  "Reads back real view counts per video"],
+  ["Acting on what worked",      "Not available",                           "Titles that beat your median are fed into the next script"],
 ];
 
 export default function ComparePage() {
