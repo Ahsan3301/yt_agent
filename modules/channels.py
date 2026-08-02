@@ -204,7 +204,11 @@ CHANNEL_PRESETS: dict[str, dict] = {
                 "What was in {place} that night...",
                 "The {noun} they found in {place}",
                 "Nobody warned her about the {noun}",
-                "This {place} has been abandoned for {years} years — for a reason",
+                # "{years} years" bakes the plural in, so the model
+                # filling {years} with 1 or 0 produced live titles reading
+                # "abandoned for 1 years" and "abandoned for 0 years".
+                # Let the slot carry its own unit instead.
+                "This {place} has been abandoned for {duration} — for a reason",
                 "The {number} disappearances no one can explain",
             ],
             "banned_openers": ["Learn about", "In this video", "Did you know", "Today we", "Let me tell", "Have you ever"],

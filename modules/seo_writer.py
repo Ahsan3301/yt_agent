@@ -456,6 +456,27 @@ def _validate(data: dict, viral: dict, expected_language: str = "en") -> list[st
             if low.startswith(b):
                 problems.append(f"youtube_title starts with banned opener '{b}'")
                 break
+        # Number/noun agreement. Hook patterns interpolate a model-chosen
+        # number in front of a hard-coded plural, and the model does pick
+        # 1 and 0 — both shipped to YouTube on 2026-08-02 as "abandoned
+        # for 1 years" and "abandoned for 0 years". Cheap to catch here,
+        # where a failed check already triggers a rewrite attempt.
+        _bad_plural = re.search(
+            r"\b1\s+(years|months|weeks|days|hours|minutes|seconds|times|people|things|reasons|videos)\b",
+            title, re.I,
+        )
+        if _bad_plural:
+            problems.append(
+                f"youtube_title says '1 {_bad_plural.group(1)}' — use the singular"
+            )
+        _zero = re.search(
+            r"\b0\s+(years|months|weeks|days|hours|minutes)\b", title, re.I,
+        )
+        if _zero:
+            problems.append(
+                f"youtube_title says '0 {_zero.group(1)}', which is meaningless — "
+                f"use a real figure from the narration or drop the number"
+            )
 
     desc = data.get("description")
     if not isinstance(desc, str) or len(desc.strip()) < 60:
