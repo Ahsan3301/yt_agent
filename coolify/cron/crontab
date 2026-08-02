@@ -92,6 +92,31 @@
 # the host (see coolify/docker-compose.yml cron service).
 30 3 * * *  (docker builder prune -a -f && docker image prune -f && docker container prune -f) >> /proc/1/fd/1 2>&1
 
+# 03:40 UTC daily - remove orphaned deploy images.
+#
+# The 03:30 sweep above does NOT catch these. Coolify tags every build
+# with its commit SHA, so a superseded image is tagged-but-unused, not
+# dangling, and `docker image prune -f` only removes dangling ones.
+# They accumulate one set per deploy, forever: found 90 app images with
+# 5 in use after a single heavy day, and the disk had gone from 15 GB
+# to 43 GB. Reclaimed 24 GB by hand.
+#
+# Removes any app image not referenced by a container, running or
+# stopped. Docker refuses to delete an in-use image anyway, so this
+# cannot take out the live stack - but the explicit filter means it
+# does not even try, and stays quiet.
+#
+# Note this also drops the PREVIOUS deploy's images, so an instant
+# image-level rollback is not available after it runs. That is a
+# deliberate trade: Coolify rebuilds from git in about three minutes,
+# and bounded disk is worth more than saving that rebuild. A manual
+# cleanup can keep one previous set when a risky deploy is in flight.
+#
+# Written for POSIX sh (busybox crond): no process substitution, and no
+# '#' inside the command, which crond would treat as a comment and
+# truncate. See the gateway-heal note above.
+40 3 * * *  docker ps -a --format '{{.Image}}' | sort -u > /tmp/inuse.txt; docker images --format '{{.Repository}}:{{.Tag}}' | grep '^mhbbo4wuiineahv4comdjh5k' | grep -vxFf /tmp/inuse.txt | xargs -r docker rmi >> /proc/1/fd/1 2>&1
+
 # Every 2 hours — sweep leaked render work_dirs from the side-worker
 # container's writable layer. housekeeping.finalize_run is supposed to
 # rmtree these post-publish, but any bug in that path (a non-published
