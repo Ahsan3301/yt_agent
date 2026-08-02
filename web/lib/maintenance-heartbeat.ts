@@ -151,6 +151,33 @@ export async function readHeartbeats(): Promise<Array<Heartbeat & {
 }>> {
   const now = Math.floor(Date.now() / 1000);
   const rows = new Map<string, Heartbeat>();
+
+  // When heartbeats were switched on. Without this, EVERY job reads as
+  // "never ran" the moment the feature ships — six jobs flagged STALE
+  // five minutes after deploy, none of them actually broken, just not
+  // yet due (backup runs at 03:15, cleanup at 05:00, and so on).
+  //
+  // A monitor that cries wolf the first time you look at it teaches
+  // people to ignore it, which costs more than having no monitor. So a
+  // job that has never reported is only judged once enough time has
+  // passed for it to have been due at least once.
+  let installedAt = 0;
+  try {
+    const ref = adminDb().collection("maintenance_runs").doc("_installed");
+    const snap = await ref.get();
+    const v = (snap.data() || {}) as { last_run_at?: number };
+    installedAt = Number(v.last_run_at || 0);
+    if (!installedAt) {
+      installedAt = now;
+      await ref.set({ job: "_installed", last_run_at: now, ok: true,
+                      detail: "heartbeat tracking enabled" }, { merge: true });
+    }
+  } catch {
+    // Unknown install time — fall back to "now", which suppresses
+    // never-ran alarms this tick rather than raising false ones.
+    installedAt = now;
+  }
+
   try {
     const snap = await adminDb().collection("maintenance_runs").limit(100).get();
     snap.forEach((d) => {
@@ -170,6 +197,7 @@ export async function readHeartbeats(): Promise<Array<Heartbeat & {
   // Iterate the EXPECTED set, not what happens to be in the table. A
   // job that has never written a heartbeat is the most important case
   // to show, and reading only stored rows would omit exactly that.
+  const sinceInstall = Math.max(0, now - installedAt);
   return Object.keys(MAINTENANCE_INTERVALS).map((job) => {
     const r = rows.get(job);
     const expected = MAINTENANCE_INTERVALS[job] ?? null;
@@ -188,7 +216,13 @@ export async function readHeartbeats(): Promise<Array<Heartbeat & {
       // 2x cadence + a minute of slack: late enough that normal jitter
       // and a deploy restart don't cry wolf, early enough that a job
       // which has genuinely stopped is obvious within one cycle.
-      stale: last === 0 || (expected != null && age != null && age > expected * 2 + 60),
+      //
+      // A never-reported job is only judged once it has had a full
+      // interval since heartbeats were switched on — before that,
+      // "never ran" means "not due yet", not "broken".
+      stale: last === 0
+        ? (expected != null && sinceInstall > expected + 60)
+        : (expected != null && age != null && age > expected * 2 + 60),
     };
   }).sort((a, b) => Number(b.stale) - Number(a.stale) || a.job.localeCompare(b.job));
 }

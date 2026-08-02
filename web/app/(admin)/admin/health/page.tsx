@@ -225,8 +225,13 @@ export default function HealthPage() {
                     >
                       {/* fmtAge takes a TIMESTAMP and adds "ago" itself —
                           passing age_seconds here would both double the
-                          suffix and compute a nonsense age. */}
-                      {h.never_ran ? "never ran" : fmtAge(h.last_run_at)}
+                          suffix and compute a nonsense age.
+                          "never ran" is only alarming once the job has
+                          actually been due; before that it is simply
+                          waiting for its first tick. */}
+                      {h.never_ran
+                        ? (h.stale ? "never ran" : "awaiting first run")
+                        : fmtAge(h.last_run_at)}
                     </span>
                     <span className="text-neutral-500 truncate">
                       {h.fail_streak > 0 && (
