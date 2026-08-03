@@ -38,9 +38,23 @@ def apply_from_job(job: dict) -> dict:
         os.environ[_KEY] = cleaned
         log.info(f"channel_llm: LLM_PRIORITY={cleaned}")
     else:
-        # No per-channel override — clear so nim.py uses its default.
-        os.environ.pop(_KEY, None)
-        log.info("channel_llm: no channel override, using default LLM priority")
+        # No per-channel override — LEAVE the inherited value alone.
+        #
+        # This used to pop LLM_PRIORITY, which does not fall back to
+        # "nim.py's default": it discards the platform-wide priority that
+        # keys_sync had just loaded from the pool. Every channel has an
+        # empty llm_priority, so the pooled order was wiped on every
+        # render and the chain silently reverted.
+        #
+        # Identical to the agnes_source="off" bug: a "no override" branch
+        # that deletes rather than declines. Popping an env var is only
+        # correct when nothing else is entitled to set it, and here the
+        # pool is.
+        _inherited = (os.environ.get(_KEY) or "").strip()
+        log.info(
+            f"channel_llm: no channel override; keeping "
+            f"{'pooled LLM_PRIORITY=' + _inherited if _inherited else 'built-in default'}"
+        )
     return snapshot
 
 
