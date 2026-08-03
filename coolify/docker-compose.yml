@@ -58,6 +58,27 @@ services:
     # traefik.enable=true label but can't route to it → HTTPS requests
     # hang until the client timeout.
     networks: [yt_agent_net, coolify]
+    labels:
+      # Pin the network Traefik routes over.
+      #
+      # This container ends up on THREE networks, not the two declared
+      # above — Coolify adds its own per-project network at deploy
+      # time. Traefik has no way to know which one it can reach, so it
+      # picks one, and when it picks the project network (which
+      # coolify-proxy is not attached to) every request hangs and
+      # returns 504 after exactly 30 seconds.
+      #
+      # Restarting Caddy reshuffles the pick, which is why this looked
+      # like a random post-deploy failure for weeks and why restarting
+      # things again sometimes appeared to fix it. Diagnosed 2026-08-03:
+      # app direct 200, Caddy→app 200, port 80 → 302 (so Traefik itself
+      # was fine), but HTTPS 504 at exactly the 30s backend timeout.
+      #
+      # The live mitigation was attaching coolify-proxy to the third
+      # network, but that is runtime state and is lost whenever the
+      # proxy is recreated. This label is the durable fix: it removes
+      # the ambiguity instead of papering over it.
+      - "traefik.docker.network=coolify"
 
   # ── Next.js dashboard ────────────────────────────────────────────
   # Built from the project's web/ directory. Multi-stage Dockerfile
