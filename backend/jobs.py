@@ -512,9 +512,32 @@ def _run_one(job: dict[str, Any]):
             #     to /api/queue/<id>/republish or the side_jobs
             #     publish_youtube path (both already exist for the YT
             #     upload leg).
-            if public:
+            # 2026-08-03: "complete" was decided purely by whether the
+            # MinIO mirror produced a URL, which answers the wrong
+            # question. A render whose YouTube upload failed but whose
+            # mirror succeeded was marked complete — video safely
+            # stored, never published, and invisible to the
+            # retry-publish sweep, which only looks at needs_publish.
+            # That is the failure mode retry-publish exists to catch,
+            # and this line was hiding it.
+            #
+            # The pipeline already reports the truth on its summary:
+            # needs_publish is set when the YouTube leg failed or was
+            # deliberately deferred to the side-worker. Honour it.
+            _pipeline_needs_publish = (
+                bool(_res.get("needs_publish")) if isinstance(_res, dict) else False
+            )
+            if public and not _pipeline_needs_publish:
                 job["status"] = "complete"
                 job["video_url"] = public
+            elif public:
+                # Mirrored but not on YouTube. Keep the durable URL so
+                # the publish retry has bytes to work with, and stay in
+                # needs_publish so the sweep picks it up.
+                job["status"] = "needs_publish"
+                job["video_url"] = public
+                if isinstance(_res, dict) and _res.get("deferred_publish"):
+                    job["current_step_label_hint"] = "Awaiting scheduled publish"
             else:
                 job["status"] = "needs_publish"
                 # Keep the local fallback URL so the operator can still
@@ -526,7 +549,10 @@ def _run_one(job: dict[str, Any]):
             # "Uploading" forever. Even for needs_publish, the render is
             # done — the retry surface handles the publish separately.
             job["current_step"] = "done"
-            job["current_step_label"] = "Complete" if public else "Needs publish"
+            job["current_step_label"] = (
+                job.pop("current_step_label_hint", "")
+                or ("Complete" if job.get("status") == "complete" else "Needs publish")
+            )
             job["percent"] = 100
 
             # Persist the run summary + index UNCONDITIONALLY so the
