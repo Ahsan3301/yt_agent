@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Package, Plus, X, Save, Loader2, RefreshCw, Trash2, Star } from "lucide-react";
+import { PageHeader } from "@/components/PageHeader";
 
 type Plan = {
   id?: string;
@@ -74,20 +75,23 @@ export default function PlansPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold flex items-center gap-2">
-          <Package className="h-5 w-5 text-accent" /> Plans
-        </h1>
-        <div className="flex gap-2">
-          <button onClick={load} className="btn btn-ghost h-8 text-xs">
-            {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
-            Refresh
-          </button>
-          <button onClick={() => setNewForm(true)} className="btn btn-primary h-8 text-xs">
-            <Plus className="h-3 w-3" /> New plan
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        eyebrow="Superadmin"
+        icon={Package}
+        title="Plans"
+        subtitle="Paid tiers, quotas, and what each plan unlocks. These drive the public pricing table."
+        actions={
+          <>
+            <button onClick={load} className="btn btn-ghost h-8 text-xs">
+              {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+              Refresh
+            </button>
+            <button onClick={() => setNewForm(true)} className="btn btn-primary h-8 text-xs">
+              <Plus className="h-3 w-3" /> New plan
+            </button>
+          </>
+        }
+      />
 
       <p className="text-xs text-neutral-500">
         Prices are integers in cents (2000 = $20). Set <code className="px-1 rounded bg-bg-2">max_channels</code> or{" "}

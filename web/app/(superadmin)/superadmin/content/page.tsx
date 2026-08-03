@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { LayoutTemplate, Loader2, Save, Eye, Plus, X } from "lucide-react";
 import Link from "next/link";
+import { PageHeader } from "@/components/PageHeader";
 
 /**
  * Superadmin landing-content editor. Feeds the SSR read at /
@@ -89,20 +90,23 @@ export default function ContentEditor() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold flex items-center gap-2">
-          <LayoutTemplate className="h-5 w-5 text-accent" /> Landing content
-        </h1>
-        <div className="flex gap-2">
-          <Link href="/" target="_blank" className="btn btn-ghost h-8 text-xs">
-            <Eye className="h-3 w-3" /> Preview
-          </Link>
-          <button onClick={save} disabled={busy} className="btn btn-primary h-8 text-xs">
-            {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
-            Save
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        eyebrow="Superadmin"
+        icon={LayoutTemplate}
+        title="Landing content"
+        subtitle="Hero copy, features, and pricing shown on the public site."
+        actions={
+          <>
+            <Link href="/" target="_blank" className="btn btn-ghost h-8 text-xs">
+              <Eye className="h-3 w-3" /> Preview
+            </Link>
+            <button onClick={save} disabled={busy} className="btn btn-primary h-8 text-xs">
+              {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+              Save
+            </button>
+          </>
+        }
+      />
 
       {msg && <div className="card text-sm border-accent/30 bg-accent/5 text-accent">{msg}</div>}
 

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Users, CheckCircle2, XCircle, Ban, Loader2, RefreshCw, User, Crown, Shield } from "lucide-react";
 import clsx from "clsx";
+import { PageHeader } from "@/components/PageHeader";
 
 type AppUser = {
   id: string;
@@ -100,15 +101,18 @@ export default function AdminUsersPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold flex items-center gap-2">
-          <Users className="h-5 w-5 text-accent" /> Users
-        </h1>
-        <button onClick={load} className="btn btn-ghost h-8 text-xs">
-          {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
-          Refresh
-        </button>
-      </div>
+      <PageHeader
+        eyebrow="Operator"
+        icon={Users}
+        title="Users"
+        subtitle="Approve, suspend, and manage signups."
+        actions={
+          <button onClick={load} className="btn btn-ghost h-8 text-xs">
+            {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+            Refresh
+          </button>
+        }
+      />
 
       <div className="flex flex-wrap gap-1.5">
         {(["pending", "active", "suspended", "all"] as Filter[]).map((f) => (

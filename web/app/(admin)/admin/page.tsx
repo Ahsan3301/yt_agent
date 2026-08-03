@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Users, Activity, HeartPulse, ListChecks, Shield } from "lucide-react";
+import { PageHeader } from "@/components/PageHeader";
 
 /**
  * /admin index — quick links to admin surfaces. Real dashboards (user
@@ -8,14 +9,12 @@ import { Users, Activity, HeartPulse, ListChecks, Shield } from "lucide-react";
 export default function AdminHome() {
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-2">
-        <Shield className="h-5 w-5 text-accent" />
-        <h1 className="text-xl font-semibold">Admin</h1>
-      </div>
-      <p className="text-sm text-neutral-400">
-        Operator-only surfaces. User approvals + cross-tenant read
-        views are added in Phase 4; workers &amp; health are here today.
-      </p>
+      <PageHeader
+        eyebrow="Operator"
+        icon={Shield}
+        title="Admin"
+        subtitle="Operator-only surfaces. User approvals and cross-tenant read views arrive in Phase 4; workers and health are here today."
+      />
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <AdminCard href="/admin/users" icon={Users} title="Users" body="Approve, suspend, and manage signups." />
         <AdminCard href="/admin/monitor" icon={Activity} title="Workers" body="CPU / RAM / GPU / disk per backend." />

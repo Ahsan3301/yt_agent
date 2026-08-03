@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Flag, Package, LayoutTemplate, ScrollText, Crown } from "lucide-react";
+import { PageHeader } from "@/components/PageHeader";
 
 /**
  * /superadmin index — Phase 3 placeholder. Phase 4 wires landing CMS +
@@ -8,14 +9,12 @@ import { Flag, Package, LayoutTemplate, ScrollText, Crown } from "lucide-react";
 export default function SuperadminHome() {
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-2">
-        <Crown className="h-5 w-5 text-amber-400" />
-        <h1 className="text-xl font-semibold">Superadmin</h1>
-      </div>
-      <p className="text-sm text-neutral-400">
-        Reserved for the operator. Every action here is logged to
-        <code className="mx-1 px-1 rounded bg-bg-2 text-xs">audit_log</code>.
-      </p>
+      <PageHeader
+        eyebrow="Superadmin"
+        icon={Crown}
+        title="Superadmin"
+        subtitle="Reserved for the operator. Every action here is written to the audit log."
+      />
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Card href="/superadmin/content" icon={LayoutTemplate} title="Landing content" body="Edit hero, features, pricing tiers." />
         <Card href="/superadmin/plans" icon={Package} title="Plans" body="Create / edit paid tiers &amp; quotas." />

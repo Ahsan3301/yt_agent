@@ -5,6 +5,7 @@ import {
   Loader2, Save, SlidersHorizontal, Database, Lock, HardDriveDownload,
   KeyRound, Wrench, CheckCircle2, AlertTriangle, Trash2,
 } from "lucide-react";
+import { PageHeader } from "@/components/PageHeader";
 
 /**
  * Platform configuration editor.
@@ -100,21 +101,18 @@ export default function PlatformConfigPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div>
-          <h1 className="text-xl font-semibold flex items-center gap-2">
-            <SlidersHorizontal className="h-5 w-5 text-accent" /> Platform configuration
-          </h1>
-          <p className="text-sm text-neutral-400 mt-1 max-w-2xl">
-            Changes here are live within a second — no redeploy. Values set
-            here override the server environment.
-          </p>
-        </div>
-        <button onClick={save} disabled={busy || dirty === 0} className="btn btn-primary h-9 text-xs">
-          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-          Save{dirty > 0 ? ` (${dirty})` : ""}
-        </button>
-      </div>
+      <PageHeader
+        eyebrow="Superadmin"
+        icon={SlidersHorizontal}
+        title="Platform configuration"
+        subtitle="Changes here are live within a second — no redeploy. Values set here override the server environment."
+        actions={
+          <button onClick={save} disabled={busy || dirty === 0} className="btn btn-primary h-9 text-xs">
+            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+            Save{dirty > 0 ? ` (${dirty})` : ""}
+          </button>
+        }
+      />
 
       {msg && (
         <div className={

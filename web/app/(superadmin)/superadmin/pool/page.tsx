@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import {
   Loader2, Save, Layers, CheckCircle2, AlertTriangle, Trash2, Info, Activity,
 } from "lucide-react";
+import { PageHeader } from "@/components/PageHeader";
 
 /**
  * Shared credential pool.
@@ -118,27 +119,24 @@ export default function PoolPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div>
-          <h1 className="text-xl font-semibold flex items-center gap-2">
-            <Layers className="h-5 w-5 text-accent" /> Shared credential pool
-          </h1>
-          <p className="text-sm text-neutral-400 mt-1 max-w-2xl">
-            Credentials every customer uses. With these set, a new user can
-            publish after connecting only their YouTube account.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button onClick={runCheck} disabled={checking} className="btn h-9 text-xs">
-            {checking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Activity className="h-3.5 w-3.5" />}
-            Test all keys
-          </button>
-          <button onClick={save} disabled={busy || dirty === 0} className="btn btn-primary h-9 text-xs">
-            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-            Save{dirty > 0 ? ` (${dirty})` : ""}
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        eyebrow="Superadmin"
+        icon={Layers}
+        title="Shared credential pool"
+        subtitle="Credentials every customer uses. With these set, a new user can publish after connecting only their YouTube account."
+        actions={
+          <>
+            <button onClick={runCheck} disabled={checking} className="btn h-9 text-xs">
+              {checking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Activity className="h-3.5 w-3.5" />}
+              Test all keys
+            </button>
+            <button onClick={save} disabled={busy || dirty === 0} className="btn btn-primary h-9 text-xs">
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+              Save{dirty > 0 ? ` (${dirty})` : ""}
+            </button>
+          </>
+        }
+      />
 
       {msg && (
         <div className={

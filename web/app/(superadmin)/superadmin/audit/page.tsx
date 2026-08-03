@@ -3,6 +3,7 @@
 import { Fragment, useEffect, useState } from "react";
 import { ScrollText, Loader2, RefreshCw, Filter } from "lucide-react";
 import clsx from "clsx";
+import { PageHeader } from "@/components/PageHeader";
 
 type Entry = {
   id: string;
@@ -47,15 +48,18 @@ export default function AuditPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold flex items-center gap-2">
-          <ScrollText className="h-5 w-5 text-accent" /> Audit log
-        </h1>
-        <button onClick={load} className="btn btn-ghost h-8 text-xs">
-          {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
-          Refresh
-        </button>
-      </div>
+      <PageHeader
+        eyebrow="Superadmin"
+        icon={ScrollText}
+        title="Audit log"
+        subtitle="Every superadmin action, newest first. Filter by action type below."
+        actions={
+          <button onClick={load} className="btn btn-ghost h-8 text-xs">
+            {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+            Refresh
+          </button>
+        }
+      />
 
       <div className="flex flex-wrap gap-2 items-center">
         <Filter className="h-3 w-3 text-neutral-500" />

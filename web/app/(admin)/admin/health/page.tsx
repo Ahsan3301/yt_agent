@@ -7,6 +7,7 @@ import {
   Activity, AlertCircle, CheckCircle2, Server, Loader2, RefreshCcw,
   Wifi, WifiOff, Box, AlertTriangle,
 } from "lucide-react";
+import { PageHeader } from "@/components/PageHeader";
 
 type WorkerCard = {
   instance_id: string;
@@ -105,21 +106,18 @@ export default function HealthPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
-            <Activity className="h-6 w-6 text-accent" />
-            System health
-          </h1>
-          <p className="text-sm text-neutral-400 max-w-2xl">
-            One-glance status across workers, recent jobs, errors. Auto-refreshes every 30 sec.
-          </p>
-        </div>
-        <button onClick={refresh} disabled={loading} className="btn btn-ghost h-8 text-xs">
-          {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCcw className="h-3.5 w-3.5" />}
-          Refresh
-        </button>
-      </div>
+      <PageHeader
+        eyebrow="Operator"
+        icon={Activity}
+        title="System health"
+        subtitle="One-glance status across workers, recent jobs, and errors. Auto-refreshes every 30 seconds."
+        actions={
+          <button onClick={refresh} disabled={loading} className="btn btn-ghost h-8 text-xs">
+            {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCcw className="h-3.5 w-3.5" />}
+            Refresh
+          </button>
+        }
+      />
 
       {err && (
         <div className="card border-red-500/30 bg-red-500/5 text-sm text-red-200">

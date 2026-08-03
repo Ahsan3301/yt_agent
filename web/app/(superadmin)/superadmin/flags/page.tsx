@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Flag, Loader2, RefreshCw, Save, AlertTriangle } from "lucide-react";
 import clsx from "clsx";
+import { PageHeader } from "@/components/PageHeader";
 
 /**
  * Superadmin feature-flag toggler.
@@ -114,21 +115,24 @@ export default function FlagsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold flex items-center gap-2">
-          <Flag className="h-5 w-5 text-accent" /> Feature flags
-        </h1>
-        <div className="flex gap-2">
-          <button onClick={load} className="btn btn-ghost h-8 text-xs">
-            <RefreshCw className="h-3 w-3" /> Refresh
-          </button>
-          <button onClick={save} disabled={!dirty || busy}
-                  className="btn btn-primary h-8 text-xs">
-            {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
-            {dirty ? `Save ${Object.keys(pending).length} change(s)` : "Saved"}
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        eyebrow="Superadmin"
+        icon={Flag}
+        title="Feature flags"
+        subtitle="Toggle platform behaviour live. Changes apply without a redeploy."
+        actions={
+          <>
+            <button onClick={load} className="btn btn-ghost h-8 text-xs">
+              <RefreshCw className="h-3 w-3" /> Refresh
+            </button>
+            <button onClick={save} disabled={!dirty || busy}
+                    className="btn btn-primary h-8 text-xs">
+              {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+              {dirty ? `Save ${Object.keys(pending).length} change(s)` : "Saved"}
+            </button>
+          </>
+        }
+      />
 
       {msg && <div className="card text-sm border-accent/30 bg-accent/5 text-accent">{msg}</div>}
 

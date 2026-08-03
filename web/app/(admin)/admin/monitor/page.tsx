@@ -26,6 +26,7 @@ import {
 import { getDb, isFirestoreConfigured } from "@/lib/firestore";
 import { collection, onSnapshot, Timestamp } from "firebase/firestore";
 import Sparkline from "@/components/Sparkline";
+import { PageHeader } from "@/components/PageHeader";
 
 const POLL_MS = 2000;
 const HISTORY_LEN = 30; // 30 samples × 2s = ~1 minute window
@@ -224,21 +225,21 @@ export default function MonitorPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Monitor</h1>
-          <p className="text-sm text-neutral-400">
-            Real-time resource usage and job state across every connected backend.
-          </p>
-        </div>
-        <div className="flex items-center gap-2 text-sm flex-wrap">
-          <LaunchColabQuickButton />
-          <WakeKaggleQuickButton />
-          <Pill icon={Wifi}        label={`${online} online`}        color="emerald" />
-          <Pill icon={Loader2}     label={`${busy} busy`}             color="amber" />
-          <Pill icon={Box}         label={`${totalQueue} queued`}     color="neutral" />
-        </div>
-      </div>
+      <PageHeader
+        eyebrow="Operator"
+        icon={Activity}
+        title="Monitor"
+        subtitle="Real-time resource usage and job state across every connected backend."
+        actions={
+          <>
+            <LaunchColabQuickButton />
+            <WakeKaggleQuickButton />
+            <Pill icon={Wifi}    label={`${online} online`}    color="emerald" />
+            <Pill icon={Loader2} label={`${busy} busy`}        color="amber" />
+            <Pill icon={Box}     label={`${totalQueue} queued`} color="neutral" />
+          </>
+        }
+      />
 
       {registryError && (
         <div className="card border-amber-500/30 bg-amber-500/5 text-sm">

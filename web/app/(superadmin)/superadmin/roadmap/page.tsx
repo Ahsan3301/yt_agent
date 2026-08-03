@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Loader2, Save, Eye, Plus, X, GripVertical, ScrollText } from "lucide-react";
+import { PageHeader } from "@/components/PageHeader";
 
 /**
  * Roadmap CMS — bulk upsert editor.
@@ -111,20 +112,23 @@ export default function RoadmapCMS() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold flex items-center gap-2">
-          <ScrollText className="h-5 w-5 text-accent" /> Roadmap
-        </h1>
-        <div className="flex gap-2">
-          <Link href="/roadmap" target="_blank" className="btn btn-ghost h-8 text-xs">
-            <Eye className="h-3 w-3" /> Preview
-          </Link>
-          <button onClick={save} disabled={busy} className="btn btn-primary h-8 text-xs">
-            {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
-            Save all
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        eyebrow="Superadmin"
+        icon={ScrollText}
+        title="Roadmap"
+        subtitle="What shows on the public roadmap page. Keep it honest — visitors read this as a commitment."
+        actions={
+          <>
+            <Link href="/roadmap" target="_blank" className="btn btn-ghost h-8 text-xs">
+              <Eye className="h-3 w-3" /> Preview
+            </Link>
+            <button onClick={save} disabled={busy} className="btn btn-primary h-8 text-xs">
+              {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+              Save all
+            </button>
+          </>
+        }
+      />
 
       {msg && <div className="card text-sm border-accent/30 bg-accent/5 text-accent">{msg}</div>}
 
