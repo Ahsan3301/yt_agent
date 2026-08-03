@@ -570,13 +570,41 @@ async function _handler(req: NextRequest) {
       }
     }
 
-    logRoute(reqId, "scheduled-render queued", { count: queued.length, skipped: skipped.length, stamped: stamped.length });
+    // Live workers, counted honestly.
+    //
+    // `targetWorker` comes from pickWorkers(), which drops any backend
+    // without a `url`. Every worker this platform actually runs —
+    // Kaggle, Colab and the Oracle side-worker — is outbound-poll and
+    // has no URL by design, so `worker_available` was permanently
+    // false and read as "nothing can render". It never meant that:
+    // jobs are queued regardless and workers pull them on their next
+    // claim; the URL is only used for an optional push notification.
+    //
+    // It is reported here because that field caused a real
+    // misdiagnosis, so it now says what it means.
+    let liveWorkers = 0;
+    try {
+      const snap = await adminDb().collection("backends").limit(50).get();
+      const cutoff = Date.now() / 1000 - 300;
+      snap.forEach((doc) => {
+        const d = doc.data() as Record<string, unknown>;
+        const raw = d.last_seen_at ?? d.last_seen;
+        const last = typeof raw === "number" ? raw : Number(raw) || 0;
+        if (last >= cutoff && d.shutdown_pending !== true) liveWorkers += 1;
+      });
+    } catch { /* reporting only — never fail the sweep over it */ }
+
+    logRoute(reqId, "scheduled-render queued", { count: queued.length, skipped: skipped.length, stamped: stamped.length, live_workers: liveWorkers });
     return NextResponse.json({
       ok: true,
       queued,
       skipped,
       stamped,
-      worker_available: !!targetWorker,
+      // Live backends of any kind, including outbound-poll ones.
+      live_workers: liveWorkers,
+      // Whether a worker exposes a URL we can push to. Not a
+      // precondition for rendering.
+      push_target_available: !!targetWorker,
       req_id: reqId,
     });
   } catch (e) {
