@@ -8,8 +8,17 @@
 #      so shotfinder auto-skips it (torch.cuda.is_available() is False)
 #      and image gen falls through to pollinations → HF → horde.
 #
-# We deliberately skip torch / diffusers / decord / playwright — a full
-# CPU-only pipeline still ships in under 500 MB.
+# We deliberately skip torch / diffusers / decord — a full CPU-only
+# pipeline still ships in under 500 MB.
+#
+# Playwright IS installed (below). It was previously skipped here on the
+# same "keep the image small" reasoning, but modules/research_agent is
+# wired into main.py and gates on browser_agent.is_available(): with
+# Playwright absent, EVERY Oracle render silently logged "playwright
+# unavailable — skipping" and did no browser research at all. Since
+# Oracle serves most renders, the research capability was effectively
+# dead in production while appearing configured. ~120 MB of chromium is
+# worth far less than a silently disabled feature.
 FROM python:3.11-slim
 
 # system deps: ffmpeg (video assembly + duration probe),
@@ -49,6 +58,9 @@ RUN pip install --no-cache-dir --upgrade pip && \
         cryptography>=45.0.0 \
         pyOpenSSL>=25.0.0 \
         pynacl>=1.5 \
+        # Browser research (modules/browser_agent + research_agent).
+        # The chromium binary is fetched in a separate RUN below.
+        playwright>=1.40 \
         # Render deps (CPU path only)
         fastapi>=0.115 \
         uvicorn[standard]>=0.30 \
@@ -72,6 +84,16 @@ RUN pip install --no-cache-dir --upgrade pip && \
         # Cross-platform file lock for used_premises + used_clips
         # concurrency (audit fix #9). Same version pin as requirements.txt.
         filelock>=3.12
+
+# Chromium for Playwright. Separate RUN so a dependency change does not
+# re-download 120 MB.
+#
+# --with-deps matters: the slim base lacks the shared libraries headless
+# chromium needs. browser_agent.is_available() launches and closes a
+# real browser rather than just importing, so a missing library is
+# caught correctly — but it is caught by DISABLING research silently,
+# which is precisely how this went unnoticed in production.
+RUN python -m playwright install --with-deps chromium
 
 # Env flag consumed by shotfinder + main to short-circuit GPU probes
 # faster (torch isn't installed, so imports fail immediately anyway,
