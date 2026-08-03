@@ -96,9 +96,25 @@ RULES:
   - No two consecutive shots should depict the same subject in the same way.
   - Stay on-genre for the channel: {avoid_line}
 
+ALSO: list every RECURRING person in `cast`. For each, write a
+`look` that is a fixed physical description — apparent age, build,
+hair colour and style, facial hair, skin tone, and the exact clothing
+they wear throughout. Be concrete and unchanging: "late-20s woman,
+slim, shoulder-length dark brown hair, pale skin, grey hooded
+sweatshirt over a white tee, dark jeans". No mood or lighting words,
+no camera direction — only what the person permanently looks like.
+Anyone appearing in two or more shots MUST be in `cast`. If the story
+has no recurring person, use an empty array.
+
+In each shot's `ai_prompt`, refer to a cast member by their exact
+`name` so their description can be substituted in.
+
 Respond with ONLY a JSON object in this shape:
 {{
   "story_period": "...",
+  "cast": [
+    {{"name": "...", "look": "..."}}
+  ],
   "shots": [
     {{
       "narration_excerpt": "...",
@@ -247,6 +263,18 @@ def _salvage_partial_json(text: str):
         return None
 
 
+def _stable_seed(text: str) -> int:
+    """Deterministic seed from a character description.
+
+    Same character -> same seed on every shot and every render, so a
+    face stays put across the video instead of drifting. Derived from
+    the description rather than random so it also survives a re-render
+    of the same story.
+    """
+    import hashlib
+    return int(hashlib.md5(text.strip().lower().encode("utf-8")).hexdigest()[:8], 16)
+
+
 REQUIRED_KEYS = ("narration_excerpt", "visual_description", "search_query", "ai_prompt")
 
 
@@ -366,8 +394,23 @@ def plan_shots(narration, num_shots, channel: str = "horror",
         # Top-level story_period anchors every shot to a single era so
         # the image model can't mash a Model T + iPhone into one frame.
         story_period = ""
+        cast: list[dict] = []
         if isinstance(data, dict):
             story_period = str(data.get("story_period") or "").strip()
+            # Recurring characters. Same idea as story_period, applied to
+            # people: without an anchor the image model re-invents the
+            # protagonist every shot, so a 6-shot story shows six
+            # different strangers and reads as unrelated stock frames
+            # rather than one narrative.
+            _raw_cast = data.get("cast")
+            if isinstance(_raw_cast, list):
+                for m in _raw_cast[:4]:          # 4 is already a crowd for a Short
+                    if not isinstance(m, dict):
+                        continue
+                    nm = str(m.get("name") or "").strip()
+                    lk = str(m.get("look") or "").strip()
+                    if nm and lk:
+                        cast.append({"name": nm, "look": lk[:300]})
 
         # Filter to well-formed shots. Empty trailing shots from token
         # truncation are dropped silently here.
@@ -380,6 +423,26 @@ def plan_shots(narration, num_shots, channel: str = "horror",
             # but always fills story_period when we ask.
             if isinstance(sh, dict) and not str(sh.get("period") or "").strip() and story_period:
                 sh["period"] = story_period
+            # Substitute each named cast member's fixed description into
+            # the prompts. The model refers to them by name ("Marcus
+            # opens the door"); the image model has no idea who Marcus
+            # is, so without this every shot invents a new person.
+            #
+            # Appended rather than replacing the name: the name keeps the
+            # sentence readable and the description pins the likeness.
+            # `cast_seed` is stamped so the image provider can hold one
+            # seed across every shot featuring the same person, which is
+            # what actually keeps a face stable between generations.
+            if isinstance(sh, dict) and cast:
+                _ap = str(sh.get("ai_prompt") or "")
+                _vd = str(sh.get("visual_description") or "")
+                _present = [m for m in cast
+                            if m["name"].lower() in (_ap + " " + _vd).lower()]
+                if _present:
+                    _looks = "; ".join(f"{m['name']}: {m['look']}" for m in _present)
+                    sh["ai_prompt"] = f"{_ap}. Character reference — {_looks}"[:1500]
+                    sh["cast_seed"] = _stable_seed(_present[0]["look"])
+                    sh["cast_names"] = [m["name"] for m in _present]
             good.append(sh)
         dropped = len(raw_shots) - len(good)
         if dropped:
@@ -389,6 +452,10 @@ def plan_shots(narration, num_shots, channel: str = "horror",
             # Close enough to the target — accept.
             if story_period:
                 log.info(f"Storyboard: story_period='{story_period}' — {len(good)} shots anchored to this era")
+            if cast:
+                _named = ", ".join(m["name"] for m in cast)
+                _n = sum(1 for sh in good if sh.get("cast_seed"))
+                log.info(f"Storyboard: cast={_named} — {_n}/{len(good)} shots pinned to a fixed likeness")
             return good
 
         # Otherwise keep the best partial in case all attempts come up short.
