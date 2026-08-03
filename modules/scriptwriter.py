@@ -226,6 +226,25 @@ WRITING RULES — follow all of them:
   8. End on ONE final line — a single new fact that makes everything
      above worse. Not a twist; a confirmation of the worst-case
      interpretation the viewer had been pushing away.
+  8b. SPECIFICITY IS THE WHOLE JOB. Every beat needs one detail so
+     precise it feels remembered rather than invented: a time on a
+     clock, a room number, a brand, a street name, a count, a
+     temperature, what someone was wearing. "A strange noise" is
+     nothing; "three taps on the pipe, always at 2:14" is a story.
+     Generic atmosphere is what makes horror boring — a viewer cannot
+     be unsettled by something they cannot picture exactly.
+  8c. ESCALATE IN A NEW DIRECTION EACH TIME. Every beat must be worse
+     than the last in a way the previous beat did not hint at. Repeating
+     the same scare louder is the most common failure. Three beats:
+     something is wrong -> it is aimed at this person -> it has been
+     happening longer than they realised.
+  8d. NEVER EXPLAIN THE PHENOMENON. No ghosts named, no curse
+     described, no rules of the haunting. The moment it is explained it
+     stops being frightening. State what happened; refuse to say why.
+  8e. THE LAST LINE MUST RECONTEXTUALISE AN EARLIER DETAIL — one the
+     viewer already read past without concern. Not a new event: a new
+     meaning for something specific already on screen. That is what
+     makes a Short rewatchable.
   9. LENGTH IS NOT OPTIONAL: narration must be {word_min}-{word_max} words.
      This is a HARD CEILING — a {hard_cap}-word response is rejected.
      Cut adverbs and connective tissue, never the imagery.
@@ -241,6 +260,11 @@ BANNED PHRASES — do not use any of these (or paraphrases):
   - "little did I know", "little did she know", "what happened next",
     "you won't believe"
   - "creaks and groans", "wooden beams", "settling house"
+  - Abstract filler that describes nothing: "an eerie presence", "an
+    unsettling feeling", "something was off", "the air grew cold",
+    "an unexplainable dread", "shadows danced". If a sentence could
+    appear in ANY horror story, it is wasting one of your {word_max}
+    words — replace it with the specific thing that happened.
   - explicit gore: "blood pooling", "intestines", "split skull" — unease,
     not splatter
   - any sexual or romantic language
