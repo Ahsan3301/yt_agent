@@ -58,7 +58,16 @@ MANAGED_KEYS = [
                                  # ~60 imgs/day free per account; rotates on 429-quota.
     "OPENROUTER_API_KEY",        # Second-layer LLM fallback (llama-3.3 free tier)
     "OPENROUTER_API_KEYS_JSON",  # Multi-key rotation (see NVIDIA_NIM_API_KEYS_JSON note)
-    "OPENROUTER_MODEL",          # Optional model override (default llama-3.3-70b-instruct:free)
+    "OPENROUTER_MODEL",          # Optional model override. The previous
+                                 # default AND the stored value were both
+                                 # models OpenRouter no longer serves, so
+                                 # that provider 404'd on every call.
+    "LLM_PRIORITY",              # Provider order, e.g. "agnes,groq,openrouter,nim".
+                                 # Per-channel llm_priority still overrides
+                                 # this for the duration of one render.
+    "AGNES_TEXT_MODEL",          # Default agnes-2.5-flash. `pro` is a
+                                 # reasoning model: 45s vs 1s for no
+                                 # measurable gain at this prompt size.
     "DISCORD_WEBHOOK_URL",       # alerting channel for renders + cleanup
     "YOUTUBE_REFRESH_TOKEN",     # auto-publish to YouTube
     "DEFER_PUBLISH_TO_SIDE_WORKER",  # "1" => GPU workers render only and

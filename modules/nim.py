@@ -259,12 +259,18 @@ GROQ_PRIMARY_FIRST = os.getenv("NIM_GROQ_PRIMARY", "true").lower() != "false"
 #   groq        → Groq llama-3.3-70b-versatile (fastest, strict quota)
 #   openrouter  → OpenRouter's free-tier llama-3.3 (rate-limited)
 # Absent providers are OFF for this render.
-_DEFAULT_LLM_PRIORITY = "nim,openrouter,groq"
+# Order set from measurement, not preference (2026-08-03, same prompt):
+#   agnes-2.5-flash 0.96s best output | groq 0.35s fast+serviceable
+#   openrouter 9.93s strong | nim 51.64s slowest AND weakest
+# NIM is kept last rather than removed: it is a different vendor, so
+# it still has value as the final fallback when the others are
+# rate-limited, which Groq and Agnes both are.
+_DEFAULT_LLM_PRIORITY = "agnes,groq,openrouter,nim"
 
 
 def _llm_priority() -> list[str]:
     raw = os.getenv("LLM_PRIORITY", "").strip() or _DEFAULT_LLM_PRIORITY
-    known = {"nim", "groq", "openrouter"}
+    known = {"nim", "groq", "openrouter", "agnes"}
     out: list[str] = []
     for tok in raw.split(","):
         t = tok.strip().lower()
@@ -300,7 +306,7 @@ def _try_provider(name: str, messages, max_tokens, temperature,
     if name == "openrouter":
         if _OR_POOL.size() == 0:
             return None
-        _or_model = os.getenv("OPENROUTER_MODEL", "").strip() or "meta-llama/llama-3.3-70b-instruct:free"
+        _or_model = os.getenv("OPENROUTER_MODEL", "").strip() or "nvidia/nemotron-3-ultra-550b-a55b:free"
         try:
             c = _openrouter_chat_fallback(messages, max_tokens=max_tokens,
                                           temperature=temperature,
@@ -313,7 +319,73 @@ def _try_provider(name: str, messages, max_tokens, temperature,
             log.debug(f"LLM: OpenRouter ({_or_model}) responded")
             return c
         return None
+    if name == "agnes":
+        key = (os.getenv("AGNES_API_KEY") or "").strip()
+        if not key:
+            return None
+        model = os.getenv("AGNES_TEXT_MODEL", "").strip() or _AGNES_DEFAULT_MODEL
+        try:
+            c = _agnes_chat_fallback(messages, model=model, max_tokens=max_tokens,
+                                     temperature=temperature,
+                                     response_format=response_format,
+                                     timeout=45)
+        except Exception as e:
+            log.warning(f"LLM: Agnes ({model}) failed ({e}); falling to next provider")
+            raise
+        if c and c.strip():
+            log.debug(f"LLM: Agnes ({model}) responded")
+            return c
+        return None
     return None
+
+
+# Agnes text model.
+#
+# Measured 2026-08-03 on the same hook prompt, against the other
+# providers in this chain:
+#
+#   agnes-2.5-flash   0.96s   best output of the six tested
+#   groq              0.35s   fastest, output serviceable but generic
+#   openrouter        9.93s   strong output (nemotron-ultra-550b)
+#   agnes-2.5-pro    45.33s   strong, far too slow to sit inline
+#   nim              51.64s   slowest AND weakest
+#
+# flash rather than pro: pro is a reasoning model and spends 45s
+# thinking for no measurable gain on prompts this size. Both need a
+# generous max_tokens — a low ceiling returns HTTP 200 with empty
+# content because the reasoning tokens consume the budget before any
+# answer is emitted.
+_AGNES_DEFAULT_MODEL = "agnes-2.5-flash"
+_AGNES_BASE = os.getenv("AGNES_BASE_URL", "https://apihub.agnes-ai.com/v1").rstrip("/")
+
+
+def _agnes_chat_fallback(messages, model=None, max_tokens=2048, temperature=0.7,
+                         response_format=None, timeout=45):
+    """Call Agnes' OpenAI-compatible chat endpoint."""
+    key = (os.getenv("AGNES_API_KEY") or "").strip()
+    if not key:
+        return None
+    model = model or _AGNES_DEFAULT_MODEL
+    body = {
+        "model": model,
+        "messages": messages,
+        # Floor the ceiling: these are reasoning models, and a small
+        # max_tokens yields a 200 with empty content rather than an
+        # error, which reads as "provider returned nothing" and silently
+        # falls through to the next one.
+        "max_tokens": max(int(max_tokens or 0), 2048),
+        "temperature": temperature,
+    }
+    if response_format:
+        body["response_format"] = response_format
+    r = requests.post(
+        f"{_AGNES_BASE}/chat/completions",
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        json=body, timeout=timeout,
+    )
+    r.raise_for_status()
+    j = r.json() or {}
+    return ((j.get("choices") or [{}])[0].get("message", {}) or {}).get("content") or ""
 
 
 # ── Groq per-worker circuit breaker ──────────────────────────
@@ -746,7 +818,7 @@ def _openrouter_chat_fallback(messages, max_tokens=2048, temperature=0.7,
     _k = _OR_POOL.pick()
     if not _k:
         raise RuntimeError("no OpenRouter key configured (set OPENROUTER_API_KEY or OPENROUTER_API_KEYS_JSON)")
-    _model = os.getenv("OPENROUTER_MODEL", "").strip() or "meta-llama/llama-3.3-70b-instruct:free"
+    _model = os.getenv("OPENROUTER_MODEL", "").strip() or "nvidia/nemotron-3-ultra-550b-a55b:free"
     # Sanity-check the model string. OpenRouter IDs always have a
     # provider/name shape (e.g. meta-llama/llama-3.3-70b-instruct:free,
     # google/gemma-2-9b-it:free). Values like "openrouter/free" or a
