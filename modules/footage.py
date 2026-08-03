@@ -13,6 +13,8 @@ Music providers (tried until one returns a track):
 All providers gracefully skip when their key is missing.
 """
 import os
+import re
+import time
 import json
 import random
 import logging
@@ -166,6 +168,262 @@ def download_file(url, dest_path):
     except Exception as e:
         log.warning(f"Download failed permanently ({url}): {e}")
         return None
+
+
+def _download_capped(url, dest_path, max_mb):
+    """
+    Stream a download but abort once it exceeds max_mb.
+
+    download_file() has no ceiling, which is fine for stock APIs that
+    only ever hand back web-sized derivatives. The Internet Archive
+    serves the ORIGINAL master alongside its derivatives, and those run
+    to multiple gigabytes — a single unlucky pick would fill a Kaggle
+    worker's disk and take the render down with it. Refusing mid-stream
+    costs one wasted partial download; not refusing costs the job.
+    """
+    limit = int(max_mb) * 1024 * 1024
+    got = 0
+    # Overall deadline as well as a per-read timeout: requests' timeout
+    # is per-socket-operation, so a server that dribbles bytes just
+    # under the timeout can keep a stream alive indefinitely.
+    hard_stop = time.monotonic() + float(os.getenv("ARCHIVE_DOWNLOAD_SEC", "45"))
+    try:
+        with requests.get(url, stream=True, timeout=(10, 20)) as r:
+            r.raise_for_status()
+            # Trust the header when it's there — cheaper than streaming.
+            try:
+                declared = int(r.headers.get("Content-Length") or 0)
+            except (TypeError, ValueError):
+                declared = 0
+            if declared and declared > limit:
+                log.info(f"archive: skipping {declared // (1024*1024)} MB file (cap {max_mb} MB)")
+                return None
+            with open(dest_path, "wb") as f:
+                for chunk in r.iter_content(chunk_size=65536):
+                    got += len(chunk)
+                    if time.monotonic() > hard_stop:
+                        log.info(f"archive: download too slow ({got // (1024*1024)} MB in budget), abandoning")
+                        f.close()
+                        try:
+                            os.remove(dest_path)
+                        except OSError:
+                            pass
+                        return None
+                    if got > limit:
+                        log.info(f"archive: aborting download past {max_mb} MB cap")
+                        f.close()
+                        try:
+                            os.remove(dest_path)
+                        except OSError:
+                            pass
+                        return None
+                    f.write(chunk)
+        return dest_path
+    except Exception as e:
+        log.warning(f"archive download failed ({url}): {e}")
+        try:
+            if os.path.exists(dest_path):
+                os.remove(dest_path)
+        except OSError:
+            pass
+        return None
+
+
+# Licence strings the Internet Archive reports that are safe to reuse
+# commercially. Anything NC (non-commercial) or ND (no-derivatives) is
+# deliberately absent: this footage gets cut into a monetised video, so
+# an NC clip would be a licence breach and an ND clip forbids the edit
+# itself. Items with no licence field at all are also rejected — the
+# Archive hosts plenty of material uploaded without rights clearance,
+# and "unspecified" is not the same as "free".
+_ARCHIVE_OK_LICENCE = (
+    "publicdomain",          # /publicdomain/mark/, /publicdomain/zero/
+    "creativecommons.org/licenses/by/",
+    "creativecommons.org/licenses/by-sa/",
+    "usa.gov",               # US federal works — NASA, NARA, etc.
+)
+
+
+# Collections whose contents are public domain as a matter of fact,
+# whether or not the individual item carries a licenseurl. Most Archive
+# items have no licence field at all (20/20 on one sample query), so
+# without this the provider returns almost nothing. These are not a
+# relaxation of the standard — Prelinger is explicitly dedicated to the
+# public domain, and US federal works are PD by statute (17 USC 105).
+_ARCHIVE_PD_COLLECTIONS = {
+    "prelinger", "prelingerhomemovies",
+    "nasa", "nasa_techdocs",
+    "usnationalarchives", "nationalarchives",
+    "gov.archives.arc", "usgovfilms",
+    "publicmoviescollection", "feature_films_pd",
+}
+
+
+def _archive_licence_ok(item):
+    """True when the item carries a licence we may cut into a monetised video."""
+    lic = " ".join(str(item.get(k) or "") for k in ("licenseurl", "rights", "usage")).lower()
+    if not lic.strip():
+        colls = item.get("collection") or []
+        if isinstance(colls, str):
+            colls = [colls]
+        return any(str(c).lower() in _ARCHIVE_PD_COLLECTIONS for c in colls)
+    if "/nc" in lic or "-nc" in lic or "noncommercial" in lic:
+        return False
+    if "/nd" in lic or "-nd" in lic or "noderiv" in lic:
+        return False
+    return any(tok in lic for tok in _ARCHIVE_OK_LICENCE)
+
+
+def fetch_archive_videos(query, output_dir, count, used_ids):
+    """
+    Internet Archive: real public-domain motion footage, no API key.
+
+    Why this provider exists: every other video source here needs a
+    paid or rate-limited key, and with none configured the pipeline
+    falls back to animated stills — which is what makes generated
+    videos look generic. The Archive's public-domain film collections
+    (Prelinger, NASA, US government newsreels) are actual moving
+    footage, free, and legal to monetise, which is exactly the gap.
+
+    Two public endpoints, neither authenticated:
+      advancedsearch.php  → matching item identifiers
+      metadata/<id>       → the file list for one item
+
+    Deliberately conservative:
+      - only licences cleared for commercial reuse (see above)
+      - only the Archive's own h.264 derivatives, never the master
+      - hard size cap, because masters are gigabytes
+    """
+    if _is_adult_query(query):
+        log.warning(f"skipping archive-search for adult query: {query!r}")
+        return []
+
+    # Hard wall-clock budget for the whole call.
+    #
+    # Measured, not guessed: once the public-domain collections were
+    # accepted, more items cleared the licence gate, and a six-query
+    # test failed to finish a SINGLE query inside 10 minutes. The
+    # Archive serves originals from tape-backed storage and can be very
+    # slow. A footage provider is a best-effort supplement — the
+    # pipeline has other sources and falls back to stills — so it must
+    # give up rather than hold a GPU worker open indefinitely.
+    deadline = time.monotonic() + float(os.getenv("ARCHIVE_BUDGET_SEC", "75"))
+    # 40 MB was too tight: a genuinely relevant haunted-house clip came
+    # back at 49 MB and was thrown away, leaving the render on stills.
+    # The download deadline is what actually protects the worker — a
+    # slow 80 MB file aborts on time regardless — so this only needs to
+    # bound disk, and 80 MB of that is cheap next to a lost shot.
+    max_mb = int(os.getenv("ARCHIVE_MAX_CLIP_MB", "80"))
+    try:
+        r = retry(
+            lambda: requests.get(
+                "https://archive.org/advancedsearch.php",
+                params={
+                    # Scoped to title, NOT free text. The Archive
+                    # indexes full descriptions and transcripts, so a
+                    # bare query matches anything that merely mentions
+                    # the words: "ancient rome" returned a 1950s
+                    # hairdressing film on the first test. Irrelevant
+                    # motion footage is worse than a relevant still —
+                    # it is the exact thing that makes output look
+                    # auto-generated.
+                    "q": f'title:({query}) AND mediatype:(movies)',
+                    # "collection" is required: the licence gate falls
+                    # back to it, and a field not requested here comes
+                    # back absent rather than empty.
+                    "fl[]": ["identifier", "title", "licenseurl", "rights",
+                             "collection", "downloads"],
+                    "rows": max(count * 6, 12),
+                    "page": 1,
+                    "sort[]": "downloads desc",
+                    "output": "json",
+                },
+                timeout=25,
+                headers={"User-Agent": "yt-agent/1.0 (+footage search)"},
+            ),
+            attempts=3, on=(requests.RequestException,), desc="archive-search",
+        )
+        r.raise_for_status()
+        docs = ((r.json() or {}).get("response") or {}).get("docs") or []
+    except Exception as e:
+        log.warning(f"Archive.org search error: {e}")
+        return []
+
+    paths = []
+    probes = 0
+    for d in docs:
+        if len(paths) >= count:
+            break
+        if time.monotonic() > deadline:
+            log.info(f"archive: budget exhausted, returning {len(paths)} clip(s)")
+            break
+        ident = d.get("identifier")
+        if not ident:
+            continue
+        vid = f"archive:{ident}"
+        if vid in used_ids:
+            continue
+        if not _archive_licence_ok(d):
+            continue
+        if _is_adult_item(d.get("title"), ident):
+            continue
+        # Second relevance gate. Even a title-scoped Lucene query ORs
+        # its terms, so "ancient rome" still matches a title containing
+        # only "ancient". Require a real overlap instead.
+        _title = str(d.get("title") or "").lower()
+        _terms = [t for t in re.findall(r"[a-z]{4,}", query.lower())
+                  if t not in ("with", "from", "that", "this", "footage", "video")]
+        if _terms and not any(t in _title or t in ident.lower() for t in _terms):
+            continue
+
+        # Each candidate costs a metadata round trip. Without a cap a
+        # query whose hits all lack usable derivatives would probe every
+        # one of them before returning nothing.
+        probes += 1
+        if probes > max(count * 4, 8):
+            log.info("archive: probe cap reached")
+            break
+        try:
+            m = requests.get(f"https://archive.org/metadata/{ident}", timeout=15,
+                             headers={"User-Agent": "yt-agent/1.0 (+footage search)"})
+            m.raise_for_status()
+            files = (m.json() or {}).get("files") or []
+        except Exception as e:
+            log.warning(f"archive metadata failed for {ident}: {e}")
+            continue
+
+        # Only the Archive's own transcodes. "original" is the
+        # uploader's master: unpredictable codec, sometimes 10 GB.
+        cands = [
+            f for f in files
+            if (f.get("format") or "").lower() in ("h.264", "512kb mpeg4", "mpeg4")
+            and (f.get("source") or "").lower() != "original"
+            and (f.get("name") or "").lower().endswith((".mp4", ".m4v"))
+        ]
+        if not cands:
+            continue
+
+        def _size(f):
+            try:
+                return int(f.get("size") or 0)
+            except (TypeError, ValueError):
+                return 0
+
+        # Smallest acceptable derivative: fastest to pull and already
+        # far larger than the 1080p we cut to.
+        cands.sort(key=lambda f: _size(f) or 1 << 40)
+        pick = cands[0]
+
+        dest = os.path.join(output_dir, f"archive_{ident[:40]}.mp4")
+        log.info(f"Downloading Archive.org {ident} ({_size(pick) // (1024*1024)} MB, {pick.get('format')})")
+        if _download_capped(
+            f"https://archive.org/download/{ident}/{requests.utils.quote(pick['name'])}",
+            dest, max_mb,
+        ):
+            paths.append(dest)
+            used_ids.add(vid)
+            _remember_clip(vid)
+    return paths
 
 
 def _pick_video_file(video_files):
@@ -1021,6 +1279,23 @@ def get_footage(channel_type, output_dir, sources_needed=8, extra_keywords=None,
                     break
                 add(fetch_pixabay_videos(q, output_dir, count=need(), used_ids=used_ids),
                     f"pixabay:{q}", "video")
+
+        # Internet Archive: last of the real-footage providers, first
+        # that needs no key. Placed after the keyed sources so a tenant
+        # who pays for Pexels still gets modern stock, and before the
+        # "popular" catch-all so a topically-relevant public-domain
+        # clip beats a generic trending one.
+        #
+        # This is the only motion-footage provider that works with zero
+        # credentials, which is the current configuration — no Pexels or
+        # Pixabay key is set — so today it is the difference between
+        # real footage and an animated-stills montage.
+        if ON("archive") and need() > 0:
+            for q in queries:
+                if need() <= 0:
+                    break
+                add(fetch_archive_videos(q, output_dir, count=need(), used_ids=used_ids),
+                    f"archive:{q}", "video")
 
         if ON("pexels") and need() > 0:
             add(fetch_pexels_popular(output_dir, count=need(), used_ids=used_ids),
