@@ -1740,6 +1740,17 @@ _AGNES_VIDEO_MODEL = os.getenv("AGNES_VIDEO_MODEL", "agnes-video-v2.0")
 _AGNES_VIDEO_POLL_SECONDS = int(os.getenv("AGNES_VIDEO_POLL_SECONDS", "180"))
 
 
+def _archive_clips_enabled() -> bool:
+    """Whether opening shots may fall back to Internet Archive footage.
+
+    On by default: it costs no credentials and is bounded by the
+    provider's own time budget. Set ARCHIVE_SHOT_CLIPS=0 to force the
+    old stills-only behaviour.
+    """
+    return (os.getenv("ARCHIVE_SHOT_CLIPS", "1").strip().lower()
+            not in ("0", "false", "no", "off"))
+
+
 def _agnes_video_shots() -> int:
     """How many opening shots get a generated clip. 0 disables it.
 
@@ -1752,6 +1763,80 @@ def _agnes_video_shots() -> int:
         return max(0, min(10, int(os.getenv("AGNES_VIDEO_SHOTS", "2"))))
     except Exception:
         return 2
+
+
+def _archive_clip_for_shot(shot: dict, output_dir: str, idx: int, used_ids: set):
+    """Real public-domain motion footage for one shot, or None.
+
+    The image chain produces stills that get pan/zoomed. That is what
+    makes output read as auto-generated, and it is the complaint the
+    Archive provider exists to answer: genuine moving footage, free,
+    no credentials.
+
+    Sits BELOW Agnes in the motion slot rather than replacing it.
+    Agnes generates a clip matching the prompt exactly; the Archive can
+    only return whatever real footage happens to exist, so it is the
+    fallback — but it is the only motion source that works with no key
+    at all, which is the current configuration.
+
+    Never raises: a miss must fall through to a still, because a
+    missing shot kills the render.
+    """
+    try:
+        from modules.footage import fetch_archive_videos
+    except Exception:
+        return None
+    # The visual prompt is written for an image model — long, full of
+    # style adjectives ("cinematic, volumetric fog, 8k"). Archive search
+    # matches titles, so feed it the subject only.
+    raw = (shot.get("query") or shot.get("visual") or shot.get("prompt")
+           or shot.get("description") or "")
+    if not raw:
+        return None
+    # Imported locally: this module has no module-level `re`, only
+    # function-local ones (see line ~580). A module-level re.findall
+    # here would NameError on every call.
+    import re as _re
+    words = [w for w in _re.findall(r"[A-Za-z]{3,}", str(raw))
+             if w.lower() not in _ARCHIVE_STOPWORDS]
+    if not words:
+        return None
+
+    # Progressive narrowing. Archive search ORs its terms and ranks by
+    # downloads, so every extra word reshuffles the results: "abandoned
+    # house" returns a matching clip, while "abandoned house fog"
+    # returns nothing because the good hit drops past the provider's
+    # probe cap. Try the fuller query first for precision, then fall
+    # back to the two-word core rather than giving up.
+    tried = []
+    for n in (3, 2):
+        query = " ".join(words[:n]).strip()
+        if not query or query in tried:
+            continue
+        tried.append(query)
+        try:
+            got = fetch_archive_videos(query, output_dir, count=1, used_ids=used_ids)
+        except Exception as e:
+            log.info(f"archive-clip: shot {idx} lookup failed: {e}")
+            return None
+        if got:
+            log.info(f"archive-clip: shot {idx} matched on {query!r}")
+            return {"type": "video", "path": got[0],
+                    "origin": "archive-video", "score": 6}
+    return None
+
+
+# Style vocabulary that image prompts are full of and that means
+# nothing to a footage archive's title index.
+_ARCHIVE_STOPWORDS = {
+    "cinematic", "photorealistic", "realistic", "detailed", "highly", "ultra",
+    "volumetric", "dramatic", "moody", "atmospheric", "eerie", "ominous",
+    "shot", "photo", "photograph", "image", "view", "scene", "style",
+    "lighting", "light", "dark", "colour", "color", "grain", "film",
+    "wide", "close", "closeup", "angle", "lens", "depth", "field", "bokeh",
+    "the", "and", "with", "from", "that", "this", "into", "over", "under",
+    "digital", "art", "render", "rendering", "quality", "masterpiece",
+}
 
 
 def _agnes_video_generate(prompt: str, output_dir: str, idx: int, seconds: float = 5.0):
@@ -2406,13 +2491,24 @@ def fetch_shots(shots, output_dir, channel="horror", preset_sources=None,
             # clip earns more there than anywhere else in the video —
             # and capping it keeps the ~90 s/clip cost bounded instead
             # of adding half an hour to every render.
-            if idx < _agnes_video_shots() and _agnes_key():
-                _vp = (shot.get("visual") or shot.get("prompt")
-                       or shot.get("description") or "")
-                if _vp:
-                    src = _agnes_video_generate(_vp, output_dir, idx)
-                    if src is None:
-                        log.info(f"Shot {idx+1}: video unavailable, using a still instead")
+            if idx < _agnes_video_shots():
+                if _agnes_key():
+                    _vp = (shot.get("visual") or shot.get("prompt")
+                           or shot.get("description") or "")
+                    if _vp:
+                        src = _agnes_video_generate(_vp, output_dir, idx)
+                # Free real footage when Agnes is absent or missed.
+                # Without this the motion slot silently degrades to a
+                # still on any worker with no Agnes key — which is
+                # every worker today.
+                if src is None and _archive_clips_enabled():
+                    with used_lock:
+                        _snap = set(used_ids)
+                    src = _archive_clip_for_shot(shot, output_dir, idx, _snap)
+                    with used_lock:
+                        used_ids.update(_snap)
+                if src is None:
+                    log.info(f"Shot {idx+1}: no motion source, using a still instead")
             if src is None:
                 # Snapshot used_ids under lock so the provider sees a
                 # consistent view; merge new additions back under lock.
