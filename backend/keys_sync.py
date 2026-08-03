@@ -61,6 +61,13 @@ MANAGED_KEYS = [
     "OPENROUTER_MODEL",          # Optional model override (default llama-3.3-70b-instruct:free)
     "DISCORD_WEBHOOK_URL",       # alerting channel for renders + cleanup
     "YOUTUBE_REFRESH_TOKEN",     # auto-publish to YouTube
+    "DEFER_PUBLISH_TO_SIDE_WORKER",  # "1" => GPU workers render only and
+                                 # hand the YouTube upload to the
+                                 # always-on side-worker. Measured: the
+                                 # upload is up to 76% of a Kaggle job
+                                 # with the GPU idle throughout.
+    "AGNES_VIDEO_SHOTS",         # how many opening shots get a real
+                                 # generated clip instead of a still
     "AGNES_API_KEY",             # Agnes AI — image generation provider. The
                                  # provider has been implemented in
                                  # shotfinder.py all along; it was never in

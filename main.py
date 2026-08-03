@@ -802,6 +802,25 @@ def run_pipeline(
                             # why this feature could be entirely dead
                             # without leaving a single trace.
                             log.warning(f"seo_borrower.find_viral_pool failed: {_sb_e!r}")
+
+                    # Merge in the ACCUMULATED niche bank on top of this
+                    # render's three-video lookup. The daily sweep pools
+                    # weeks of top performers, so it knows the niche's
+                    # durable keywords rather than whatever happened to
+                    # rank for one topic today. Outside the topic_seed
+                    # branch on purpose: the bank is per-NICHE, so it is
+                    # useful even when this render had no seed to search.
+                    try:
+                        from modules import niche_bank as _nb
+                        _bank = _nb.top_tags(str(channel_cfg.get("niche") or channel_type or ""))
+                        if _bank:
+                            _seen = {t.lower() for t in (borrowed_tags or [])}
+                            borrowed_tags = list(borrowed_tags or []) + [
+                                t for t in _bank if t.lower() not in _seen
+                            ]
+                            log.info("niche_bank: +%d accumulated niche tag(s)", len(_bank))
+                    except Exception as _nb_e:
+                        log.warning(f"niche_bank lookup skipped: {_nb_e!r}")
                 # What has actually worked on THIS channel. Stronger
                 # signal than competitor titles — same audience — but
                 # only once enough videos have settled view counts.
@@ -1058,7 +1077,14 @@ def run_pipeline(
             # engages when one is set.
             _defer = (os.getenv("DEFER_PUBLISH_TO_SIDE_WORKER", "").strip().lower()
                       in ("1", "true", "yes"))
-            _is_gpu_worker = (os.getenv("INSTANCE_TIER", "").strip().lower() == "gpu")
+            # Must match backend/registry.py, which defaults INSTANCE_TIER
+            # to "gpu" when unset. Kaggle and Colab never set it
+            # explicitly (they rely on that default); only the Oracle
+            # side-worker sets it, to "dashboard". Defaulting to "" here
+            # instead would compare "" == "gpu" on every GPU worker and
+            # the deferral would never fire anywhere — dead code that
+            # looks live.
+            _is_gpu_worker = (os.getenv("INSTANCE_TIER", "gpu").strip().lower() == "gpu")
             if _defer and _is_gpu_worker and publish_at:
                 log.info(
                     "Deferring YouTube upload to the side-worker: this is a GPU "
