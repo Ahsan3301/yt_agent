@@ -92,8 +92,34 @@ async function _handler(req: NextRequest) {
     // many hours earlier, and the upload hands YouTube an explicit
     // publishAt so the video is released at the target moment no matter
     // when the render actually finished. Late render, correct publish.
+    // How far ahead of the publish hour a render is queued.
+    //
+    // Was 4, chosen without data. Measured across 228 completed jobs
+    // (queue -> finish, which is what actually has to fit):
+    //
+    //     p50  83 min      p90 174 min      p99 357 min
+    //     p75 127 min      p95 228 min      max 450 min
+    //
+    //   4h -> 10/228 (4.4%) miss their publish slot
+    //   6h ->  2/228 (0.9%)
+    //   8h ->  0/228 (0%)
+    //
+    // 6 is the knee: it removes 80% of the misses for two extra hours
+    // of lead. 8 buys the last 0.9% but renders every video most of a
+    // day early, which ages topical content and widens the window for
+    // something to break between render and publish.
+    //
+    // Worth knowing where the time goes: the render itself is ~12 min
+    // median. The rest is waiting for a worker to come online (p50 57
+    // min, p90 140 min), so this number is really absorbing worker
+    // availability, not compute. Channels that can fall back to the
+    // always-on Oracle worker sit at the fast end of that spread.
+    //
+    // A missed slot is not a lost video: uploader._normalise_publish_at
+    // drops a publish_at that has already passed and publishes
+    // immediately. The cost is landing off the target hour.
     const LEAD_HOURS = Math.max(1, Math.min(12,
-      Number(await getConfig("RENDER_LEAD_HOURS", "")) || 4));
+      Number(await getConfig("RENDER_LEAD_HOURS", "")) || 6));
     // How late a missed slot may still be fired. Wide enough to cover a
     // deploy, a restart, or a few failed ticks; narrow enough that a
     // catch-up never lands next to the following day's slot.
