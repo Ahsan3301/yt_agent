@@ -148,6 +148,9 @@ async function _handler(req: NextRequest) {
       language: string | null;
       voice: string | null;
       tone: string | null;
+      // Per-channel footage mode: stills | standard | motion.
+      // Blank/absent keeps the pre-existing behaviour.
+      footage_mode: string | null;
       privacy: "public" | "unlisted" | "private" | null;
       youtube_account_id: string | null;
       unbound: boolean;
@@ -341,6 +344,8 @@ async function _handler(req: NextRequest) {
             language: (typeof c.language === "string" && c.language) ? String(c.language) : null,
             voice:    (typeof c.voice === "string" && c.voice) ? String(c.voice) : null,
             tone:     (typeof c.tone === "string" && c.tone) ? String(c.tone) : null,
+            footage_mode: (typeof c.footage_mode === "string" && c.footage_mode)
+              ? String(c.footage_mode) : null,
             privacy:  (c.privacy === "public" || c.privacy === "unlisted" || c.privacy === "private") ? c.privacy : null,
             youtube_account_id: yt,
             unbound: !yt,
@@ -381,7 +386,7 @@ async function _handler(req: NextRequest) {
             owner_user_id: FOUNDER,
             niche, channel_name: niche, description: "",
             web_research: null, real_events: null, language: null, voice: null,
-            tone: null, privacy: null,
+            tone: null, privacy: null, footage_mode: null,
             youtube_account_id: inherited,
             unbound: !inherited,
             allowed_workers: [],
@@ -520,6 +525,7 @@ async function _handler(req: NextRequest) {
         language:     slot.language,
         voice_override: slot.voice,
         tone_override: slot.tone,
+        footage_mode: slot.footage_mode || "",
         privacy_override: slot.privacy,
         youtube_account_id: slot.youtube_account_id,
         // When true, this scheduled slot didn't find a bound YouTube

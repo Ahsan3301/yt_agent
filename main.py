@@ -308,6 +308,11 @@ def run_pipeline(
     # None = fall back to settings.upload.privacy (global default).
     privacy_override: Optional[str] = None,
     publish_at=None,
+    # Per-channel footage mode — "stills" | "standard" | "motion".
+    # Controls whether this channel's shots may use generated clips and
+    # real archive footage, or stay on the image chain. None/blank keeps
+    # the pre-existing behaviour. See shotfinder.FOOTAGE_MODES.
+    footage_mode: Optional[str] = None,
 ):
     """
     Execute the full automation pipeline for one video.
@@ -955,6 +960,7 @@ def run_pipeline(
                 shots, clips_dir, channel=channel_type,
                 preset_sources=preset_sources,
                 tone_override=_tone_clean, language=_pipeline_lang,
+                footage_mode=footage_mode,
             ), run_id=run_id)
             # Music separately — same provider chain as before, just no images.
             from modules.footage import get_music, MUSIC_KEYWORDS
@@ -1012,6 +1018,7 @@ def run_pipeline(
                 shots, clips_dir, channel=channel_type,
                 preset_sources=[],
                 tone_override=_tone_clean, language=_pipeline_lang,
+                footage_mode=footage_mode,
             ), run_id=run_id)
             # CC BY / CC BY-SA footage is only licensed if the author is
             # credited, so this has to survive as far as the uploader.

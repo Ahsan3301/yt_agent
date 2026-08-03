@@ -50,6 +50,7 @@ type Channel = {
   // tone bleeds across channels if only set in global /settings; setting
   // it here scopes it to this channel only.
   tone?: string | null;
+  footage_mode?: string | null;
   privacy?: "public" | "unlisted" | "private" | null;
   // Per-channel Discord webhook. Null → use global DISCORD_WEBHOOK_URL.
   discord_webhook?: string | null;
@@ -698,6 +699,7 @@ function ChannelForm({
     ),
   );
   const [tone, setTone] = useState<string>(initial?.tone || "");
+  const [footageMode, setFootageMode] = useState<string>(initial?.footage_mode || "standard");
   const [privacy, setPrivacy] = useState<"" | "public" | "unlisted" | "private">(
     (initial?.privacy as "public" | "unlisted" | "private" | undefined) || "",
   );
@@ -872,6 +874,7 @@ function ChannelForm({
       run_at_hour: runAtHour,
       timezone: timezone.trim() || null,
       tone: tone.trim() || null,
+      footage_mode: footageMode || null,
       privacy: privacy || null,
       discord_webhook: discordWebhook.trim() || null,
       allowed_workers: workers,
@@ -1109,6 +1112,25 @@ function ChannelForm({
           <div className="text-[10px] text-neutral-500 mt-1">
             Overrides the niche preset&apos;s tone JUST for this channel.
             Leave blank to inherit. Free-text — dropdown suggests common tones.
+          </div>
+        </div>
+        <div>
+          <label className="label">Footage</label>
+          <select
+            className="input w-full"
+            value={footageMode}
+            onChange={(e) => setFootageMode(e.target.value)}
+          >
+            <option value="standard">Standard — generated clips on the opening shots</option>
+            <option value="stills">Stills only — AI images, no motion</option>
+            <option value="motion">Motion — adds real archive footage</option>
+          </select>
+          <div className="text-[10px] text-neutral-500 mt-1">
+            <b>Standard</b> is what every channel did before this setting
+            existed. <b>Motion</b> also pulls real public-domain footage
+            from the Internet Archive and widens the motion window — the
+            providers behind it are rate-limited, so try it on one
+            channel before rolling it out.
           </div>
         </div>
         <div>

@@ -157,6 +157,9 @@ def submit(payload: dict[str, Any]) -> dict[str, Any]:
         "tone_override":       str(payload.get("tone_override") or "")[:40] or None,
         "privacy_override":    str(payload.get("privacy_override") or "")[:12] or None,
         "publish_at":          payload.get("publish_at") or None,
+        # Per-channel footage mode ("stills"/"standard"/"motion").
+        # Blank means the pipeline keeps pre-existing behaviour.
+        "footage_mode":        str(payload.get("footage_mode") or "")[:16] or None,
         # YouTube account id (multi-channel mode). None falls back to
         # the legacy single api_keys/YOUTUBE_REFRESH_TOKEN credential.
         "youtube_account_id":  str(payload.get("youtube_account_id") or "")[:80] or None,
@@ -224,6 +227,7 @@ def adopt_remote(remote_job: dict[str, Any]) -> bool:
         "tone_override":       str(remote_job.get("tone_override") or "")[:40] or None,
         "privacy_override":    str(remote_job.get("privacy_override") or "")[:12] or None,
         "publish_at":          remote_job.get("publish_at") or None,
+        "footage_mode":        str(remote_job.get("footage_mode") or "")[:16] or None,
         "youtube_account_id":  str(remote_job.get("youtube_account_id") or "")[:80] or None,
         # Per-channel Cloudflare Workers AI creds — MUST be propagated
         # or channel_cf.apply_from_job on this worker will fall back to
@@ -470,6 +474,7 @@ def _run_one(job: dict[str, Any]):
             tone_override=job.get("tone_override"),
             privacy_override=job.get("privacy_override"),
             publish_at=job.get("publish_at"),
+            footage_mode=job.get("footage_mode"),
         )
     finally:
         _cf.restore_env(_cf_snap)

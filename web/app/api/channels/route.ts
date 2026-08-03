@@ -39,6 +39,7 @@ type ChannelDoc = {
   voice?: string | null;
   youtube_account_id?: string | null;
   tone?: string | null;
+  footage_mode?: string | null;
   privacy?: "public" | "unlisted" | "private" | null;
   discord_webhook?: string | null;
   // Ordered priority list of workers this channel is allowed to use.
@@ -454,6 +455,14 @@ export async function POST(req: NextRequest) {
         : null,
       tone: (typeof body.tone === "string" && body.tone.trim())
         ? body.tone.trim().slice(0, 40)
+        : null,
+      // stills | standard | motion. Anything else is stored as null and
+      // read as "standard" by the worker, so a bad value degrades to
+      // the pre-existing behaviour rather than to no footage at all.
+      footage_mode: (body.footage_mode === "stills" ||
+                     body.footage_mode === "standard" ||
+                     body.footage_mode === "motion")
+        ? body.footage_mode
         : null,
       privacy: (body.privacy === "public" || body.privacy === "unlisted" || body.privacy === "private")
         ? body.privacy

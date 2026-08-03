@@ -123,6 +123,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         // Per-channel tone + privacy overrides — carried on the job so
         // the worker's run_pipeline gets them without a PB round-trip.
         tone_override: (typeof c.tone === "string" && c.tone) ? String(c.tone) : null,
+        footage_mode: (typeof c.footage_mode === "string" && c.footage_mode)
+          ? String(c.footage_mode) : "",
         privacy_override: (c.privacy === "public" || c.privacy === "unlisted" || c.privacy === "private") ? String(c.privacy) : null,
         youtube_account_id: yt,
         unbound: !yt,

@@ -2419,8 +2419,48 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror",
     return None
 
 
+# Per-channel footage modes.
+#
+# Motion is opt-in per channel rather than a global switch because the
+# providers behind it are rate-limited and uneven: Agnes has generation
+# quota, and the Internet Archive only sometimes has on-topic footage.
+# Rolling it to every channel at once would spend that budget on
+# channels the operator has not evaluated yet.
+#
+#   stills    AI images only. No generated clips, no archive footage.
+#   standard  DEFAULT. What every channel did before real footage
+#             existed: generated clips for the opening shots, stills
+#             for the rest. Chosen as the default so enabling nothing
+#             changes nothing.
+#   motion    standard PLUS real public-domain archive footage, and
+#             more shots eligible for motion.
+FOOTAGE_MODES = ("stills", "standard", "motion")
+DEFAULT_FOOTAGE_MODE = "standard"
+
+
+def _normalise_footage_mode(mode) -> str:
+    m = str(mode or "").strip().lower()
+    return m if m in FOOTAGE_MODES else DEFAULT_FOOTAGE_MODE
+
+
+def _motion_budget(mode: str) -> int:
+    """How many opening shots may use motion, for this mode."""
+    if mode == "stills":
+        return 0
+    base = _agnes_video_shots()
+    if mode == "motion":
+        # Motion channels get a wider window, since that is the whole
+        # point of putting a channel in this mode.
+        try:
+            return max(base, int(os.getenv("MOTION_MODE_SHOTS", "4")))
+        except Exception:
+            return max(base, 4)
+    return base
+
+
 def fetch_shots(shots, output_dir, channel="horror", preset_sources=None,
-                tone_override: str = "", language: str = ""):
+                tone_override: str = "", language: str = "",
+                footage_mode: str = DEFAULT_FOOTAGE_MODE):
     """For each shot, fetch one image (with vision validation). Returns the
     list of source dicts in shot order. Missing shots are simply skipped.
 
@@ -2442,6 +2482,12 @@ def fetch_shots(shots, output_dir, channel="horror", preset_sources=None,
     used_ids = set(F._load_used_clips())
     presets = list(preset_sources or [])
     total = max(1, len(shots))
+
+    # Per-channel footage mode. Unknown/blank falls back to the
+    # pre-existing behaviour, so a channel that has never been
+    # configured renders exactly as it did before this setting existed.
+    _mode = _normalise_footage_mode(footage_mode)
+    log.info(f"footage mode: {_mode} (motion budget: {_motion_budget(_mode)} shot(s))")
 
     # Parallelism: a single SDXL inference at 1024x576 uses ~4-5 GB
     # VRAM, so 3 concurrent shots fits comfortably on a 16 GB T4
@@ -2491,17 +2537,18 @@ def fetch_shots(shots, output_dir, channel="horror", preset_sources=None,
             # clip earns more there than anywhere else in the video —
             # and capping it keeps the ~90 s/clip cost bounded instead
             # of adding half an hour to every render.
-            if idx < _agnes_video_shots():
+            if idx < _motion_budget(_mode):
                 if _agnes_key():
                     _vp = (shot.get("visual") or shot.get("prompt")
                            or shot.get("description") or "")
                     if _vp:
                         src = _agnes_video_generate(_vp, output_dir, idx)
-                # Free real footage when Agnes is absent or missed.
-                # Without this the motion slot silently degrades to a
-                # still on any worker with no Agnes key — which is
-                # every worker today.
-                if src is None and _archive_clips_enabled():
+                # Real archive footage — ONLY for channels explicitly
+                # put in motion mode. Agnes has generation quota and
+                # the Archive's coverage is uneven, so this stays
+                # opt-in until the operator has judged the result on a
+                # channel they chose.
+                if src is None and _mode == "motion" and _archive_clips_enabled():
                     with used_lock:
                         _snap = set(used_ids)
                     src = _archive_clip_for_shot(shot, output_dir, idx, _snap)
