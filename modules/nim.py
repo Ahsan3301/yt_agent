@@ -369,11 +369,21 @@ def _agnes_chat_fallback(messages, model=None, max_tokens=2048, temperature=0.7,
     body = {
         "model": model,
         "messages": messages,
-        # Floor the ceiling: these are reasoning models, and a small
-        # max_tokens yields a 200 with empty content rather than an
-        # error, which reads as "provider returned nothing" and silently
-        # falls through to the next one.
-        "max_tokens": max(int(max_tokens or 0), 2048),
+        # Floor the ceiling generously: these are reasoning models, so
+        # the budget covers thinking tokens BEFORE any answer is emitted.
+        #
+        # 2048 was not enough and took every render down. The scriptwriter
+        # asks for 2048 and wants one JSON object holding a 160-200 word
+        # narration plus youtube_title, description and tags. Agnes spent
+        # the budget on the narration and got cut off mid-sentence, so
+        # the object arrived with the narration only. The schema check
+        # reported "missing field: youtube_title" three attempts running
+        # and the pipeline aborted — a truncation that looks exactly like
+        # a model that cannot follow a schema.
+        #
+        # Verified separately: given room, Agnes returns all four keys
+        # every time, with or without response_format.
+        "max_tokens": max(int(max_tokens or 0), 8000),
         "temperature": temperature,
     }
     if response_format:
