@@ -188,7 +188,11 @@ def _download_capped(url, dest_path, max_mb):
     # under the timeout can keep a stream alive indefinitely.
     hard_stop = time.monotonic() + float(os.getenv("ARCHIVE_DOWNLOAD_SEC", "45"))
     try:
-        with requests.get(url, stream=True, timeout=(10, 20)) as r:
+        # Wikimedia (and some Archive mirrors) return 403 to the default
+        # python-requests agent. Every download from this helper 403'd
+        # until this was added.
+        with requests.get(url, stream=True, timeout=(10, 20),
+                          headers={"User-Agent": "yt-agent/1.0 (+footage fetch)"}) as r:
             r.raise_for_status()
             # Trust the header when it's there — cheaper than streaming.
             try:
@@ -365,7 +369,7 @@ def fetch_archive_videos(query, output_dir, count, used_ids):
             continue
         if not _archive_licence_ok(d):
             continue
-        if _is_adult_item(d.get("title"), ident):
+        if _is_adult_item(d.get("title"), ident) or _is_distressing(d.get("title"), ident):
             continue
         # Second relevance gate. Even a title-scoped Lucene query ORs
         # its terms, so "ancient rome" still matches a title containing
@@ -424,6 +428,31 @@ def fetch_archive_videos(query, output_dir, count, used_ids):
             used_ids.add(vid)
             _remember_clip(vid)
     return paths
+
+
+# Real footage of real harm.
+#
+# Public archives carry a lot of police and agency material, and it is
+# public domain precisely because a government body released it. A
+# "city traffic" search during development surfaced "Pedestrian killed
+# in Hit and Run Traffic Collision" — genuine footage of someone being
+# killed, correctly licensed and completely unusable.
+#
+# Cutting that into a monetised entertainment video would be grotesque
+# regardless of what the licence permits, and it is the kind of thing
+# that gets a channel struck. The licence gate cannot catch it because
+# the licence is fine; only the subject matter is the problem.
+_DISTRESSING = (
+    "killed", "death", "fatal", "died", "shooting", "shot dead", "homicide",
+    "murder", "suicide", "corpse", "autopsy", "execution", "massacre",
+    "casualt", "victim", "wounded", "injur", "crash victim", "hit and run",
+    "collision", "terror", "atrocit", "war crime", "funeral",
+)
+
+
+def _is_distressing(*text_fields) -> bool:
+    blob = " ".join(str(t or "") for t in text_fields).lower()
+    return any(tok in blob for tok in _DISTRESSING)
 
 
 def _pick_video_file(video_files):
