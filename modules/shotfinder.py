@@ -1961,7 +1961,41 @@ def _agnes_video_generate(prompt: str, output_dir: str, idx: int, seconds: float
     return {"type": "video", "path": dest, "origin": "agnes-video", "score": 8}
 
 
-def _agnes_generate(prompt, output_dir, trial, negative_prompt=""):
+# ── character anchors ────────────────────────────────────────
+# First generated image per character, reused as an image-to-image
+# reference for every later shot featuring them. Cleared at the start
+# of each render so one video's cast can never leak into the next.
+#
+# Keyed by the cast name the storyboard assigned. Thread-safe because
+# shots are fetched in a pool and two shots with the same character can
+# finish out of order — whoever lands first becomes the anchor.
+_CAST_ANCHORS: dict[str, str] = {}
+_CAST_ANCHOR_LOCK = __import__("threading").Lock()
+
+
+def reset_cast_anchors() -> None:
+    with _CAST_ANCHOR_LOCK:
+        _CAST_ANCHORS.clear()
+
+
+def _cast_anchor_get(names) -> str:
+    with _CAST_ANCHOR_LOCK:
+        for n in (names or []):
+            p = _CAST_ANCHORS.get(n)
+            if p and os.path.exists(p):
+                return p
+    return ""
+
+
+def _cast_anchor_put(names, path: str) -> None:
+    if not path or not os.path.exists(path):
+        return
+    with _CAST_ANCHOR_LOCK:
+        for n in (names or []):
+            _CAST_ANCHORS.setdefault(n, path)
+
+
+def _agnes_generate(prompt, output_dir, trial, negative_prompt="", ref_image_path=""):
     """Generate one image via Agnes AI. Returns (path, seed) on success,
     (None, seed) on any failure. OpenAI-images-style endpoint:
       POST {base}/v1/images/generations
@@ -1982,11 +2016,41 @@ def _agnes_generate(prompt, output_dir, trial, negative_prompt=""):
     body = {
         "model": _AGNES_IMAGE_MODEL,
         "prompt": final_prompt,
-        # Portrait 9:16 for Shorts. Tested: 576x1024 request → ~736x1312
-        # PNG. The editor's ken-burns pan/crop normalises the rest.
-        "size": os.getenv("AGNES_IMAGE_SIZE", "576x1024"),
+        # `size` is a quality tier (1K/2K/3K/4K) and `ratio` picks the
+        # aspect — per the model reference. We previously sent an exact
+        # "576x1024", which the service accepted as a legacy value and
+        # normalised anyway; asking for 2K/9:16 gets a bigger source
+        # frame, so the editor's crop to 1080x1920 upscales less.
+        "size": os.getenv("AGNES_IMAGE_SIZE", "2K"),
+        "ratio": "9:16",
         "extra_body": {"response_format": "url"},
     }
+    # Character reference. The cast description alone keeps a face
+    # roughly on-model for a video clip but visibly drifts between
+    # separate stills, because two different prompts produce two
+    # different people no matter how the person is described.
+    #
+    # image-to-image fixes that properly: the FIRST shot featuring a
+    # character becomes the anchor, and every later shot with that
+    # character is generated with the anchor attached, so the model
+    # matches a face it can see instead of one it has to imagine.
+    #
+    # Sent as a base64 data URI, which the reference explicitly allows
+    # alongside public URLs — that removes the need to upload each
+    # still somewhere public first.
+    if ref_image_path and os.path.exists(ref_image_path):
+        try:
+            import base64 as _b64
+            with open(ref_image_path, "rb") as _f:
+                _enc = _b64.b64encode(_f.read()).decode("ascii")
+            body["extra_body"]["image"] = [f"data:image/jpeg;base64,{_enc}"]
+            body["prompt"] = (
+                f"{final_prompt}. Keep the person's face, hair and clothing "
+                f"identical to the reference image; change only the scene."
+            )[:900]
+            log.info("agnes: generating with a character reference")
+        except Exception as _e:
+            log.warning(f"agnes: could not attach character reference: {_e}")
     dest = os.path.join(output_dir, f"agnes_{seed:08x}.jpg")
     try:
         r = requests.post(
@@ -2092,6 +2156,10 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror",
     providers = load_settings().get("providers", {}) or {}
     threshold = int(vid_cfg.get("vision_judge_threshold", 4))
     judge_on = bool(vid_cfg.get("vision_judge_enabled", True)) and nim.is_available()
+
+    # Anchor for any character already drawn in an earlier shot. Empty
+    # on the first appearance, which is what makes that shot the anchor.
+    _cast_ref = _cast_anchor_get(shot.get("cast_names") or [])
 
     visual = shot.get("visual_description") or shot.get("search_query") or ""
     query = shot.get("search_query") or ""
@@ -2375,9 +2443,22 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror",
             )
             prompt_to_use = crafted or ai_prompt
             log.info(f"    {provider_name} prompt (try {trial+1}): {(crafted or ai_prompt)[:90]}...")
-            path, seed = fn(prompt_to_use, output_dir, trial, negative_prompt)
+            # Character anchor: only Agnes supports image-to-image, so
+            # only it takes the reference. Everything else keeps the
+            # signature it always had.
+            if provider_name == "agnes" and _cast_ref:
+                path, seed = fn(prompt_to_use, output_dir, trial,
+                                negative_prompt, ref_image_path=_cast_ref)
+            else:
+                path, seed = fn(prompt_to_use, output_dir, trial, negative_prompt)
             if not path:
                 continue
+            # First image of a character becomes its anchor. setdefault
+            # inside the store means a later shot never overwrites it,
+            # so every appearance references the same frame rather than
+            # drifting one hop at a time.
+            if provider_name == "agnes" and not _cast_ref:
+                _cast_anchor_put(shot.get("cast_names") or [], path)
             tag = f"{provider_name}:{seed}"
             if judge_on and threshold >= 0:
                 # Only pay the vision-judge round-trip when threshold
@@ -2531,6 +2612,10 @@ def fetch_shots(shots, output_dir, channel="horror", preset_sources=None,
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     reset_pollinations_breaker()
     reset_hf_breaker()
+    # Drop the previous render's character anchors before this one
+    # starts, or a worker that stays up would reference the last
+    # video's protagonist in this video's shots.
+    reset_cast_anchors()
     used_ids = set(F._load_used_clips())
     presets = list(preset_sources or [])
     total = max(1, len(shots))
