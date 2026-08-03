@@ -276,7 +276,44 @@ def _resumable_upload(request, max_retries=8):
     return response
 
 
-def upload_video(video_path, script_data, channel_type="horror", youtube_account_id=None, language=None, privacy_override=None):
+def _normalise_publish_at(value) -> str | None:
+    """Coerce a publish target into the RFC-3339 UTC string YouTube wants.
+
+    Accepts an epoch (int/float/numeric string) or an ISO-8601 string.
+    Returns None when the moment has already passed — publishing
+    immediately is the right behaviour for a stale target, and YouTube
+    rejects a publishAt in the past anyway, which would fail the whole
+    upload rather than just the scheduling.
+    """
+    import datetime as _dt
+    if value in (None, "", 0):
+        return None
+    ts = None
+    if isinstance(value, (int, float)):
+        ts = float(value)
+    else:
+        s = str(value).strip()
+        if not s:
+            return None
+        try:
+            ts = float(s)                      # numeric string -> epoch
+        except ValueError:
+            dt = _dt.datetime.fromisoformat(s.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=_dt.timezone.utc)
+            ts = dt.timestamp()
+    # Seconds vs milliseconds, same heuristic the TS side uses.
+    if ts > 1e11:
+        ts /= 1000.0
+    # A target within the next couple of minutes is not worth scheduling
+    # — YouTube needs lead time to process, and a near-miss can be
+    # rejected as past by the time the request lands.
+    if ts <= time.time() + 120:
+        return None
+    return _dt.datetime.fromtimestamp(ts, _dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def upload_video(video_path, script_data, channel_type="horror", youtube_account_id=None, language=None, privacy_override=None, publish_at=None):
     """
     Upload video to YouTube; return video ID on success, None on failure.
     Also generates and uploads a thumbnail (best-effort).
@@ -362,6 +399,34 @@ def upload_video(video_path, script_data, channel_type="horror", youtube_account
             "selfDeclaredMadeForKids": made_for_kids,
         },
     }
+
+    # Scheduled publish.
+    #
+    # Without this, a video goes live the moment its render finishes —
+    # and renders take anywhere from ~20 min on GPU to several hours on
+    # the CPU worker. So the publish time was effectively "whenever the
+    # encode happened to end", which is both unpredictable and almost
+    # never the hour the audience is actually watching.
+    #
+    # YouTube will hold a video and release it itself at `publishAt`,
+    # which decouples publish time from render time entirely: render
+    # early, hand YouTube the exact target moment, and it goes live on
+    # time even if the render finished four hours prior.
+    #
+    # The API REQUIRES privacyStatus=private for this — setting
+    # publishAt on a public video is rejected, and (worse) a video left
+    # public would go live immediately, defeating the whole mechanism.
+    # So we force private here and let YouTube flip it at the timestamp.
+    if publish_at:
+        try:
+            _pa = _normalise_publish_at(publish_at)
+        except Exception as _e:
+            _pa = None
+            log.warning(f"publish_at {publish_at!r} unusable ({_e}); publishing immediately")
+        if _pa:
+            body["status"]["privacyStatus"] = "private"
+            body["status"]["publishAt"] = _pa
+            log.info(f"Scheduled publish: holding as private until {_pa}")
 
     media = MediaFileUpload(
         video_path,

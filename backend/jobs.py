@@ -156,6 +156,7 @@ def submit(payload: dict[str, Any]) -> dict[str, Any]:
         # niche preset defaults.
         "tone_override":       str(payload.get("tone_override") or "")[:40] or None,
         "privacy_override":    str(payload.get("privacy_override") or "")[:12] or None,
+        "publish_at":          payload.get("publish_at") or None,
         # YouTube account id (multi-channel mode). None falls back to
         # the legacy single api_keys/YOUTUBE_REFRESH_TOKEN credential.
         "youtube_account_id":  str(payload.get("youtube_account_id") or "")[:80] or None,
@@ -222,6 +223,7 @@ def adopt_remote(remote_job: dict[str, Any]) -> bool:
         "voice_override":      str(remote_job.get("voice_override") or "")[:80] or None,
         "tone_override":       str(remote_job.get("tone_override") or "")[:40] or None,
         "privacy_override":    str(remote_job.get("privacy_override") or "")[:12] or None,
+        "publish_at":          remote_job.get("publish_at") or None,
         "youtube_account_id":  str(remote_job.get("youtube_account_id") or "")[:80] or None,
         # Per-channel Cloudflare Workers AI creds — MUST be propagated
         # or channel_cf.apply_from_job on this worker will fall back to
@@ -467,6 +469,7 @@ def _run_one(job: dict[str, Any]):
             youtube_account_id=job.get("youtube_account_id"),
             tone_override=job.get("tone_override"),
             privacy_override=job.get("privacy_override"),
+            publish_at=job.get("publish_at"),
         )
     finally:
         _cf.restore_env(_cf_snap)

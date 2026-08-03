@@ -198,3 +198,20 @@
 # The expensive call in this system is search.list at 100 units, used
 # only by the SEO borrower.
 25 */6 * * * curl -fsS -X POST -H "X-API-Key: $RENDER_TRIGGER_KEY" "$DASHBOARD_INTERNAL_URL/api/maintenance/youtube-stats" >> /proc/1/fd/1 2>&1
+
+# 05:40 UTC daily - niche intelligence sweep.
+#
+# The YouTube key was doing two narrow jobs (three competitor titles per
+# render, view counts afterwards) using about 1,700 of a 10,000/day
+# quota. This spends a bounded slice of the rest on the question that
+# actually drives views: what is ranking in each niche right now, which
+# tags the winners share, and what hours they publish at.
+#
+# search.list costs 100 units and returns 50 ids; videos.list then
+# returns stats AND tags for all 50 for 1 unit. So ~101 units per niche,
+# capped at 8 niches = ~808/day.
+#
+# Findings MERGE into stored counts rather than replacing them: one day
+# of 50 videos cannot establish which hour a niche performs best, but
+# weeks of pooled counts can.
+40 5 * * * curl -fsS -X POST -H "X-API-Key: $RENDER_TRIGGER_KEY" "$DASHBOARD_INTERNAL_URL/api/maintenance/niche-intel" >> /proc/1/fd/1 2>&1

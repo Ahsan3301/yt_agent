@@ -144,6 +144,10 @@ export const CONFIG_SCHEMA: Array<{
   { key: "BACKUP_RETENTION_DAYS", category: "backup", label: "Keep backups for (days)",
     help: "Older snapshots are pruned locally and offsite. Default 14." },
 
+  // ── Scheduling ─────────────────────────────────────────────────
+  { key: "RENDER_LEAD_HOURS", category: "retention", label: "Start rendering this many hours before publish",
+    help: "A channel's hour is the time the video should GO LIVE. Rendering begins this many hours earlier and the upload hands YouTube an exact publish time, so the video is released on the hour even if the render took far longer. Default 4, which covers CPU renders comfortably. Raise it if renders regularly run long; the only cost is the video sitting ready for longer." },
+
   // ── Retention ──────────────────────────────────────────────────
   // Blank = use the built-in default. Values below 1 are ignored
   // rather than obeyed: "0 days" would mean delete everything on the

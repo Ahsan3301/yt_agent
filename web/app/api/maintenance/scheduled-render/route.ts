@@ -4,6 +4,7 @@ import { pickWorkers, newRequestId, logRoute } from "@/app/api/_lib/orchestrator
 import { requireMaintenanceKey } from "@/app/api/_lib/auth";
 import { FOUNDER } from "@/lib/tenant";
 import { withHeartbeat } from "@/lib/maintenance-heartbeat";
+import { getConfig } from "@/lib/platform-config";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -79,6 +80,20 @@ async function _handler(req: NextRequest) {
       ? Math.max(0, Math.min(23, Number(hourParam) || 0))
       : new Date().getUTCHours();
     const DEFAULT_HOUR = 9;
+    // Lead time: how far BEFORE the target publish hour a render starts.
+    //
+    // run_at_hour used to mean "start rendering now", so the video went
+    // live whenever the encode finished — 20 min later on GPU, several
+    // HOURS later on the CPU worker. The publish moment was therefore
+    // an accident of queue depth and hardware, and never the hour the
+    // audience is actually watching.
+    //
+    // It now means "publish at this hour". The render is queued this
+    // many hours earlier, and the upload hands YouTube an explicit
+    // publishAt so the video is released at the target moment no matter
+    // when the render actually finished. Late render, correct publish.
+    const LEAD_HOURS = Math.max(1, Math.min(12,
+      Number(await getConfig("RENDER_LEAD_HOURS", "")) || 4));
     // How late a missed slot may still be fired. Wide enough to cover a
     // deploy, a restart, or a few failed ticks; narrow enough that a
     // catch-up never lands next to the following day's slot.
@@ -119,6 +134,7 @@ async function _handler(req: NextRequest) {
       agnes_source: string;
       agnes_own_api_key: string;
       llm_priority: string;
+      publish_at: number;
     }> = [];
     // Build a niche→binding lookup so the legacy fallback path (below)
     // can inherit a YouTube account from the channels row of the same
@@ -208,9 +224,21 @@ async function _handler(req: NextRequest) {
             })()
           : new Date().toISOString().slice(0, 10);
         const lastDay = typeof c.last_scheduled_day === "string" ? c.last_scheduled_day : "";
+        // channelHour is the PUBLISH target; rendering must begin
+        // LEAD_HOURS earlier so the file exists before that moment.
+        // Wraps to the previous day when the target is early morning:
+        // a 02:00 publish with a 4h lead starts at 22:00 the day before.
+        const renderHour = ((channelHour - LEAD_HOURS) % 24 + 24) % 24;
+        // When the lead wraps past midnight, "due today" has to be
+        // judged against the render hour on the PREVIOUS day, otherwise
+        // a 02:00-publish channel would never fire — 22:00 is never
+        // less than 02:00.
+        const wrapsMidnight = channelHour - LEAD_HOURS < 0;
+
         if (!forceAll) {
           if (lastDay === todayInTz) return;          // already ran today
-          if (currentHourInTz < channelHour) return;  // not due yet today
+          if (!wrapsMidnight && currentHourInTz < renderHour) return;
+          if (wrapsMidnight && currentHourInTz < renderHour && currentHourInTz >= channelHour) return;
           // Bounded catch-up. Without a limit, "due and not yet run
           // today" fires a channel at ANY later hour of the day — so a
           // midnight channel that missed its slot would fire at 22:00,
@@ -233,6 +261,19 @@ async function _handler(req: NextRequest) {
           }
         }
         pendingDayStamp.push({ id: doc.id, day: todayInTz });
+        // Absolute moment this video should go live. Computed once
+        // here, handed to YouTube as publishAt at upload time, so the
+        // release is exact regardless of how long the render took.
+        const publishAtEpoch = (() => {
+          const now = new Date();
+          const d = new Date(now);
+          d.setUTCMinutes(0, 0, 0);
+          d.setUTCHours(channelHour);
+          // If the target hour has already passed today, the render is
+          // running ahead of a target that is genuinely tomorrow.
+          if (d.getTime() <= now.getTime()) d.setUTCDate(d.getUTCDate() + 1);
+          return Math.floor(d.getTime() / 1000);
+        })();
         if (channelHour !== currentHourInTz) {
           logRoute(reqId, "scheduled-render catch-up", {
             channel: c.name, scheduled_hour: channelHour, current_hour: currentHourInTz,
@@ -287,6 +328,7 @@ async function _handler(req: NextRequest) {
             agnes_own_api_key: agnesKey,
             llm_priority: (typeof c.llm_priority === "string" && c.llm_priority.trim())
               ? String(c.llm_priority).trim().slice(0, 60) : "",
+            publish_at: publishAtEpoch,
           });
         }
         targets[niche] = (targets[niche] || 0) + count;
@@ -325,6 +367,10 @@ async function _handler(req: NextRequest) {
             agnes_source: "off",
             agnes_own_api_key: "",
             llm_priority: "",
+            // Legacy daily_targets path has no channel row and therefore
+            // no publish hour. 0 = publish as soon as the render lands,
+            // which is the old behaviour and the honest default here.
+            publish_at: 0,
           });
         }
         if (n > 0) targets[niche] = (targets[niche] || 0) + n;

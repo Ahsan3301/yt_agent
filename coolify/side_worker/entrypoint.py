@@ -402,6 +402,7 @@ def handle(job: dict) -> None:
                         voice_override=job.get("voice_override"),
                         tone_override=job.get("tone_override"),
                         privacy_override=job.get("privacy_override"),
+                        publish_at=job.get("publish_at"),
                         youtube_account_id=job.get("youtube_account_id"),
                     )
                 finally:

@@ -307,6 +307,7 @@ def run_pipeline(
     # Per-channel YouTube privacy override — "public"/"unlisted"/"private".
     # None = fall back to settings.upload.privacy (global default).
     privacy_override: Optional[str] = None,
+    publish_at=None,
 ):
     """
     Execute the full automation pipeline for one video.
@@ -1042,6 +1043,7 @@ def run_pipeline(
                     youtube_account_id=youtube_account_id,
                     language=eff_language,
                     privacy_override=privacy_override,
+                    publish_at=publish_at,
                 ), run_id=run_id)
             except run_state.Cancelled:
                 raise
