@@ -241,6 +241,22 @@ WRITING RULES — follow all of them:
   8d. NEVER EXPLAIN THE PHENOMENON. No ghosts named, no curse
      described, no rules of the haunting. The moment it is explained it
      stops being frightening. State what happened; refuse to say why.
+  8f. WRITE FOR THE VOICE, NOT THE PAGE. The narration is spoken by a
+     TTS engine that takes its pacing entirely from punctuation — it
+     has no other way to know where to breathe. A paragraph of even,
+     comma-spliced sentences is delivered as an even, comma-spliced
+     monotone, which is the single biggest cause of a flat-sounding
+     video. So:
+       - Vary sentence length hard. Three words. Then a longer one that
+         carries the detail. Then two words again.
+       - Use full stops instead of commas wherever both would parse.
+         A full stop is a beat; a comma is barely a hesitation.
+       - Place a short sentence immediately BEFORE the worst revelation
+         and immediately AFTER it. The silence around a line is what
+         makes it land.
+       - No sentence over 20 words. No paragraph-length run-ons.
+     Read it aloud in your head before returning it: if it sounds
+     level, rewrite it.
   8e. THE LAST LINE MUST RECONTEXTUALISE AN EARLIER DETAIL — one the
      viewer already read past without concern. Not a new event: a new
      meaning for something specific already on screen. That is what
@@ -668,7 +684,18 @@ def write_script(research_data, max_attempts=3):
         # than fail the whole render (Oracle logs showed 158-word narrations
         # rejected against min=180 → whole render aborted → 5 failed jobs
         # in a row).
-        problems = _validate(script, word_min=max(60, word_min - 40), word_max=word_max + 100)
+        # Margin must scale with the target, not be a fixed +100.
+        #
+        # At the old 160-200 word target, +100 was a ~50% tolerance. The
+        # 30s format uses 70-85, where +100 allows 185 words — more than
+        # double the ask, so the cap stopped meaning anything and a
+        # "30 second" video shipped at 58.9s of narration.
+        #
+        # 25% over / 20% under keeps the borderline-response tolerance
+        # the margin was there for, without letting the format drift.
+        _wmax = int(round(word_max * 1.25))
+        _wmin = max(40, int(round(word_min * 0.80)))
+        problems = _validate(script, word_min=_wmin, word_max=_wmax)
         if not problems:
             log.info(f"Script written: '{script.get('youtube_title', '')}'")
             return script
