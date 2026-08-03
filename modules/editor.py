@@ -141,14 +141,82 @@ def _vcodec_args(crf: str = "23", preset_cpu: str = "fast") -> list[str]:
     if _USE_NVENC:
         # NVENC: p1=fastest, p7=slowest. p4 = balanced.
         # -rc vbr -cq <n> mirrors CRF semantics.
+        #
+        # maxrate/bufsize are NOT optional here. With `-b:v 0` and no
+        # ceiling, NVENC treats cq as a hint and lets the bitrate run:
+        # a measured 90s Short came out at 70.8 Mbps / 766 MB, seven
+        # times YouTube's 8-12 Mbps guidance for 1080x1920. YouTube
+        # re-encodes on ingest regardless, so those extra megabits buy
+        # nothing and cost upload minutes on a metered Kaggle GPU,
+        # MinIO storage, and disk on every worker.
         return [
             "-c:v", "h264_nvenc",
             "-preset", "p4",
             "-rc", "vbr",
             "-cq", str(crf),
-            "-b:v", "0",      # let cq drive the bitrate
+            "-b:v", "0",      # let cq drive the bitrate, within the cap
+            "-maxrate", _MAX_VIDEO_BITRATE,
+            "-bufsize", _VIDEO_BUFSIZE,
         ]
-    return ["-c:v", "libx264", "-preset", preset_cpu, "-crf", str(crf)]
+    return [
+        "-c:v", "libx264", "-preset", preset_cpu, "-crf", str(crf),
+        # Same ceiling on the CPU path for consistency. libx264 CRF
+        # rarely approaches this, so it is a backstop rather than a
+        # constraint on quality.
+        "-maxrate", _MAX_VIDEO_BITRATE,
+        "-bufsize", _VIDEO_BUFSIZE,
+    ]
+
+
+# YouTube's own recommendation for 1080x1920 SDR is 8-12 Mbps. 12 keeps
+# headroom for high-motion shots without the runaway above.
+_MAX_VIDEO_BITRATE = os.getenv("OUTPUT_MAX_BITRATE", "12M")
+_VIDEO_BUFSIZE     = os.getenv("OUTPUT_BUFSIZE", "24M")
+
+
+def _colour_args() -> list[str]:
+    """Force limited-range BT.709 on the output.
+
+    Measured output was tagged `yuvj420p` — full-range (0-255) — because
+    the shot images are JPEGs and ffmpeg propagates their range through
+    the filter chain even with `-pix_fmt yuv420p`, which sets the layout
+    but not the range.
+
+    That is a real, visible defect rather than a technicality: a
+    full-range-tagged file played by anything assuming limited range
+    (16-235) shows crushed blacks and blown highlights. It is a common
+    cause of "my video looks washed out / contrasty after upload".
+    Tagging BT.709 limited range is what every consumer player and
+    YouTube's ingest expect.
+    """
+    return [
+        "-pix_fmt", "yuv420p",
+        "-color_range", "tv",
+        "-colorspace", "bt709",
+        "-color_primaries", "bt709",
+        "-color_trc", "bt709",
+    ]
+
+
+def _audio_args(bitrate: str) -> list[str]:
+    """Deliver 48 kHz stereo AAC.
+
+    The measured output was 24 kHz MONO at 101 kbps, inherited straight
+    from the TTS engine because no -ar/-ac was ever set. Audio is half
+    of perceived production quality, and 24 kHz mono is audibly thin —
+    it also means the music bed and the sidechain duck are mixed at
+    telephone bandwidth.
+
+    Resampling does not invent detail the TTS never produced, but it
+    stops YouTube resampling it for us, gives the music bed its full
+    range, and matches what every other channel delivers.
+    """
+    return [
+        "-c:a", "aac",
+        "-b:a", bitrate,
+        "-ar", "48000",
+        "-ac", "2",
+    ]
 
 
 # Track the currently-running ffmpeg Popen so jobs.cancel() can kill it
@@ -1155,8 +1223,8 @@ def assemble_video(voiceover_path, sources, music_path, narration_text, output_d
             f"[0:v]ass={caption_filename}[vout]",
             "-map", "[vout]", "-map", "1:a",
             *_vcodec_args(crf=out_crf, preset_cpu=out_preset),
-            "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-b:a", out_abr,
+            *_colour_args(),
+            *_audio_args(out_abr),
             "-t", str(duration),
             "-movflags", "+faststart",
             final_path_abs,
@@ -1185,8 +1253,8 @@ def assemble_video(voiceover_path, sources, music_path, narration_text, output_d
                 ),
                 "-map", "[vout]", "-map", "[aout]",
                 *_vcodec_args(crf=out_crf, preset_cpu=out_preset),
-                "-pix_fmt", "yuv420p",
-                "-c:a", "aac", "-b:a", out_abr,
+                *_colour_args(),
+                *_audio_args(out_abr),
                 "-t", str(duration),
                 "-movflags", "+faststart",
                 final_path_abs,

@@ -91,7 +91,7 @@ DEFAULT_SETTINGS = {
         # "medium" gives ~25% smaller files than "fast" at the same CRF.
         "output_crf": 23,
         "output_preset": "medium",
-        "output_audio_bitrate": "96k",
+        "output_audio_bitrate": "192k",
         # Per-segment render pipeline.
         #   "auto" — use the GPU renderer (modules/editor_gpu) when torch.cuda
         #            is available AND the editor_gpu module imported successfully.
