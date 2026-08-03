@@ -906,8 +906,14 @@ def run_pipeline(
         clips_dir = os.path.join(work_dir, "clips")
         from modules.editor import get_audio_duration
         voice_seconds = get_audio_duration(audio_path)
-        # ~6s per shot — keeps the count manageable for vision-judging.
-        num_shots = max(6, int(voice_seconds / 6.0) + 1)
+        # Shot length is a setting, not a constant: a 30s video built
+        # from 5s shots needs exactly 6, which is also the number of
+        # generated clips a full-motion render produces.
+        _vcfg = config.load_settings().get("video", {})
+        _sps = max(2.0, float(_vcfg.get("seconds_per_shot", 5)))
+        _cap = float(_vcfg.get("max_video_seconds", 0) or 0)
+        _eff = min(voice_seconds, _cap) if _cap > 0 else voice_seconds
+        num_shots = max(3, int(round(_eff / _sps)))
         log.info(f"Voiceover {voice_seconds:.1f}s → planning {num_shots} shots")
 
         # Storyboard: NIM breaks the narration into shots with per-shot

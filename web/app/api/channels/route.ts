@@ -466,7 +466,8 @@ export async function POST(req: NextRequest) {
       // the pre-existing behaviour rather than to no footage at all.
       footage_mode: (body.footage_mode === "stills" ||
                      body.footage_mode === "standard" ||
-                     body.footage_mode === "motion")
+                     body.footage_mode === "motion" ||
+                     body.footage_mode === "full")
         ? body.footage_mode
         : null,
       privacy: (body.privacy === "public" || body.privacy === "unlisted" || body.privacy === "private")

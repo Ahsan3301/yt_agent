@@ -2477,7 +2477,11 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror",
 #             changes nothing.
 #   motion    standard PLUS real public-domain archive footage, and
 #             more shots eligible for motion.
-FOOTAGE_MODES = ("stills", "standard", "motion")
+#   full      EVERY shot is a generated clip. A 30s video is 6x5s of
+#             real motion end to end. Costs 6 Agnes video generations
+#             per render, so it is the most expensive mode by far —
+#             which is exactly why it is opt-in per channel.
+FOOTAGE_MODES = ("stills", "standard", "motion", "full")
 DEFAULT_FOOTAGE_MODE = "standard"
 
 
@@ -2486,10 +2490,15 @@ def _normalise_footage_mode(mode) -> str:
     return m if m in FOOTAGE_MODES else DEFAULT_FOOTAGE_MODE
 
 
-def _motion_budget(mode: str) -> int:
+def _motion_budget(mode: str, total_shots: int = 0) -> int:
     """How many opening shots may use motion, for this mode."""
     if mode == "stills":
         return 0
+    if mode == "full":
+        # Every shot. Bounded by the shot count itself rather than a
+        # constant so a longer video does not silently stop being
+        # full-motion halfway through.
+        return max(1, int(total_shots or 6))
     base = _agnes_video_shots()
     if mode == "motion":
         # Motion channels get a wider window, since that is the whole
@@ -2530,7 +2539,7 @@ def fetch_shots(shots, output_dir, channel="horror", preset_sources=None,
     # pre-existing behaviour, so a channel that has never been
     # configured renders exactly as it did before this setting existed.
     _mode = _normalise_footage_mode(footage_mode)
-    log.info(f"footage mode: {_mode} (motion budget: {_motion_budget(_mode)} shot(s))")
+    log.info(f"footage mode: {_mode} (motion budget: {_motion_budget(_mode, total)} of {total} shot(s))")
 
     # Parallelism: a single SDXL inference at 1024x576 uses ~4-5 GB
     # VRAM, so 3 concurrent shots fits comfortably on a 16 GB T4
@@ -2580,7 +2589,7 @@ def fetch_shots(shots, output_dir, channel="horror", preset_sources=None,
             # clip earns more there than anywhere else in the video —
             # and capping it keeps the ~90 s/clip cost bounded instead
             # of adding half an hour to every render.
-            if idx < _motion_budget(_mode):
+            if idx < _motion_budget(_mode, total):
                 if _agnes_key():
                     # Same key bug as the archive path had: the
                     # storyboard emits visual_description / ai_prompt /
@@ -2612,7 +2621,7 @@ def fetch_shots(shots, output_dir, channel="horror", preset_sources=None,
                 # the Archive's coverage is uneven, so this stays
                 # opt-in until the operator has judged the result on a
                 # channel they chose.
-                if src is None and _mode == "motion" and _archive_clips_enabled():
+                if src is None and _mode in ("motion", "full") and _archive_clips_enabled():
                     with used_lock:
                         _snap = set(used_ids)
                     src = _archive_clip_for_shot(shot, output_dir, idx, _snap)

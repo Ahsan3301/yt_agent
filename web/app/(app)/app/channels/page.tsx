@@ -1124,13 +1124,16 @@ function ChannelForm({
             <option value="standard">Standard — generated clips on the opening shots</option>
             <option value="stills">Stills only — AI images, no motion</option>
             <option value="motion">Motion — adds real archive footage</option>
+            <option value="full">Full video — every shot is a generated clip</option>
           </select>
           <div className="text-[10px] text-neutral-500 mt-1">
             <b>Standard</b> is what every channel did before this setting
             existed. <b>Motion</b> also pulls real public-domain footage
             from the Internet Archive and widens the motion window — the
             providers behind it are rate-limited, so try it on one
-            channel before rolling it out.
+            channel before rolling it out. <b>Full video</b> makes every
+            shot a clip — a 30s video is 6 generated clips end to end, so
+            it is the most expensive mode by a wide margin.
           </div>
         </div>
         <div>

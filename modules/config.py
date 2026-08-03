@@ -38,8 +38,17 @@ DEFAULT_SETTINGS = {
         # chilling = dread-first horror; the default that fits a horror channel.
         # Set to "atmospheric" / "extreme" / "dramatic" via the GUI for variety.
         "tone": "chilling",
-        "target_word_min": 160,
-        "target_word_max": 200,
+        # ~30s of narration at roughly 150 wpm. Was 160-200, which
+        # produced the 72-90s videos we were actually getting.
+        "target_word_min": 70,
+        "target_word_max": 85,
+        # Hard ceiling on finished video length, in seconds. The editor
+        # trims to this, so an over-long narration cannot quietly turn a
+        # 30s format into a 90s one.
+        "max_video_seconds": 30,
+        # Seconds of screen time per shot. 30s / 5s = 6 shots, which is
+        # also the number of Agnes clips a full-motion video needs.
+        "seconds_per_shot": 5,
         "manual_premise": "",                      # if set, overrides auto-generated premise
         "videos_per_run": int(env("VIDEOS_PER_RUN", "1")),
     },
