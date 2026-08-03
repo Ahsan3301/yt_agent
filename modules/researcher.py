@@ -277,7 +277,11 @@ def generate_horror_premise(language: str = "en") -> tuple[str, str]:
             if not unused:
                 log.info(f"All horror premise combinations used for lang={language!r} — resetting pool")
                 unused = all_combos
-            setting, hook = random.choice(unused)
+            # Bias the pick toward what the niche is currently
+            # rewarding, instead of a flat random draw over 225
+            # hardcoded pairs. The pairs are still ours — this only
+            # decides WHICH of them to use now.
+            setting, hook = _pick_combo_by_demand(unused, language)
             key = f"{setting}|{hook}"
             used.add(key)
             _write_used_file(path, used)
@@ -403,6 +407,54 @@ def research(channel_type: str, language: str = "en"):
         }
 
     return _generic_research(channel_type, language=lang)
+
+
+def _pick_combo_by_demand(unused: list, language: str = "en") -> tuple:
+    """Choose a (setting, hook) pair that matches what is ranking now.
+
+    Horror premises were a flat random draw over 225 hardcoded pairs,
+    with no reference to anything real — which is precisely the
+    "randomly selected" complaint. The seeds fix only touched
+    _generic_research, and horror never calls it, so horror stayed
+    random.
+
+    This keeps our curated pairs (they encode genre craft the API
+    cannot) but lets live demand decide which one to use: score each
+    pair on word overlap with titles currently ranking, then pick
+    randomly among the best few so successive renders still vary.
+
+    No LLM call, no extra quota beyond the one search. Falls back to
+    the original random choice whenever seeds are unavailable.
+    """
+    if not unused:
+        return ("", "")
+    try:
+        seeds = _ranking_topic_seeds("horror", language=language, limit=8)
+    except Exception:
+        seeds = []
+    if not seeds:
+        return random.choice(unused)
+    import re as _re
+    stop = {"the","and","that","with","from","this","have","they","been",
+            "your","what","when","were","will","into","just","them","than"}
+    bag: set = set()
+    for t in seeds:
+        bag |= {w for w in _re.findall(r"[a-z]{4,}", t.lower()) if w not in stop}
+    if not bag:
+        return random.choice(unused)
+    scored = []
+    for combo in unused:
+        words = set(_re.findall(r"[a-z]{4,}", f"{combo[0]} {combo[1]}".lower()))
+        scored.append((len(words & bag), combo))
+    scored.sort(key=lambda x: -x[0])
+    best = scored[0][0]
+    if best <= 0:
+        return random.choice(unused)
+    # Randomise among the joint-best so the same pair is not picked
+    # every day while demand is stable.
+    top = [c for sc, c in scored if sc == best]
+    log.info(f"topic: {len(top)} premise(s) match current demand (score {best}); picking among them")
+    return random.choice(top)
 
 
 def _usable_seed(title: str, language: str = "en") -> bool:

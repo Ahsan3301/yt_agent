@@ -2799,19 +2799,49 @@ def fetch_shots(shots, output_dir, channel="horror", preset_sources=None,
                         # re-invent the person on each of the six —
                         # which is precisely the drift the cast sheet
                         # exists to stop.
-                        _ref = _cast_anchor_get(shot.get("cast_names") or [])
+                        # Animate THIS SHOT'S OWN frame, not the cast
+                        # portrait.
+                        #
+                        # image-to-video uses the supplied image as
+                        # FRAME 1. Passing the character sheet therefore
+                        # opened every single clip on a studio
+                        # head-and-shoulders portrait against a plain
+                        # background — visible in the output and plainly
+                        # wrong. The portrait is a likeness reference,
+                        # never a shot.
+                        #
+                        # Right order: render the shot's own still first
+                        # (find_image_for_shot already applies the cast
+                        # anchor, so the face is already consistent),
+                        # then animate that. Frame 1 becomes the correct
+                        # opening image for the shot AND the character
+                        # still matches, which is what we were actually
+                        # trying to achieve.
+                        with used_lock:
+                            _isnap = set(used_ids)
+                        _still = find_image_for_shot(
+                            shot, output_dir, _isnap, channel=channel,
+                            tone_override=tone_override, language=language)
+                        with used_lock:
+                            used_ids.update(_isnap)
                         _init = ""
-                        if _ref and os.path.exists(_ref):
+                        _sp = (_still or {}).get("path") or ""
+                        if _sp and os.path.exists(_sp):
                             try:
                                 import base64 as _b64
-                                with open(_ref, "rb") as _rf:
+                                with open(_sp, "rb") as _rf:
                                     _init = ("data:image/jpeg;base64,"
                                              + _b64.b64encode(_rf.read()).decode("ascii"))
                             except Exception as _re:
-                                log.warning(f"agnes-video: reference unreadable: {_re}")
+                                log.warning(f"agnes-video: shot still unreadable: {_re}")
                         src = _agnes_video_generate(_vp, output_dir, idx,
                                                     seconds=_dur if _dur > 0 else 5.0,
                                                     init_image_url=_init)
+                        # Animation failed but we already have a good
+                        # still for this shot — use it rather than
+                        # throwing the work away and re-fetching below.
+                        if src is None and _still:
+                            src = _still
                 # Real archive footage — ONLY for channels explicitly
                 # put in motion mode. Agnes has generation quota and
                 # the Archive's coverage is uneven, so this stays
