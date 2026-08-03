@@ -178,6 +178,21 @@ async function probeOne(key: string, value: string): Promise<KeyHealth> {
         return { key, status: "error", detail: `Unreachable (${String(e).slice(0, 50)}).` };
       }
 
+    // Behaviour flags travel through the pool because that is the only
+    // channel that reaches a Kaggle or Colab worker, but they are
+    // settings, not credentials. There is no provider to probe, so
+    // report the value itself — that is the only fact worth knowing.
+    case "DEFER_PUBLISH_TO_SIDE_WORKER":
+      return { key, status: "ok",
+        detail: /^(1|true|yes)$/i.test(value.trim())
+          ? "Enabled — GPU workers hand scheduled publishes to the side-worker."
+          : `Disabled (value "${value.slice(0, 12)}"). Publishes happen on the rendering worker.` };
+    case "AGNES_VIDEO_SHOTS":
+      return { key, status: Number.isFinite(Number(value)) ? "ok" : "bad",
+        detail: Number.isFinite(Number(value))
+          ? `${Number(value)} opening shot(s) generated as motion clips.`
+          : "Not a number — treated as 0 by the worker." };
+
     default:
       // Storage credentials and anything else we can't probe cheaply
       // are reported as present rather than pretending to verify them.

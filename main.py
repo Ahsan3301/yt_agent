@@ -1077,14 +1077,26 @@ def run_pipeline(
             # engages when one is set.
             _defer = (os.getenv("DEFER_PUBLISH_TO_SIDE_WORKER", "").strip().lower()
                       in ("1", "true", "yes"))
-            # Must match backend/registry.py, which defaults INSTANCE_TIER
-            # to "gpu" when unset. Kaggle and Colab never set it
-            # explicitly (they rely on that default); only the Oracle
-            # side-worker sets it, to "dashboard". Defaulting to "" here
-            # instead would compare "" == "gpu" on every GPU worker and
-            # the deferral would never fire anywhere — dead code that
-            # looks live.
-            _is_gpu_worker = (os.getenv("INSTANCE_TIER", "gpu").strip().lower() == "gpu")
+            # Identify the side-worker by LABEL, not by tier.
+            #
+            # INSTANCE_TIER is NOT a reliable discriminator here. The
+            # Oracle side-worker does not set it at all — it sets only
+            # INSTANCE_LABEL="Oracle side-worker" — so
+            # os.getenv("INSTANCE_TIER", "gpu") returns "gpu" ON ORACLE.
+            # Gating on that would have made Oracle defer its own
+            # publishes to itself and NOTHING would ever be published.
+            # (The DB shows tier=dashboard for these workers, which is
+            # what made the env look trustworthy; that value is set
+            # elsewhere, not from this variable.)
+            #
+            # registry.py canonicalises the same way — label first — so
+            # this matches how the claim endpoint already identifies
+            # workers for allowed_workers.
+            _label = (os.getenv("INSTANCE_LABEL", "") or "").lower()
+            _is_side_worker = ("oracle" in _label
+                               or os.getenv("INSTANCE_TIER", "").strip().lower() == "dashboard")
+            # Defer only from a worker that is NOT the publisher.
+            _is_gpu_worker = not _is_side_worker
             if _defer and _is_gpu_worker and publish_at:
                 log.info(
                     "Deferring YouTube upload to the side-worker: this is a GPU "

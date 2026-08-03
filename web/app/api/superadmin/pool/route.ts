@@ -48,7 +48,7 @@ export const POOL_SCHEMA: Array<{
   { key: "STABLEHORDE_API_KEY", group: "Visuals", label: "Stable Horde",
     help: "Free distributed fallback. Slow but costs nothing." },
   { key: "AGNES_API_KEY", group: "Visuals", label: "Agnes AI",
-    help: "Multimodal provider (apihub.agnes-ai.com). Used for image generation in the shot pipeline. Verified working on text and image; the video model is blocked at the account level and returns 403 until the plan allows it." },
+    help: "Multimodal provider (apihub.agnes-ai.com). Powers image generation and short motion clips for opening shots. Video uses the async endpoint (POST /v1/videos, then poll the task id) — not the chat completions route." },
   { key: "PEXELS_API_KEY", group: "Visuals", label: "Pexels",
     help: "Stock footage and photos." },
   { key: "PIXABAY_API_KEY", group: "Visuals", label: "Pixabay",
@@ -64,6 +64,17 @@ export const POOL_SCHEMA: Array<{
   { key: "S3_BUCKET", group: "Storage", label: "S3 bucket", help: "" },
   { key: "S3_ACCESS_KEY_ID", group: "Storage", label: "S3 access key", help: "" },
   { key: "S3_SECRET_ACCESS_KEY", group: "Storage", label: "S3 secret", help: "" },
+
+  // Behaviour flags. Not credentials, but they travel the same path:
+  // the pool is how a setting reaches a worker that nobody can SSH into
+  // (Kaggle, Colab). A key listed in MANAGED_KEYS but absent here is
+  // rejected by PUT, so both lists have to agree.
+  { key: "DEFER_PUBLISH_TO_SIDE_WORKER", group: "Pipeline behaviour",
+    label: "Defer scheduled publishes to the side-worker",
+    help: "1 to enable. A GPU worker that finishes a video with a future publish time hands the upload to the always-on Oracle worker instead of holding the GPU open until the slot arrives. The side-worker never defers to itself. Leave blank to publish from whichever worker rendered." },
+  { key: "AGNES_VIDEO_SHOTS", group: "Pipeline behaviour",
+    label: "Agnes motion clips per video",
+    help: "How many opening shots are generated as short video clips rather than stills. 0 disables. Each clip costs an Agnes video task and adds render time; falls back to a still if generation fails." },
 ];
 
 const POOLABLE = new Set(POOL_SCHEMA.map((f) => f.key));
@@ -101,7 +112,11 @@ export async function GET(req: NextRequest) {
     const items = POOL_SCHEMA.map((f) => ({
       ...f,
       has_value: !!pool[f.key],
-      preview: mask(pool[f.key] || ""),
+      // Behaviour flags carry no secret, and masking them would hide
+      // the only thing worth reading — whether the flag is on.
+      preview: f.group === "Pipeline behaviour"
+        ? String(pool[f.key] || "")
+        : mask(pool[f.key] || ""),
     }));
     return NextResponse.json({ items, configured: Object.keys(pool).length });
   } catch (e) {

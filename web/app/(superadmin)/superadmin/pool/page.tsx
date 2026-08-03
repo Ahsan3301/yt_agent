@@ -197,7 +197,11 @@ export default function PoolPage() {
               </label>
               <div className="flex gap-2">
                 <input
-                  type="password"
+                  // Behaviour flags are settings, not secrets. Masking
+                  // "1" to "••••" leaves no way to tell an enabled flag
+                  // from a disabled one, which is the whole reason to
+                  // look at the page.
+                  type={it.group === "Pipeline behaviour" ? "text" : "password"}
                   className="input flex-1"
                   placeholder={it.has_value ? it.preview : "not set"}
                   value={edits[it.key] === "__CLEAR__" ? "" : (edits[it.key] ?? "")}
