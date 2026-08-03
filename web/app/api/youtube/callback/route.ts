@@ -141,10 +141,17 @@ export async function GET(req: NextRequest) {
     token_uri: "https://oauth2.googleapis.com/token",
     client_id: clientId,
     client_secret: clientSecret,
-    scopes: [
-      "https://www.googleapis.com/auth/youtube.upload",
-      "https://www.googleapis.com/auth/youtube",
-    ],
+    // Record what Google ACTUALLY granted, not what we asked for.
+    // Hardcoding the list meant a token that carries the analytics
+    // scope would still be described as upload-only, and anything
+    // deciding "can I read analytics for this channel?" would have to
+    // guess. Google returns the granted set in the token response.
+    scopes: String(tokenJson.scope || "").trim()
+      ? String(tokenJson.scope).trim().split(/\s+/)
+      : [
+          "https://www.googleapis.com/auth/youtube.upload",
+          "https://www.googleapis.com/auth/youtube",
+        ],
     expiry: tokenJson.expires_in
       ? new Date(Date.now() + Number(tokenJson.expires_in) * 1000).toISOString()
       : undefined,

@@ -59,6 +59,17 @@ def _repair_mojibake(s: str) -> str:
 load_dotenv()
 log = logging.getLogger(__name__)
 
+# Scopes the worker asks for when building credentials.
+#
+# yt-analytics.readonly is intentionally NOT here. google-auth treats
+# this list as the expected set, and a stored credential carrying MORE
+# scopes than requested still works — but a credential carrying FEWER
+# than requested is rejected. Adding analytics here would therefore
+# break every channel that has not yet been reconnected, purely to
+# request something the uploader never uses.
+#
+# Analytics is read by the dashboard, which uses the granted scope list
+# recorded on the account row at connect time.
 SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
     "https://www.googleapis.com/auth/youtube",

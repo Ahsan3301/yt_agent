@@ -1,10 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
 import { publicOrigin } from "@/app/api/_lib/public-origin";
+import { getConfig } from "@/lib/platform-config";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const SCOPES = "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube";
+const BASE_SCOPES = [
+  "https://www.googleapis.com/auth/youtube.upload",
+  "https://www.googleapis.com/auth/youtube",
+];
+
+// Read-only access to the channel's own analytics — specifically
+// "when your viewers are online", which is the only trustworthy source
+// for scheduling. Everything else the scheduler uses is inferred from
+// OTHER channels' top performers.
+//
+// Gated behind a flag rather than simply added, because Google rejects
+// a consent request containing a scope that is not registered on the
+// app's consent screen. Turning it on here before the Cloud Console
+// side is done would break "Connect YouTube" for every channel, not
+// just add a capability. So: register the scope in the console first,
+// then flip YOUTUBE_ANALYTICS_SCOPE=1, then reconnect each channel.
+const ANALYTICS_SCOPE = "https://www.googleapis.com/auth/yt-analytics.readonly";
 
 /**
  * GET /api/youtube/auth — return the Google consent screen URL.
@@ -55,7 +72,14 @@ export async function GET(req: NextRequest) {
   consentUrl.searchParams.set("client_id", clientId);
   consentUrl.searchParams.set("redirect_uri", redirectUri);
   consentUrl.searchParams.set("response_type", "code");
-  consentUrl.searchParams.set("scope", SCOPES);
+  const wantAnalytics = String(
+    await getConfig("YOUTUBE_ANALYTICS_SCOPE", "")
+  ).trim().toLowerCase();
+  const scopes = [...BASE_SCOPES];
+  if (["1", "true", "yes", "on"].includes(wantAnalytics)) {
+    scopes.push(ANALYTICS_SCOPE);
+  }
+  consentUrl.searchParams.set("scope", scopes.join(" "));
   // offline + force consent so we always get a refresh_token (not just
   // an access_token that expires in an hour).
   consentUrl.searchParams.set("access_type", "offline");
