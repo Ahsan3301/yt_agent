@@ -1789,9 +1789,21 @@ def _archive_clip_for_shot(shot: dict, output_dir: str, idx: int, used_ids: set)
     # The visual prompt is written for an image model — long, full of
     # style adjectives ("cinematic, volumetric fog, 8k"). Archive search
     # matches titles, so feed it the subject only.
-    raw = (shot.get("query") or shot.get("visual") or shot.get("prompt")
-           or shot.get("description") or "")
+    # These are the keys the storyboard actually emits — see
+    # find_image_for_shot, which reads the same ones. An earlier version
+    # of this guessed at "query"/"visual"/"prompt"/"description", none of
+    # which exist, so `raw` was always empty and the function returned
+    # instantly for every shot. The render logged "no motion source" with
+    # no error, because returning None IS the documented miss path.
+    #
+    # search_query first: it is already a short stock-search phrase,
+    # which is exactly what an archive title index wants.
+    # visual_description and ai_prompt are written for a diffusion model
+    # and need the stopword pass below to be usable.
+    raw = (shot.get("search_query") or shot.get("visual_description")
+           or shot.get("ai_prompt") or "")
     if not raw:
+        log.info(f"archive-clip: shot {idx} has no usable query keys ({sorted(shot)[:6]})")
         return None
     # Imported locally: this module has no module-level `re`, only
     # function-local ones (see line ~580). A module-level re.findall
@@ -2539,8 +2551,20 @@ def fetch_shots(shots, output_dir, channel="horror", preset_sources=None,
             # of adding half an hour to every render.
             if idx < _motion_budget(_mode):
                 if _agnes_key():
-                    _vp = (shot.get("visual") or shot.get("prompt")
-                           or shot.get("description") or "")
+                    # Same key bug as the archive path had: the
+                    # storyboard emits visual_description / ai_prompt /
+                    # search_query, never "visual"/"prompt"/"description".
+                    # _vp was therefore ALWAYS empty and
+                    # _agnes_video_generate was never once called in
+                    # production — the motion slot looked configured and
+                    # silently produced stills.
+                    #
+                    # ai_prompt first here: it is the fully-written
+                    # diffusion prompt, which is what a generative video
+                    # model wants (the opposite of the archive path,
+                    # which wants the short search phrase).
+                    _vp = (shot.get("ai_prompt") or shot.get("visual_description")
+                           or shot.get("search_query") or "")
                     if _vp:
                         src = _agnes_video_generate(_vp, output_dir, idx)
                 # Real archive footage — ONLY for channels explicitly
