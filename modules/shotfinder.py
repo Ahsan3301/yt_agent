@@ -1899,8 +1899,11 @@ def _agnes_video_generate(prompt: str, output_dir: str, idx: int, seconds: float
         # the shot called for, so the model interpolates motion instead
         # of reinventing the scene.
         if init_image_url:
+            # Accepts a public URL or a base64 data URI — both verified
+            # against the live endpoint before relying on it, so a local
+            # portrait needs no upload anywhere.
             body["image"] = init_image_url
-            log.info(f"agnes-video: shot {idx} animating an existing still")
+            log.info(f"agnes-video: shot {idx} driven by a character reference")
         r = _rq.post(f"{_AGNES_BASE}/videos", headers=headers, timeout=60, json=body)
         if r.status_code >= 400:
             log.warning(f"agnes-video: create failed HTTP {r.status_code}: {r.text[:160]}")
@@ -2762,8 +2765,25 @@ def fetch_shots(shots, output_dir, channel="horror", preset_sources=None,
                             _dur = float(shot.get("end", 0)) - float(shot.get("start", 0))
                         except (TypeError, ValueError):
                             _dur = 0.0
+                        # Drive the clip from this character's reference
+                        # portrait when we have one. Motion mode now
+                        # covers every shot, so text-to-video would
+                        # re-invent the person on each of the six —
+                        # which is precisely the drift the cast sheet
+                        # exists to stop.
+                        _ref = _cast_anchor_get(shot.get("cast_names") or [])
+                        _init = ""
+                        if _ref and os.path.exists(_ref):
+                            try:
+                                import base64 as _b64
+                                with open(_ref, "rb") as _rf:
+                                    _init = ("data:image/jpeg;base64,"
+                                             + _b64.b64encode(_rf.read()).decode("ascii"))
+                            except Exception as _re:
+                                log.warning(f"agnes-video: reference unreadable: {_re}")
                         src = _agnes_video_generate(_vp, output_dir, idx,
-                                                    seconds=_dur if _dur > 0 else 5.0)
+                                                    seconds=_dur if _dur > 0 else 5.0,
+                                                    init_image_url=_init)
                 # Real archive footage — ONLY for channels explicitly
                 # put in motion mode. Agnes has generation quota and
                 # the Archive's coverage is uneven, so this stays
