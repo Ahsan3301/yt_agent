@@ -16,6 +16,7 @@ import os
 import re
 import time
 import json
+import threading
 import random
 import logging
 import requests
@@ -233,6 +234,68 @@ def _download_capped(url, dest_path, max_mb):
         return None
 
 
+# ── attribution ───────────────────────────────────────────────
+# CC BY / CC BY-SA footage is usable commercially but only if the
+# author is credited. These collect the credits owed by the current
+# render so the uploader can put them in the video description.
+#
+# Module-level rather than threaded through every provider signature:
+# fetch_shots runs providers in a thread pool and returns plain source
+# dicts, so there is no existing channel to carry this. Guarded by a
+# lock for that reason.
+_CREDITS: list[dict] = []
+_CREDITS_LOCK = threading.Lock()
+
+
+def _remember_credit(title: str, source: str, licence: str, url: str = "") -> None:
+    with _CREDITS_LOCK:
+        for c in _CREDITS:
+            if c["title"] == title and c["source"] == source:
+                return
+        _CREDITS.append({"title": title, "source": source,
+                         "licence": licence, "url": url})
+
+
+def take_credits() -> list[dict]:
+    """Return the credits owed and clear them.
+
+    Cleared on read so a failed render cannot leak its credits into the
+    next one on the same worker — that would attribute footage the next
+    video never used, which is worse than not crediting at all.
+    """
+    with _CREDITS_LOCK:
+        out = list(_CREDITS)
+        _CREDITS.clear()
+        return out
+
+
+def reset_credits() -> None:
+    """Drop any credits left over from a previous run."""
+    with _CREDITS_LOCK:
+        _CREDITS.clear()
+
+
+def format_credits(credits: list[dict], limit: int = 12) -> str:
+    """Render a credits block for a YouTube description, or ''.
+
+    Kept short and last: descriptions are capped at 5000 chars and the
+    opening lines are what viewers and the algorithm read.
+    """
+    if not credits:
+        return ""
+    lines = ["", "—", "Footage credits:"]
+    for c in credits[:limit]:
+        bit = f"• {c['title']} — {c['source']}"
+        if c.get("licence"):
+            bit += f" ({c['licence']})"
+        if c.get("url"):
+            bit += f" {c['url']}"
+        lines.append(bit[:200])
+    if len(credits) > limit:
+        lines.append(f"• …and {len(credits) - limit} more")
+    return "\n".join(lines)
+
+
 # Licence strings the Internet Archive reports that are safe to reuse
 # commercially. Anything NC (non-commercial) or ND (no-derivatives) is
 # deliberately absent: this footage gets cut into a monetised video, so
@@ -279,18 +342,29 @@ _ARCHIVE_PD_COLLECTIONS = {
 
 
 def _archive_licence_ok(item):
-    """True when the item carries a licence we may cut into a monetised video."""
+    """Whether this item may be cut into a monetised video.
+
+    Returns (allowed, needs_attribution). A CC BY item is allowed only
+    because the caller records a credit for it; if that ever stops
+    happening this must go back to public-domain only.
+    """
     lic = " ".join(str(item.get(k) or "") for k in ("licenseurl", "rights", "usage")).lower()
     if not lic.strip():
         colls = item.get("collection") or []
         if isinstance(colls, str):
             colls = [colls]
-        return any(str(c).lower() in _ARCHIVE_PD_COLLECTIONS for c in colls)
+        pd = any(str(c).lower() in _ARCHIVE_PD_COLLECTIONS for c in colls)
+        return (pd, False)
+    # NC forbids the monetised use outright; ND forbids cutting it.
     if "/nc" in lic or "-nc" in lic or "noncommercial" in lic:
-        return False
+        return (False, False)
     if "/nd" in lic or "-nd" in lic or "noderiv" in lic:
-        return False
-    return any(tok in lic for tok in _ARCHIVE_OK_LICENCE)
+        return (False, False)
+    if any(tok in lic for tok in _ARCHIVE_OK_LICENCE):
+        return (True, False)
+    if any(tok in lic for tok in _ARCHIVE_NEEDS_ATTRIBUTION):
+        return (True, True)
+    return (False, False)
 
 
 def fetch_archive_videos(query, output_dir, count, used_ids):
@@ -382,7 +456,8 @@ def fetch_archive_videos(query, output_dir, count, used_ids):
         vid = f"archive:{ident}"
         if vid in used_ids:
             continue
-        if not _archive_licence_ok(d):
+        _allowed, _needs_credit = _archive_licence_ok(d)
+        if not _allowed:
             continue
         if _is_adult_item(d.get("title"), ident) or _is_distressing(d.get("title"), ident):
             continue
@@ -442,6 +517,17 @@ def fetch_archive_videos(query, output_dir, count, used_ids):
             paths.append(dest)
             used_ids.add(vid)
             _remember_clip(vid)
+            # Record the credit only once the file is actually on disk.
+            # Crediting a clip we failed to download would put a false
+            # attribution in the description.
+            if _needs_credit:
+                _lic = str(d.get("licenseurl") or d.get("rights") or "").lower()
+                _remember_credit(
+                    title=str(d.get("title") or ident)[:120],
+                    source="Internet Archive",
+                    licence=("CC BY-SA" if "by-sa" in _lic else "CC BY"),
+                    url=f"https://archive.org/details/{ident}",
+                )
     return paths
 
 

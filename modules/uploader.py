@@ -361,6 +361,33 @@ def upload_video(video_path, script_data, channel_type="horror", youtube_account
 
     title = _repair_mojibake((script_data.get("youtube_title") or "Untitled"))[:100]
     description = _repair_mojibake((script_data.get("description") or ""))[:5000]
+
+    # Attribution for CC BY / CC BY-SA footage. The licence permits the
+    # commercial use only if the author is credited, so this is a
+    # licence condition, not a courtesy — the footage provider only
+    # accepts those clips because this runs.
+    #
+    # Appended last and trimmed to fit: YouTube hard-caps descriptions
+    # at 5000 chars and rejects the upload outright if exceeded, so the
+    # credits give way to the real description rather than risking a
+    # 400 on a finished render.
+    try:
+        _credits = script_data.get("footage_credits") or []
+        if _credits:
+            from modules.footage import format_credits as _fc
+            _block = _fc(_credits)
+            if _block:
+                room = 5000 - len(description)
+                if len(_block) <= room:
+                    description = description + _block
+                else:
+                    description = description[:5000 - len(_block)] + _block
+                log.info(f"uploader: appended {len(_credits)} footage credit(s)")
+    except Exception as _ce:
+        # Never fail a finished render over a credits block. A missing
+        # credit is a licence problem worth logging loudly, but losing
+        # the upload is worse.
+        log.warning(f"uploader: footage credits not appended: {_ce!r}")
     # YouTube's limit is 500 CHARACTERS across all tags, not 500 tags.
     # `[:500]` sliced the list length — harmless only because the SEO
     # writer happens to return 10, and a latent 400 invalidTags the

@@ -1000,11 +1000,37 @@ def run_pipeline(
             if _sdxl_warm_thread is not None and _sdxl_warm_thread.is_alive():
                 log.info("waiting for bg SDXL warm to finish before shot dispatch...")
                 _sdxl_warm_thread.join(timeout=300)
+            # Drop credits owed by any previous run on this worker
+            # before fetching, so this video can only ever carry
+            # attributions for footage it actually used.
+            try:
+                from modules import footage as _fmod
+                _fmod.reset_credits()
+            except Exception:
+                pass
             sources = _step(summary, "footage", lambda: fetch_shots(
                 shots, clips_dir, channel=channel_type,
                 preset_sources=[],
                 tone_override=_tone_clean, language=_pipeline_lang,
             ), run_id=run_id)
+            # CC BY / CC BY-SA footage is only licensed if the author is
+            # credited, so this has to survive as far as the uploader.
+            try:
+                from modules import footage as _fmod
+                summary["footage_credits"] = _fmod.take_credits()
+                if summary["footage_credits"]:
+                    # Also on `script`, which is what becomes
+                    # script_data at upload. The summary copy is what
+                    # survives to the side-worker for a deferred
+                    # publish; this copy serves the direct upload.
+                    try:
+                        script["footage_credits"] = summary["footage_credits"]
+                    except Exception:
+                        pass
+                    log.info("footage: %d clip(s) require attribution",
+                             len(summary["footage_credits"]))
+            except Exception as _cr_e:
+                log.warning(f"footage credits collection failed: {_cr_e!r}")
             from modules.footage import get_music, MUSIC_KEYWORDS
             from modules.config import load_settings as _ls
             music_q = (_ls().get("music_keywords") or {}).get(channel_type) \

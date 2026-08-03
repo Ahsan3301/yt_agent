@@ -196,6 +196,11 @@ def _publish_youtube(job: dict[str, Any]) -> tuple[bool, str]:
     # Reads job override first, then falls through to the run summary /
     # index / channel binding. Defaults to en if nothing found.
     language = str(job.get("language") or "").strip().lower()[:2]
+    # Attribution owed for CC BY / CC BY-SA footage in this render.
+    # Must survive to here: with DEFER_PUBLISH_TO_SIDE_WORKER on, this
+    # is the NORMAL publish path, so dropping it would mean the common
+    # case publishes licensed footage uncredited.
+    footage_credits: list = []
     try:
         from backend import db
         if db.is_configured():
@@ -218,6 +223,10 @@ def _publish_youtube(job: dict[str, Any]) -> tuple[bool, str]:
                     tags = data.get("tags") or []
                 if not language:
                     language = str(data.get("language") or "").strip().lower()[:2]
+                if not footage_credits:
+                    _fc = data.get("footage_credits")
+                    if isinstance(_fc, list):
+                        footage_credits = _fc
             # Runs_index fallback — set by earlier scriptwriter runs
             # that landed the SEO fields directly on the index doc.
             if not (title and description and tags):
@@ -251,7 +260,12 @@ def _publish_youtube(job: dict[str, Any]) -> tuple[bool, str]:
         "youtube_title": title or f"Run {run_id}",
         "description":   description or "",
         "tags":          list(tags) if isinstance(tags, list) else [],
+        # uploader appends these to the description; a CC BY clip is
+        # only licensed for this use while the credit goes with it.
+        "footage_credits": footage_credits,
     }
+    if footage_credits:
+        log.info(f"publish {run_id}: carrying {len(footage_credits)} footage credit(s)")
     try:
         from modules import uploader
         vid = uploader.upload_video(
