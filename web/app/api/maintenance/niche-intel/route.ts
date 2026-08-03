@@ -111,6 +111,25 @@ async function _handler(req: NextRequest) {
       const nowSec = Date.now() / 1000;
       try {
         const chSnap = await adminDb().collection("channels").limit(200).get();
+
+        // Hours already taken, per niche. Two of your own channels in
+        // the same niche publishing at the same minute puts them in
+        // front of the same audience at once, so they cannibalise each
+        // other's slot instead of adding reach.
+        //
+        // This is not hypothetical: the first live retune moved Horarry
+        // to 14:00, where Nightflinch already sat, and Ghost tales was
+        // heading to the same hour on the next sweep — all three horror
+        // channels converging on one minute.
+        const taken = new Map<string, Set<number>>();
+        for (const d of chSnap.docs) {
+          const cc = d.data() as Record<string, unknown>;
+          const nn = String(cc.niche || "").trim().toLowerCase();
+          if (!nn) continue;
+          if (!taken.has(nn)) taken.set(nn, new Set());
+          taken.get(nn)!.add(Number(cc.run_at_hour ?? 0));
+        }
+
         for (const doc of chSnap.docs) {
           const c = doc.data() as Record<string, unknown>;
           const niche = String(c.niche || "").trim().toLowerCase();
@@ -123,7 +142,13 @@ async function _handler(req: NextRequest) {
           if (lastTune && (nowSec - lastTune) < RETUNE_COOLDOWN_DAYS * 86400) continue;
 
           const current = Number(c.run_at_hour ?? 0);
-          const best = hrs[0];
+          const mine = taken.get(niche)!;
+
+          // Best evidence-backed hour not already used by a sibling
+          // channel in this niche. Falls back to the outright best if
+          // every ranked hour is spoken for — a shared hour still beats
+          // refusing to act on the data.
+          const best = hrs.find((h) => h.hour === current || !mine.has(h.hour)) ?? hrs[0];
           if (best.hour === current) continue;
 
           // Compare like with like: only move if the current hour is
@@ -139,6 +164,10 @@ async function _handler(req: NextRequest) {
             hour_retuned_at: nowSec,
             updated_at: FieldValue.serverTimestamp(),
           });
+          // Keep the map current so two channels retuned in the same
+          // sweep cannot both be sent to the same freed hour.
+          mine.delete(current);
+          mine.add(best.hour);
           retuned.push({
             channel: String(c.name || doc.id), niche,
             from: current, to: best.hour,
