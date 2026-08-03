@@ -607,7 +607,7 @@ def _stream_once(payload, headers, read_timeout, total_timeout):
     return "".join(content_parts), "".join(reasoning_parts)
 
 
-def chat(messages, model=None, max_tokens=2048, temperature=0.7,
+def chat(messages, model=None, max_tokens=2048, temperature=0.7, nim_only=False,
          response_format=None, timeout=20, stream=None, thinking=False,
          tools=None, tool_choice=None, attempts=2):
     """
@@ -636,10 +636,22 @@ def chat(messages, model=None, max_tokens=2048, temperature=0.7,
     last_err: Exception | None = None
     priority = _llm_priority()
     tried_nim = False
-    if model:
-        # Caller pinned a specific NIM model — respect that intent, run
-        # only the NIM path.
+    if model and nim_only:
+        # Caller explicitly wants the NIM path only (e.g. a model whose
+        # behaviour it depends on). Honour that.
         priority = ["nim"]
+    elif model:
+        # A pinned model used to mean "use ONLY NIM", which quietly
+        # bypassed the provider chain entirely. The scriptwriter, SEO
+        # writer and storyboard all pass a model, so the three calls that
+        # dominate a render ignored the configured order and went
+        # straight to NIM — including while NIM was timing out at 30s a
+        # call and the operator had deliberately demoted it.
+        #
+        # A model name is a preference for the NIM leg, not an
+        # instruction to skip every other provider. Callers that truly
+        # need NIM-only now say so with nim_only=True.
+        pass
     for prov in priority:
         if prov == "nim":
             tried_nim = True
