@@ -1851,7 +1851,8 @@ _ARCHIVE_STOPWORDS = {
 }
 
 
-def _agnes_video_generate(prompt: str, output_dir: str, idx: int, seconds: float = 5.0):
+def _agnes_video_generate(prompt: str, output_dir: str, idx: int, seconds: float = 5.0,
+                          init_image_url: str = ""):
     """Generate one clip. Returns a shot-source dict or None.
 
     Never raises: a video miss must fall through to the image chain
@@ -1863,14 +1864,44 @@ def _agnes_video_generate(prompt: str, output_dir: str, idx: int, seconds: float
         return None
     headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
     try:
-        r = _rq.post(f"{_AGNES_BASE}/videos", headers=headers, timeout=60, json={
+        # Parameters per the Agnes Video V2.0 reference:
+        #   wiki.agnes-ai.com/en/docs/agnes-video-v20.md
+        #
+        # width/height are what select the aspect ratio — there is no
+        # aspect_ratio/size/ratio parameter, and passing one is accepted
+        # with HTTP 200 and silently ignored. Omitting width/height
+        # entirely gives the 1152x768 LANDSCAPE default, which is wrong
+        # for Shorts. The service normalises whatever it is given to the
+        # nearest preset tier (720x1280 comes back as 704x1280).
+        #
+        # Duration is num_frames / frame_rate, and num_frames MUST
+        # satisfy 8n+1 (max 441). 24fps rather than 16: the docs' own
+        # duration table is built on 24, and 16fps reads as judder on a
+        # slow push-in, which is most of what we ask for.
+        _secs = max(2.0, min(float(seconds or 5.0), 10.0))
+        # Snap UP to the next legal 8n+1, never down: a clip shorter than
+        # its shot leaves a gap the editor has to fill by freezing or
+        # stretching. Rounding up reproduces the reference table exactly
+        # (5s -> 121 frames, 10s -> 241).
+        _frames = int(round(_secs * 24))
+        _frames = max(9, min(441, ((_frames - 1 + 7) // 8) * 8 + 1))
+        body = {
             "model": _AGNES_VIDEO_MODEL,
             "prompt": prompt[:1200],
-            # 720x1280 is the model's native vertical size; asking for
-            # anything else risks a re-encode or a rejected request.
             "width": 720, "height": 1280,
-            "num_frames": 81, "frame_rate": 16,
-        })
+            "num_frames": _frames, "frame_rate": 24,
+            "negative_prompt": "blurry, low quality, distorted, watermark, text, "
+                               "subtitles, letterboxing, static, still image",
+        }
+        # Image-to-video when we already have a still for this shot.
+        # Animating our own 9:16 frame beats text-to-video on both
+        # fidelity and consistency: the composition is already the one
+        # the shot called for, so the model interpolates motion instead
+        # of reinventing the scene.
+        if init_image_url:
+            body["image"] = init_image_url
+            log.info(f"agnes-video: shot {idx} animating an existing still")
+        r = _rq.post(f"{_AGNES_BASE}/videos", headers=headers, timeout=60, json=body)
         if r.status_code >= 400:
             log.warning(f"agnes-video: create failed HTTP {r.status_code}: {r.text[:160]}")
             return None
@@ -2566,7 +2597,16 @@ def fetch_shots(shots, output_dir, channel="horror", preset_sources=None,
                     _vp = (shot.get("ai_prompt") or shot.get("visual_description")
                            or shot.get("search_query") or "")
                     if _vp:
-                        src = _agnes_video_generate(_vp, output_dir, idx)
+                        # Generate to the shot's real length. The default
+                        # was a fixed 5s regardless of the shot, so a 3s
+                        # shot wasted generation and an 8s shot had to be
+                        # stretched or frozen to cover the gap.
+                        try:
+                            _dur = float(shot.get("end", 0)) - float(shot.get("start", 0))
+                        except (TypeError, ValueError):
+                            _dur = 0.0
+                        src = _agnes_video_generate(_vp, output_dir, idx,
+                                                    seconds=_dur if _dur > 0 else 5.0)
                 # Real archive footage — ONLY for channels explicitly
                 # put in motion mode. Agnes has generation quota and
                 # the Archive's coverage is uneven, so this stays
