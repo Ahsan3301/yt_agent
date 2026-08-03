@@ -242,9 +242,24 @@ def _download_capped(url, dest_path, max_mb):
 # and "unspecified" is not the same as "free".
 _ARCHIVE_OK_LICENCE = (
     "publicdomain",          # /publicdomain/mark/, /publicdomain/zero/
+    "usa.gov",               # US federal works — NASA, NARA, etc.
+)
+
+# CC BY and CC BY-SA are deliberately NOT here, though the Archive has
+# plenty of both and they permit commercial use. They require crediting
+# the author, and there is no path from a footage pick to the YouTube
+# description, so shipping one would be an uncredited use in a
+# monetised video.
+#
+# This list originally did include them, which was inconsistent: the
+# Wikimedia Commons provider was rejected outright for exactly this
+# reason while the same licences sailed through here.
+#
+# Adding attribution plumbing (footage -> run summary -> description)
+# is what unlocks them, and it roughly quintuples the usable pool.
+_ARCHIVE_NEEDS_ATTRIBUTION = (
     "creativecommons.org/licenses/by/",
     "creativecommons.org/licenses/by-sa/",
-    "usa.gov",               # US federal works — NASA, NARA, etc.
 )
 
 
