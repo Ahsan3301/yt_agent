@@ -184,6 +184,11 @@ async function _handler(req: NextRequest) {
           owner_user_id: String(j.owner_user_id || j.user_id || ""),
           run_id:        runId,
           youtube_account_id: acctId,
+          // Preserve the scheduled release. A deferred or retried
+          // publish must still land at the hour the channel targeted;
+          // dropping this would publish immediately and silently undo
+          // the scheduling.
+          publish_at:    Number(j.publish_at || 0),
           title:         String(j.title || ""),
           description:   String(j.description || ""),
           tags:          Array.isArray(j.tags) ? (j.tags as unknown[]).map(String).slice(0, 30) : [],

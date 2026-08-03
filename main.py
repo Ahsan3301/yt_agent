@@ -1037,6 +1037,42 @@ def run_pipeline(
             # and the operator can retry the publish after fixing the
             # token — instead of paying for the whole render again.
             video_id = None
+            # Defer the YouTube upload off a scarce GPU worker.
+            #
+            # Measured across real runs: on Kaggle the upload is 11-76%
+            # of total job time, and the GPU is completely idle for all
+            # of it — one 33.9 min job spent 25.7 min pushing bytes.
+            # Kaggle is capped at 30 GPU-hours/week, so that time is the
+            # scarcest thing the platform has. Oracle is always-on, free,
+            # and has better egress.
+            #
+            # Deferring marks the run needs_publish. The retry-publish
+            # sweep then queues a publish_youtube side-job, which the
+            # Oracle side-worker is already built to execute — no new
+            # machinery, just stopping the wrong machine from doing it.
+            #
+            # Safe because publishing is scheduled: publish_at is carried
+            # through to the side-job, so a delay of a few minutes before
+            # the upload starts does not move when the video goes live.
+            # Without a publish_at this would delay the video, so it only
+            # engages when one is set.
+            _defer = (os.getenv("DEFER_PUBLISH_TO_SIDE_WORKER", "").strip().lower()
+                      in ("1", "true", "yes"))
+            _is_gpu_worker = (os.getenv("INSTANCE_TIER", "").strip().lower() == "gpu")
+            if _defer and _is_gpu_worker and publish_at:
+                log.info(
+                    "Deferring YouTube upload to the side-worker: this is a GPU "
+                    "worker and the video is scheduled for %s, so uploading here "
+                    "would burn scarce GPU time with the card idle.", publish_at,
+                )
+                summary["needs_publish"] = True
+                summary["deferred_publish"] = True
+                # Not an error — the render succeeded and the video is
+                # intact. Left blank so the queue does not show a
+                # failure reason for something that worked.
+                summary["upload_error"] = ""
+                return _finish(summary, work_dir, True)
+
             try:
                 video_id = _step(summary, "upload", lambda: upload_video(
                     final_video, script, channel_type,

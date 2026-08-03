@@ -260,6 +260,11 @@ def _publish_youtube(job: dict[str, Any]) -> tuple[bool, str]:
             channel_type=channel or "horror",
             youtube_account_id=yt_account_id,
             language=language or None,
+            # Carry the scheduled release through. Without this a
+            # deferred publish would go live the moment the side-worker
+            # got round to uploading, which defeats the entire point of
+            # rendering early to hit a specific hour.
+            publish_at=job.get("publish_at") or None,
         )
     except Exception as e:
         return False, f"uploader.upload_video failed: {e}"
