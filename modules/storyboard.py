@@ -360,7 +360,12 @@ def plan_shots(narration, num_shots, channel: str = "horror",
                 ],
                 # Bumped 4096 → 8192 after Nemotron kept truncating
                 # long detailed shot arrays mid-string at ~char 4640.
-                max_tokens=8192,
+                # 8192 was enough for shots alone. Adding the `cast`
+                # block pushed the response past it: the JSON truncated
+                # and the parser fell back to "best partial (10 shots)",
+                # which silently dropped `cast` — so character pinning
+                # never applied on the first run that had it.
+                max_tokens=16384,
                 temperature=0.6,
                 response_format={"type": "json_object"},
                 # chat() auto-streams when max_tokens > 1024 — this is the
