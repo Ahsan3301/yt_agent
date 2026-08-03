@@ -1973,6 +1973,55 @@ _CAST_ANCHORS: dict[str, str] = {}
 _CAST_ANCHOR_LOCK = __import__("threading").Lock()
 
 
+def build_cast_sheet(shots, output_dir) -> int:
+    """Generate one reference portrait per recurring character.
+
+    Anchoring on "whatever shot 1 produced" is weak: the opening shot is
+    usually a wide establishing frame where the character is small,
+    backlit or facing away, which is a poor thing to match a face
+    against. A purpose-built portrait — frontal, evenly lit, plain
+    background — gives every later shot a clean likeness to lock onto.
+
+    It also decouples the anchor from shot order, so re-rolling shot 1
+    can no longer change what the whole cast looks like.
+
+    Costs one image per character. Returns how many were built.
+    """
+    if not _agnes_key():
+        return 0
+    looks: dict[str, str] = {}
+    for sh in (shots or []):
+        for nm in (sh.get("cast_names") or []):
+            if nm in looks:
+                continue
+            # The storyboard appends "Character reference — Name: look"
+            # to ai_prompt; recover this character's clause from it.
+            _ap = str(sh.get("ai_prompt") or "")
+            _marker = f"{nm}:"
+            if _marker in _ap:
+                seg = _ap.split(_marker, 1)[1]
+                looks[nm] = seg.split(";")[0].strip(" .")[:300]
+    built = 0
+    for nm, look in list(looks.items())[:3]:      # 3 portraits is plenty for a Short
+        if not look:
+            continue
+        prompt = (
+            f"Head and shoulders portrait photograph of {look}. "
+            "Facing camera, neutral expression, even soft lighting, "
+            "plain neutral background, sharp focus, photorealistic."
+        )
+        try:
+            path, _seed = _agnes_generate(prompt, output_dir, trial=0)
+        except Exception as e:
+            log.warning(f"cast-sheet: {nm} failed: {e}")
+            continue
+        if path:
+            _cast_anchor_put([nm], path)
+            built += 1
+            log.info(f"cast-sheet: built reference portrait for {nm}")
+    return built
+
+
 def reset_cast_anchors() -> None:
     with _CAST_ANCHOR_LOCK:
         _CAST_ANCHORS.clear()
@@ -2575,10 +2624,15 @@ def _motion_budget(mode: str, total_shots: int = 0) -> int:
     """How many opening shots may use motion, for this mode."""
     if mode == "stills":
         return 0
-    if mode == "full":
-        # Every shot. Bounded by the shot count itself rather than a
-        # constant so a longer video does not silently stop being
-        # full-motion halfway through.
+    if mode in ("motion", "full"):
+        # EVERY shot. "motion" used to mean 4 of 6, with "full" as a
+        # separate mode for all of them — a distinction that only made
+        # sense from the inside. Setting a channel to motion should
+        # produce a video made of motion, not a mix where a third of
+        # the shots are quietly stills.
+        #
+        # "full" is kept as an accepted value so any channel already set
+        # to it keeps working, but it now behaves identically.
         return max(1, int(total_shots or 6))
     base = _agnes_video_shots()
     if mode == "motion":
@@ -2624,6 +2678,15 @@ def fetch_shots(shots, output_dir, channel="horror", preset_sources=None,
     # pre-existing behaviour, so a channel that has never been
     # configured renders exactly as it did before this setting existed.
     _mode = _normalise_footage_mode(footage_mode)
+    # Reference portraits BEFORE any shot renders, so the very first
+    # appearance already matches the sheet rather than defining it.
+    if _mode != "stills":
+        try:
+            _n = build_cast_sheet(shots, output_dir)
+            if _n:
+                log.info(f"cast-sheet: {_n} character reference(s) ready")
+        except Exception as _e:
+            log.warning(f"cast-sheet skipped: {_e!r}")
     log.info(f"footage mode: {_mode} (motion budget: {_motion_budget(_mode, total)} of {total} shot(s))")
 
     # Parallelism: a single SDXL inference at 1024x576 uses ~4-5 GB
