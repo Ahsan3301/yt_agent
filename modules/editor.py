@@ -1182,6 +1182,27 @@ def assemble_video(voiceover_path, sources, music_path, narration_text, output_d
 
     log.info("Getting audio duration...")
     duration = get_audio_duration(voiceover_path)
+    # Hard ceiling on finished length.
+    #
+    # max_video_seconds bounded the SHOT PLANNER (6 shots, correctly) but
+    # nothing bounded the encode, so a narration that ran long simply
+    # produced a long video: a 30s format shipped at 58.9s. The setting
+    # has to apply where the length is actually decided.
+    #
+    # Trimming here cuts the tail of the narration rather than rushing
+    # it, which is the lesser evil — but if this fires regularly the real
+    # fix is upstream in the word budget, so it logs loudly.
+    try:
+        _cap = float((load_settings().get("video") or {}).get("max_video_seconds", 0) or 0)
+    except Exception:
+        _cap = 0.0
+    if _cap > 0 and duration > _cap:
+        log.warning(
+            f"Narration is {duration:.1f}s but max_video_seconds={_cap:.0f} — "
+            f"trimming. Lower content.target_word_min/max if this recurs; "
+            f"the tail of the script is being cut."
+        )
+        duration = _cap
     log.info(f"Voiceover duration: {duration:.1f}s")
 
     # Step 1: Prepare background video (one segment per source, no repeats)
