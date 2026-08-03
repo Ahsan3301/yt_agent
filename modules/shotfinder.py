@@ -1885,13 +1885,41 @@ def _agnes_video_generate(prompt: str, output_dir: str, idx: int, seconds: float
         # (5s -> 121 frames, 10s -> 241).
         _frames = int(round(_secs * 24))
         _frames = max(9, min(441, ((_frames - 1 + 7) // 8) * 8 + 1))
+        # Direction, not just description.
+        #
+        # The prompt handed in here is the DIFFUSION prompt — it
+        # describes a scene, not a shot. A video model given no camera
+        # or action instruction produces a near-static frame with drifting
+        # detail, which reads as "artifacting" and "movement not on
+        # point" because nothing is deliberately moving.
+        #
+        # One camera move plus one physical action gives the model
+        # something coherent to animate, so its motion budget goes into
+        # intended movement instead of hallucinated wobble.
+        _moves = ("slow dolly-in", "slow push-in", "gentle handheld drift",
+                  "slow tilt up", "steady tracking shot")
+        _directed = (
+            f"{prompt[:900]}. "
+            f"Cinematography: {_moves[idx % len(_moves)]}, "
+            f"single continuous take, stable framing, natural motion, "
+            f"consistent lighting throughout the shot."
+        )
         body = {
             "model": _AGNES_VIDEO_MODEL,
-            "prompt": prompt[:1200],
+            "prompt": _directed[:1200],
             "width": 720, "height": 1280,
             "num_frames": _frames, "frame_rate": 24,
-            "negative_prompt": "blurry, low quality, distorted, watermark, text, "
-                               "subtitles, letterboxing, static, still image",
+            # Documented and never sent. This is the standard lever for
+            # artifact reduction — more denoising steps mean fewer of
+            # the warped hands, smeared faces and boiling textures that
+            # show up on a default-step generation.
+            "num_inference_steps": int(os.getenv("AGNES_VIDEO_STEPS", "40")),
+            "negative_prompt": (
+                "blurry, low quality, distorted, deformed, warped face, "
+                "extra limbs, extra fingers, melting features, flickering, "
+                "morphing, jitter, ghosting, duplicated subject, "
+                "watermark, text, subtitles, letterboxing, static, still image"
+            ),
         }
         # Image-to-video when we already have a still for this shot.
         # Animating our own 9:16 frame beats text-to-video on both

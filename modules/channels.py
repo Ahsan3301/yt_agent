@@ -179,8 +179,16 @@ CHANNEL_PRESETS: dict[str, dict] = {
         # of the legend, not a participant.
         "perspective":    "third_person_storyteller — like a campfire / podcast host narrating a true horror story. Pick concrete subjects ('Sarah', 'the night nurse on ward 4', 'the workers in the abandoned mill'). Past tense or present-tense storytelling, NOT 'I/me'. The narrator describes events from outside, with chilling detachment. Banned openings: 'It happened to me', 'I was', 'Let me tell you about the time I'. Required: the protagonist is someone OTHER than the narrator. Vary characters across scripts — don't always be 'she'.",
         "voice":          "en-US-BrianMultilingualNeural",
-        "rate":           "-5%",
-        "pitch":          "-2Hz",
+        # -5%/-2Hz is close enough to neutral that the read comes out
+        # flat — which is most of why the voiceover feels boring. A
+        # horror narration wants deliberate pacing and a lower register:
+        # the pauses are where dread accumulates, and a rushed neutral
+        # delivery gives the listener nowhere to sit.
+        #
+        # Kept short of parody: -12% is unhurried, not sluggish, and
+        # -8Hz darkens the timbre without dropping into a growl.
+        "rate":           "-12%",
+        "pitch":          "-8Hz",
         "color_grade":    "cool_desaturated",
         "footage_keywords": [
             "abandoned gothic mansion at night",
