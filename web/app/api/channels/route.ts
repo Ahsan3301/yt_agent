@@ -80,7 +80,7 @@ type ChannelDoc = {
   // channels that leave this off never send prompts to Agnes.
   //   "off"  → Agnes skipped for this channel
   //   "own"  → use agnes_api_key for this channel's renders
-  agnes_source?: "off" | "own";
+  agnes_source?: "off" | "own" | "pool";
   agnes_api_key?: string;           // own mode only, write-only
   agnes_action?: "set" | "clear";
 };
@@ -391,6 +391,11 @@ export async function POST(req: NextRequest) {
     if (body.agnes_source === "off") {
       agnesPatch.agnes_source = "off";
       agnesPatch.agnes_api_key = "";
+    } else if (body.agnes_source === "pool") {
+      // Use the platform's pooled Agnes key. This is the default and
+      // the normal case: Agnes is the primary provider for text,
+      // images and video, so most channels should simply inherit it.
+      agnesPatch.agnes_source = "pool";
     } else if (body.agnes_source === "own") {
       if (body.agnes_action === "set") {
         const k = String(body.agnes_api_key || "").trim();

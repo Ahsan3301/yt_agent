@@ -36,21 +36,44 @@ def apply_from_job(job: dict) -> dict:
     Returns a snapshot for later restore_env()."""
     snapshot = {k: os.environ.get(k, "") for k in _KEYS}
 
-    source = str(job.get("agnes_source") or "off").strip().lower()
+    # Default is "pool", NOT "off".
+    #
+    # This defaulted to "off", and "off" does not merely decline to set a
+    # key — it POPS AGNES_API_KEY, deleting the pooled key that
+    # keys_sync had just loaded. Since no channel had ever been set to
+    # "own", Agnes was disabled on every render: no Agnes text, no Agnes
+    # images, and no Agnes video clips. The provider was configured,
+    # keyed, healthy, and unreachable.
+    #
+    #   pool  (default) use the platform pooled AGNES_API_KEY as loaded
+    #                   by keys_sync — i.e. leave the environment alone.
+    #   own             use the channel's own key, for a tenant who
+    #                   brings their own Agnes account.
+    #   off             explicitly disable Agnes for this channel.
+    source = str(job.get("agnes_source") or "pool").strip().lower()
     if source == "own":
         key = str(job.get("agnes_own_api_key") or "").strip()
         if key:
             os.environ["AGNES_API_KEY"] = key
             log.info(f"channel_agnes: using OWN Agnes key (…{key[-4:]}) for this render")
         else:
-            os.environ.pop("AGNES_API_KEY", None)
+            # Fall back to the pool rather than disabling Agnes: a
+            # channel marked "own" with no key is a misconfiguration,
+            # and silently losing the best provider is the worse
+            # outcome of the two.
             log.warning(
                 "channel_agnes: agnes_source=own but no key on job — "
-                "Agnes provider will skip this render"
+                "falling back to the pooled Agnes key"
             )
-    else:
+    elif source == "off":
         os.environ.pop("AGNES_API_KEY", None)
-        log.info("channel_agnes: agnes_source=off — Agnes provider disabled for this render")
+        log.info("channel_agnes: agnes_source=off — Agnes disabled for this render")
+    else:
+        _pooled = (os.environ.get("AGNES_API_KEY") or "").strip()
+        log.info(
+            f"channel_agnes: using pooled Agnes key "
+            f"({'set' if _pooled else 'MISSING — Agnes will skip'})"
+        )
 
     return snapshot
 

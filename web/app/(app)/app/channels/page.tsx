@@ -79,7 +79,7 @@ type Channel = {
   llm_priority?: string;
   // Per-channel Agnes AI image provider. "own" + a stored key opts this
   // channel in; "off" (default) keeps it fully isolated.
-  agnes_source?: "off" | "own";
+  agnes_source?: "off" | "own" | "pool";
   has_agnes_key?: boolean;
 };
 
@@ -799,8 +799,8 @@ function ChannelForm({
 
   // ── Agnes AI image provider (per-channel) ──────────────────
   // "off" | "own" — matches server field agnes_source.
-  const [agnesSource, setAgnesSource] = useState<"off" | "own">(
-    (initial?.agnes_source as "off" | "own") || "off",
+  const [agnesSource, setAgnesSource] = useState<"off" | "own" | "pool">(
+    (initial?.agnes_source as "off" | "own" | "pool") || "pool",
   );
   const hasAgnesKey = !!initial?.has_agnes_key;
   const [agnesAction, setAgnesAction] = useState<"keep" | "set">(
@@ -1589,11 +1589,13 @@ function ChannelForm({
         <p className="text-[10px] text-neutral-500 -mt-1">
           Optional free image provider (agnes-ai.com), used in the image
           priority chain. Per-channel + private: this channel uses its OWN
-          key, and channels left off never send prompts to Agnes. Big free
-          quota — good as a Cloudflare-exhaustion fallback.
+          key. Agnes is the primary provider for script text, images and
+          motion clips, so most channels should stay on the shared key.
+          &quot;Use my key&quot; bills a tenant&apos;s own Agnes account;
+          &quot;Off&quot; opts the channel out entirely.
         </p>
         <div className="flex gap-1.5">
-          {(["off", "own"] as const).map((v) => (
+          {(["pool", "own", "off"] as const).map((v) => (
             <button
               key={v}
               type="button"
@@ -1604,7 +1606,7 @@ function ChannelForm({
                   : "btn-ghost"
               }`}
             >
-              {v === "off" ? "Off" : "Use my key"}
+              {v === "pool" ? "Shared key (default)" : v === "own" ? "Use my key" : "Off"}
             </button>
           ))}
         </div>

@@ -169,10 +169,15 @@ DEFAULT_SETTINGS = {
         # quality with a documented daily quota. Auto-soft-cap at 150/day
         # (see modules.shotfinder._CF_DAILY_CAP) so overflow falls
         # through to Pollinations without any operator action.
+        # Agnes leads. Measured best-in-class on text in this stack, and
+        # it is the one provider that covers text, image AND video, so
+        # keeping it primary means one quota to reason about instead of
+        # three chains that each degrade differently. Cloudflare stays
+        # directly behind it as the strongest free-tier fallback.
         "priority": [
-            "cloudflare",           # klein-9b pool, best quality
+            "agnes",                # primary: text + image + video, big quota
+            "cloudflare",           # klein-9b pool, best free-tier quality
             "local_flux2_klein",    # Kaggle T4×2 only, unlimited Flux 2 backup
-            "agnes",                # Agnes AI, per-channel key, big free quota
             "pollinations",         # Flux 1, unlimited network fallback
             "horde",                # community SDXL safety net
             "local_sdxl",           # legacy last-resort GPU fallback
