@@ -46,6 +46,46 @@ CORE_RE='^(dashboard|caddy|pocketbase|minio)-'
 # migration can cascade a restart through depends_on well after the
 # first one is answering.
 STABLE_SECONDS="${STABLE_SECONDS:-25}"
+
+# ── Refuse to deploy while a render is in flight ──────────────────
+# Every deploy REPLACES the side-worker container, killing whatever it
+# is rendering. Two things follow, both of which happened on
+# 2026-08-03 across ~20 deploys in one day:
+#
+#   1. The render is orphaned and has to start over, so the GPU or CPU
+#      time already spent is thrown away.
+#   2. Worse: while the side-worker is not heartbeating it drops out of
+#      the live-worker set, so a channel configured to prefer Oracle
+#      silently falls through to Kaggle and spends scarce GPU quota.
+#
+# "Do not deploy during a render" was a rule someone had to remember.
+# Now the script enforces it. ALLOW_DEPLOY_DURING_RENDER=1 overrides
+# for the case where the deploy IS the fix for a stuck render.
+if [ "${ALLOW_DEPLOY_DURING_RENDER:-0}" != "1" ]; then
+  _DASH=$(docker ps --format '{{.Names}}' 2>/dev/null | grep '^dashboard-' | head -1)
+  if [ -n "$_DASH" ]; then
+    _ACTIVE=$(docker exec "$_DASH" node -e '
+const PB=process.env.PB_URL_INTERNAL||"http://pocketbase:8080";
+(async()=>{
+ try{
+  const a=await (await fetch(PB+"/api/collections/_superusers/auth-with-password",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({identity:process.env.POCKETBASE_ADMIN_EMAIL,password:process.env.POCKETBASE_ADMIN_PASSWORD})})).json();
+  const r=await fetch(PB+"/api/collections/jobs/records?perPage=200&filter="+encodeURIComponent("status='running'"),{headers:{Authorization:a.token}});
+  const j=await r.json(); console.log(String((j.items||[]).length));
+ }catch(e){ console.log("0"); }
+})()' 2>/dev/null | tr -d "[:space:]")
+    if [ -n "$_ACTIVE" ] && [ "$_ACTIVE" -gt 0 ] 2>/dev/null; then
+      echo "[deploy] ABORT: $_ACTIVE render(s) currently running."
+      echo "[deploy] Deploying now would kill them mid-render, waste the"
+      echo "[deploy] compute already spent, and drop the side-worker out of"
+      echo "[deploy] the live set long enough for Oracle-first channels to"
+      echo "[deploy] fall through to Kaggle."
+      echo "[deploy] Wait for the queue to drain, or re-run with"
+      echo "[deploy]   ALLOW_DEPLOY_DURING_RENDER=1"
+      exit 3
+    fi
+    echo "[deploy] no renders in flight — safe to proceed"
+  fi
+fi
 # Consecutive good probes required. A single 200 is not proof the
 # deploy landed — it can arrive in the gap before a restart, which is
 # exactly how a previous run reported success while the site was about

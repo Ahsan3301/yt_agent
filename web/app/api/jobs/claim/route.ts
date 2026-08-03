@@ -36,7 +36,21 @@ const LIVE_HEARTBEAT_WINDOW_SEC = 90;
 const BOOT_GRACE_SEC: Record<string, number> = {
   kaggle: 8 * 60,
   colab:  15 * 60,
-  oracle: 0,
+  // Was 0, on the reasoning that the Oracle side-worker is always-on so
+  // nothing needs to wait for it to boot. "Always-on" is not true while
+  // it is being REPLACED: every deploy swaps that container, and for the
+  // 30-60 s it is not heartbeating it drops out of the live set. A
+  // lower-priority worker polling in that window sees no higher-priority
+  // worker alive and claims instantly — so a channel configured
+  // ["oracle","kaggle"] silently rendered on Kaggle.
+  //
+  // Observed after ~20 deploys in a day: jobs from Oracle-first channels
+  // landing on Kaggle and eating GPU quota that was meant to be spared.
+  // The grace makes priority survive a restart instead of being
+  // forfeited by a momentary gap. The cost is that a genuinely dead
+  // Oracle delays fallback by this long, which is the right trade when
+  // the alternative is spending a scarce quota by accident.
+  oracle: Number(process.env.ORACLE_BOOT_GRACE_SEC || 180),
 };
 
 // Infer canonical "kaggle" | "colab" | "oracle" from either an

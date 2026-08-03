@@ -1719,6 +1719,120 @@ def _agnes_key() -> str:
     return (os.getenv("AGNES_API_KEY", "") or "").strip()
 
 
+# ── Agnes AI VIDEO provider ───────────────────────────────────────
+# Generates an actual moving clip per shot instead of a still image
+# with a Ken Burns pan. Native output is 720x1280 — already the Shorts
+# aspect ratio, so nothing is cropped or letterboxed.
+#
+# This is a DIFFERENT endpoint from the chat/image ones and is
+# asynchronous: POST /v1/videos returns a task id, then you poll
+# GET /v1/videos/<id> until status=completed and read metadata.url.
+# Calling the video model through /chat/completions returns
+# 403 "Model is blocked", which reads like an account restriction but
+# only means the model is not served on that endpoint.
+#
+# Cost control: ~90 s per 5 s clip, so generating every shot this way
+# would add 15-30 min to a render. AGNES_VIDEO_SHOTS caps how many
+# shots get a real clip; the rest fall through to the image chain. The
+# cap applies to the FIRST shots because Shorts retention is decided in
+# the opening seconds — that is where motion earns the most.
+_AGNES_VIDEO_MODEL = os.getenv("AGNES_VIDEO_MODEL", "agnes-video-v2.0")
+_AGNES_VIDEO_POLL_SECONDS = int(os.getenv("AGNES_VIDEO_POLL_SECONDS", "180"))
+
+
+def _agnes_video_shots() -> int:
+    """How many opening shots get a generated clip. 0 disables it.
+
+    Read per call rather than cached at import so the dashboard setting
+    takes effect on the next render without restarting a worker.
+    Default 2: enough for the hook to move, cheap enough that it adds
+    roughly three minutes rather than half an hour.
+    """
+    try:
+        return max(0, min(10, int(os.getenv("AGNES_VIDEO_SHOTS", "2"))))
+    except Exception:
+        return 2
+
+
+def _agnes_video_generate(prompt: str, output_dir: str, idx: int, seconds: float = 5.0):
+    """Generate one clip. Returns a shot-source dict or None.
+
+    Never raises: a video miss must fall through to the image chain
+    rather than fail the shot, since a missing shot kills the render.
+    """
+    import requests as _rq
+    key = _agnes_key()
+    if not key:
+        return None
+    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    try:
+        r = _rq.post(f"{_AGNES_BASE}/videos", headers=headers, timeout=60, json={
+            "model": _AGNES_VIDEO_MODEL,
+            "prompt": prompt[:1200],
+            # 720x1280 is the model's native vertical size; asking for
+            # anything else risks a re-encode or a rejected request.
+            "width": 720, "height": 1280,
+            "num_frames": 81, "frame_rate": 16,
+        })
+        if r.status_code >= 400:
+            log.warning(f"agnes-video: create failed HTTP {r.status_code}: {r.text[:160]}")
+            return None
+        task_id = (r.json() or {}).get("task_id") or (r.json() or {}).get("id")
+        if not task_id:
+            log.warning("agnes-video: no task id in create response")
+            return None
+    except Exception as e:
+        log.warning(f"agnes-video: create error: {e}")
+        return None
+
+    deadline = time.time() + _AGNES_VIDEO_POLL_SECONDS
+    url = ""
+    while time.time() < deadline:
+        time.sleep(10)
+        try:
+            p = _rq.get(f"{_AGNES_BASE}/videos/{task_id}", headers=headers, timeout=30)
+            d = p.json() if p.status_code < 400 else {}
+        except Exception:
+            continue
+        status = str(d.get("status") or "")
+        if status in ("completed", "succeeded", "success", "finished"):
+            url = str((d.get("metadata") or {}).get("url") or "")
+            break
+        if status in ("failed", "error"):
+            log.warning(f"agnes-video: task {task_id} reported {status}")
+            return None
+    if not url:
+        log.warning(f"agnes-video: task {task_id} did not finish within "
+                    f"{_AGNES_VIDEO_POLL_SECONDS}s — falling back to a still")
+        return None
+
+    dest = os.path.join(output_dir, f"agnes_video_{idx:02d}.mp4")
+    try:
+        with _rq.get(url, stream=True, timeout=120) as vr:
+            vr.raise_for_status()
+            with open(dest, "wb") as f:
+                for chunk in vr.iter_content(1 << 16):
+                    if chunk:
+                        f.write(chunk)
+    except Exception as e:
+        log.warning(f"agnes-video: download failed: {e}")
+        return None
+
+    # An HTML error page saved as .mp4 would sail through the editor and
+    # produce a broken segment, so verify the container before trusting it.
+    try:
+        with open(dest, "rb") as f:
+            if f.read(12)[4:8] != b"ftyp":
+                log.warning("agnes-video: downloaded file is not an mp4")
+                os.remove(dest)
+                return None
+    except Exception:
+        return None
+
+    log.info(f"agnes-video: shot {idx} -> {os.path.getsize(dest)//1024} KB clip")
+    return {"type": "video", "path": dest, "origin": "agnes-video", "score": 8}
+
+
 def _agnes_generate(prompt, output_dir, trial, negative_prompt=""):
     """Generate one image via Agnes AI. Returns (path, seed) on success,
     (None, seed) on any failure. OpenAI-images-style endpoint:
@@ -2286,14 +2400,28 @@ def fetch_shots(shots, output_dir, channel="horror", preset_sources=None,
             log.info(f"Shot {idx+1}/{total}: preset image {src.get('path')}")
         else:
             log.info(f"Shot {idx+1}/{total}: fetching (cuda:{_LOCAL_SDXL_TLS.device})")
-            # Snapshot used_ids under lock so the provider sees a
-            # consistent view; merge new additions back under lock.
-            with used_lock:
-                snap = set(used_ids)
-            src = find_image_for_shot(shot, output_dir, snap, channel=channel,
-                                      tone_override=tone_override, language=language)
-            with used_lock:
-                used_ids.update(snap)
+            src = None
+            # Real motion for the opening shots, when enabled. Shorts
+            # retention is decided in the first seconds, so a generated
+            # clip earns more there than anywhere else in the video —
+            # and capping it keeps the ~90 s/clip cost bounded instead
+            # of adding half an hour to every render.
+            if idx < _agnes_video_shots() and _agnes_key():
+                _vp = (shot.get("visual") or shot.get("prompt")
+                       or shot.get("description") or "")
+                if _vp:
+                    src = _agnes_video_generate(_vp, output_dir, idx)
+                    if src is None:
+                        log.info(f"Shot {idx+1}: video unavailable, using a still instead")
+            if src is None:
+                # Snapshot used_ids under lock so the provider sees a
+                # consistent view; merge new additions back under lock.
+                with used_lock:
+                    snap = set(used_ids)
+                src = find_image_for_shot(shot, output_dir, snap, channel=channel,
+                                          tone_override=tone_override, language=language)
+                with used_lock:
+                    used_ids.update(snap)
         if src:
             src["start"] = float(shot.get("start", 0.0))
             src["end"]   = float(shot.get("end", 0.0))
