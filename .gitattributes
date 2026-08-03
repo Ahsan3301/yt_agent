@@ -1,2 +1,14 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# busybox crond SILENTLY refuses to parse a crontab with CRLF line
+# endings: it loads zero jobs, logs nothing, and every scheduled task
+# stops. That is exactly what happened on 2026-08-03 — the file was
+# copied from a Windows checkout and the whole maintenance schedule
+# (scheduled-render, retry-publish, cleanup, gateway-heal) was dead for
+# 8 hours with no error anywhere.
+#
+# Force LF regardless of core.autocrlf on the developer's machine.
+coolify/cron/crontab text eol=lf
+*.sh                     text eol=lf
+Dockerfile*              text eol=lf
