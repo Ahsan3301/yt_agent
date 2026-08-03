@@ -404,6 +404,16 @@ def handle(job: dict) -> None:
                         privacy_override=job.get("privacy_override"),
                         publish_at=job.get("publish_at"),
                         youtube_account_id=job.get("youtube_account_id"),
+                        # Per-channel footage mode. This worker calls
+                        # run_pipeline directly instead of going through
+                        # backend/jobs.py, so every new pipeline argument
+                        # has to be added HERE as well — miss it and the
+                        # setting reaches the job, survives the claim,
+                        # and is then silently dropped at the last hop.
+                        # That is exactly what happened on the first
+                        # motion test: the job said "motion", the
+                        # pipeline logged "standard".
+                        footage_mode=job.get("footage_mode"),
                     )
                 finally:
                     _cf.restore_env(_cf_snap)
