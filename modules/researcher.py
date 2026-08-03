@@ -405,6 +405,98 @@ def research(channel_type: str, language: str = "en"):
     return _generic_research(channel_type, language=lang)
 
 
+def _usable_seed(title: str, language: str = "en") -> bool:
+    """Is this ranking title worth showing the topic model?
+
+    A live lookup returns what is popular, not what is useful. Measured
+    on the real API: a horror search returned "Bhoot Wala Chudail 👹👻
+    #shorts #bhoot #bhootwala" at 8.4M views and a finance search
+    returned a Telugu comedy title — both DECLARING themselves English,
+    so seo_borrower's language check passed them.
+
+    Seeding the prompt with those actively harms topic selection: the
+    model treats them as the target and drifts toward hashtag-stuffed
+    foreign-language content. Bad seeds are worse than no seeds, so this
+    is deliberately strict and an empty result simply falls back to the
+    previous behaviour.
+    """
+    t = (title or "").strip()
+    if len(t) < 15:
+        return False
+    # Mostly-Latin only. The declared-language field is self-reported
+    # and routinely wrong; the script itself is not.
+    letters = [c for c in t if c.isalpha()]
+    if not letters:
+        return False
+    # Count non-Latin letters ABSOLUTELY, not as a ratio. A ratio lets a
+    # mixed title through whenever the Latin half is longer — measured:
+    # "మా వారు Finance Business |#AmbatiArjun" is 80% Latin by character
+    # and still unusable as an English seed. A genuine English title has
+    # essentially no non-ASCII letters, so a handful is the signal.
+    non_latin = sum(1 for c in letters if not c.isascii())
+    # >2, not >3: Telugu/Devanagari vowel signs are combining marks and
+    # do not count as alpha, so a visibly foreign title can present as
+    # only three "letters". An English title carries at most an accent
+    # or two ("Cafe" -> "Café"), never three distinct non-Latin glyphs.
+    if non_latin > 2 or (non_latin / len(letters)) > 0.15:
+        return False
+    # Hashtag farms carry no idea worth learning from.
+    if t.count("#") >= 3:
+        return False
+    # Strip trailing hashtag tails so what remains is the actual claim.
+    core = t.split("#")[0].strip()
+    return len(core) >= 15
+
+
+def _ranking_topic_seeds(channel_type: str, language: str = "en", limit: int = 8) -> list[str]:
+    """Titles of videos ACTUALLY ranking in this niche right now.
+
+    Topic selection was an LLM inventing subjects with no reference to
+    what performs, which is the definition of the "randomly selected"
+    problem: the model reaches for the most generic instance of a genre
+    every time, so a horror channel gets abandoned-house-number-forty.
+
+    A real ranking title carries information a cold prompt cannot: what
+    the audience is currently clicking, which framings are working, and
+    which specific hooks are live this week. Feeding those in as SEEDS
+    (not templates to copy) moves the model from inventing to
+    responding.
+
+    Costs one YouTube search (~101 quota units) against the 10,000/day
+    budget. Returns [] on any miss so the caller falls back to the
+    previous behaviour rather than failing the render.
+    """
+    try:
+        from modules import seo_borrower, channels as _ch
+    except Exception:
+        return []
+    try:
+        cfg = _ch.resolve(channel_type) or {}
+    except Exception:
+        cfg = {}
+    # Search the niche itself, not a specific story: we want the
+    # neighbourhood this channel competes in.
+    query = (cfg.get("search_seed") or cfg.get("display_name")
+             or channel_type or "").strip()
+    if not query:
+        return []
+    try:
+        pool = seo_borrower.find_viral_pool(query, language=language)
+    except Exception as e:
+        log.info(f"topic seeds: lookup failed ({e}); using generated topics")
+        return []
+    titles = []
+    for m in pool:
+        t = str(m.get("title") or "").strip()
+        if _usable_seed(t, language):
+            titles.append(t[:120])
+        if len(titles) >= limit:
+            break
+    if titles:
+        log.info(f"topic seeds: {len(titles)} ranking title(s) from the {channel_type} niche")
+    return titles
+
+
 def _generic_research(channel_type: str, language: str = "en") -> dict | None:
     """LLM-suggest a topic for an arbitrary channel, using the niche's
     own tone + visual style as context.
@@ -438,6 +530,22 @@ def _generic_research(channel_type: str, language: str = "en") -> dict | None:
                 + "\n  - ".join(sample[:8])
             )
 
+        # What is actually ranking in this niche right now. Without it
+        # the model invents from a cold start and reaches for the most
+        # generic instance of the genre every time.
+        _seeds = _ranking_topic_seeds(channel_type, language=lang)
+        seed_hint = ""
+        if _seeds:
+            seed_hint = (
+                "\n\nThese videos are ranking in this niche RIGHT NOW:\n  - "
+                + "\n  - ".join(_seeds)
+                + "\n\nUse them to judge what this audience is currently "
+                  "responding to — the SHAPE of a working idea, the level of "
+                  "specificity, the kind of hook. Do NOT copy or lightly "
+                  "reword any of them: propose a DIFFERENT subject that would "
+                  "appeal to the same viewer."
+            )
+
         prompt = (
             f"Suggest ONE specific, surprising topic for a 60-second YouTube Short "
             f"on the {cfg.get('display_name') or channel_type} channel.\n\n"
@@ -447,6 +555,7 @@ def _generic_research(channel_type: str, language: str = "en") -> dict | None:
             f"Reply with ONLY the topic — one short sentence, no preamble, no markdown. "
             f"Make it concrete enough that a scriptwriter could write 200 words about it. "
             f"Pick something fresh — avoid the obvious top-of-mind subject for this niche."
+            f"{seed_hint}"
             f"{recent_hint}"
         )
         premise = ""
