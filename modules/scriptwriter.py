@@ -693,8 +693,14 @@ def write_script(research_data, max_attempts=3):
         #
         # 25% over / 20% under keeps the borderline-response tolerance
         # the margin was there for, without letting the format drift.
-        _wmax = int(round(word_max * 1.25))
-        _wmin = max(40, int(round(word_min * 0.80)))
+        # 25% over was still too loose in practice: at a 58-word target it
+        # passed 72 words, and the niche voices run slowed (horror is -12%
+        # rate, ~1.7 words/sec), so 72 words is ~42s against a 30s cap. The
+        # editor then trims the TAIL — which is exactly the recontextualising
+        # last line the prompt works hardest to produce. Tighten to 12%:
+        # worst case now lands inside the cap instead of being cut.
+        _wmax = int(round(word_max * 1.12))
+        _wmin = max(30, int(round(word_min * 0.85)))
         problems = _validate(script, word_min=_wmin, word_max=_wmax)
         if not problems:
             log.info(f"Script written: '{script.get('youtube_title', '')}'")

@@ -297,7 +297,23 @@ def generate_horror_premise(language: str = "en") -> tuple[str, str]:
         key = f"{setting}|{hook}"
         _save_used(key, "horror", language)
 
-    return f"Someone experiences {hook}, while at {setting}.", key
+    # "Someone experiences {hook}" reads as filler and breaks grammatically
+    # once the hook is a full clause rather than a noun phrase — generated
+    # premises produce e.g. "Someone experiences your reflection ... winks
+    # at you". The setting-first form stays grammatical either way and
+    # leads with the concrete image, which is what the hook depends on.
+    # The model often joins its own clauses with " + " (it mirrors the
+    # separator used in the prompt's examples). Left alone that reaches
+    # the scriptwriter and the on-screen title verbatim.
+    def _clean(v: str) -> str:
+        v = re.sub(r"\s*\+\s*", " — ", (v or "").strip())
+        v = re.sub(r"\s*—\s*", " — ", v)
+        return v.strip().strip("—").strip().rstrip(".")
+    _s = _clean(setting)
+    _h = _clean(hook)
+    if _s.lower() == _h.lower():          # single-line premise: no split
+        return f"{_s}.", key
+    return f"{_s[0].upper()}{_s[1:]} — {_h}.", key
 
 
 def get_trending_topics():
