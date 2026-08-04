@@ -59,6 +59,111 @@ PROMPT_VERSION = "v9"
 #       doing this wrong") or huge ("this will outlive everyone alive").
 #     * End on a punch, not a summary. "Subscribe for more" is forbidden.
 
+# Few-shot exemplars for UNIVERSAL_PROMPT.
+#
+# The prompt previously carried nine abstract rules ("be specific",
+# "open a loop") and no examples. That reliably yields generic prose:
+# the model has no referent for what "specific" means in THIS niche, so
+# it writes the safe average of everything it has seen. An annotated
+# good/bad pair moves output far more than another rule does — the same
+# change made to HORROR_PROMPT is what finally produced scripts with
+# checkable facts in them.
+#
+# Keyed by channel_type. _DEFAULT_EXEMPLAR covers any niche without an
+# entry, so a new channel degrades to "generic but fact-driven" rather
+# than to no example at all.
+_EXEMPLARS = {
+    "science": """WORKED EXAMPLE — this is the standard.
+
+  GOOD:
+    Voyager 1 is 15 billion miles away and still sending data on a
+    22-watt transmitter. That is weaker than the bulb in your fridge.
+    By the time it arrives the signal is a fraction of a billionth of
+    a watt. Earth listens with a 70-metre dish to hear it. In 2023 it
+    started sending gibberish. One engineer traced it to a single
+    stuck bit in a chip built in 1975. They fixed it from 15 billion
+    miles away.
+
+  Why it works: every sentence carries a number you can picture — 22
+  watts, 70 metres, one bit, 1975. The fridge bulb makes an abstract
+  figure physical. The last line reframes the opening distance from a
+  fact into an achievement.
+
+  BAD (do not write this):
+    Space is truly incredible and full of amazing mysteries. Voyager 1
+    has travelled an unimaginable distance across the cosmos. Its
+    journey shows the incredible power of human ingenuity and our
+    endless curiosity about the universe around us.
+
+  Why it fails: "incredible", "unimaginable", "amazing" — adjectives
+  doing the work facts should do. Nothing checkable, nothing pictured,
+  every sentence the same length. This is the default output if you
+  write on instinct.""",
+
+    "history": """WORKED EXAMPLE — this is the standard.
+
+  GOOD:
+    In 1518 in Strasbourg, a woman stepped into the street and began
+    to dance. She did not stop for six days. By August, 400 people
+    were dancing with her. The city's response was to build a stage
+    and hire musicians — they believed the cure was more dancing.
+    People died of exhaustion and stroke, up to fifteen a day. The
+    physicians' official diagnosis was hot blood.
+
+  Why it works: a date, a city, six days, 400 people, fifteen a day.
+  The escalation changes direction — strange, then contagious, then
+  the authorities make it worse. The last line reframes the whole
+  event as something people confidently misunderstood.
+
+  BAD (do not write this):
+    History is full of bizarre events that still puzzle experts today.
+    One of the strangest occurred in medieval Europe, where a mysterious
+    illness caused people to behave in unusual ways. Historians still
+    debate what really happened during this fascinating episode.
+
+  Why it fails: no date, no place, no number, no named thing. "Bizarre",
+  "mysterious", "fascinating" tell the viewer to be interested instead
+  of making them interested.""",
+
+    "finance": """WORKED EXAMPLE — this is the standard.
+
+  GOOD:
+    In 1997 a man bought 100 shares of a bookstore website for $1,800.
+    He sold in 1999 for $18,000 — a ten-bagger, and he was thrilled.
+    Those shares would be worth about $4.5 million today. The company
+    was Amazon. The lesson is not that he sold. It is that selling a
+    ten-bagger felt like the disciplined thing to do at the time.
+
+  Why it works: 1997, 100 shares, $1,800, $18,000, $4.5 million — the
+  arithmetic does the emotional work. The reveal is withheld one beat.
+  The last line reframes a story that looked like a mistake into one
+  about how good decisions feel while you are making them.
+
+  BAD (do not write this):
+    Investing early can lead to incredible long-term returns. Many
+    people sell too soon and miss out on significant gains. It is
+    important to stay patient and think about the long term when
+    building wealth over time.
+
+  Why it fails: advice with no story and no numbers. Nothing here could
+  only have been said about one specific situation, which is the
+  definition of filler.""",
+}
+
+_DEFAULT_EXEMPLAR = """WORKED EXAMPLE — the standard to match.
+
+  GOOD: every sentence carries one checkable fact — a number, a name, a
+  date, a place, a measurement. The opening states the most surprising
+  one flat, without adjectives. The middle explains why it is not what
+  the viewer assumed. The final line gives the opening fact a new
+  meaning rather than summarising it.
+
+  BAD: "incredible", "amazing", "mysterious", "you won't believe" —
+  adjectives asked to do the work that facts should do. If a sentence
+  would be equally true of a dozen other topics, it is filler. Delete
+  it and put a number in its place."""
+
+
 UNIVERSAL_PROMPT = """You are writing a YouTube Shorts narration for the
 "{channel_label}" channel. The script must HOLD VIEWER RETENTION for
 the full 30-60 seconds — Shorts metrics live and die on completion rate.
@@ -109,6 +214,21 @@ NON-NEGOTIABLE RETENTION RULES:
   9. STRICTLY NO sexual / romantic / intimate content. No explicit
      violence beyond what the channel naturally requires (e.g. mild
      dread for horror). No content targeting minors as a subject.
+
+BEAT PLAN — {word_min}-{word_max} words is about 8 to 10 spoken
+sentences. That is not room for an introduction, a summary, or
+atmosphere. Spend it exactly like this:
+  Beat 1 (2 sentences) — the single most surprising concrete fact,
+                         stated flat, with its number/name/date.
+  Beat 2 (2-3 sentences) — why that fact is not what the viewer
+                         assumed. Introduce the tension.
+  Beat 3 (2-3 sentences) — the mechanism or consequence, still
+                         concrete. This is the payoff of the open loop.
+  Beat 4 (1 sentence)   — reframe Beat 1 so it now means something
+                         different. Not a summary. A new meaning.
+Anything that is not one of these beats gets cut.
+
+{exemplar}
 
 YOUTUBE TITLE (50-70 chars — VIRAL SHORTS FORMAT):
   Formats that outperform on YouTube Shorts (pick the best one for
@@ -686,6 +806,7 @@ def write_script(research_data, max_attempts=3):
                 or "third_person_objective — narrate ABOUT the subject, not as personal anecdote.",
             hook_style=channel_cfg.get("hook_style") or "open with the most surprising element of the topic",
             image_style=channel_cfg.get("image_style") or "professional photography, sharp focus",
+            exemplar=_EXEMPLARS.get(channel_type, _DEFAULT_EXEMPLAR),
             facts_block=facts_block,
             word_min=word_min, word_max=word_max, hard_cap=hard_cap,
         )
@@ -754,8 +875,12 @@ def write_script(research_data, max_attempts=3):
         # Last-attempt rescue — if the ONLY problem is "too short" and
         # we're within 90% of the min target, accept it. Better a
         # slightly-short but on-brand script than a failed render.
+        # Bound before the rescue block, not inside it: the retry message
+        # below reports the word gap on EVERY attempt, and this was
+        # previously only assigned on the last one.
+        _wc = len(str((script or {}).get("narration") or "").split())
+
         if attempt == max_attempts and script:
-            _wc = len(str(script.get("narration") or "").split())
             _short_only = all("too short" in p or "narration too short" in p for p in problems)
             if _short_only and _wc >= int(word_min * 0.85):
                 log.warning(
@@ -767,7 +892,25 @@ def write_script(research_data, max_attempts=3):
         log.warning(f"Attempt {attempt}: schema problems: {problems}")
         extra = [
             {"role": "assistant", "content": raw_text},
-            {"role": "user", "content": "Your previous reply had these problems:\n  - " + "\n  - ".join(problems) + "\nFix all of them and reply with ONLY the corrected JSON object."},
+            # "narration too short" alone does not tell the model HOW short,
+            # so it tends to return something equally short and burn all
+            # three attempts — a history script came back at 24 words against
+            # a 36 minimum three times running, then returned None, which
+            # would have shipped a render with no voiceover. State the gap in
+            # words and sentences, and say what to add: another fact-carrying
+            # beat, not padding (padding is what produces the flat prose the
+            # exemplars exist to prevent).
+            {"role": "user", "content": "Your previous reply had these problems:\n  - "
+                + "\n  - ".join(problems)
+                + f"\n\nYour narration was {_wc} words; the target is {word_min}-{word_max}."
+                + (f" You are {word_min - _wc} words SHORT — roughly "
+                   f"{max(1, (word_min - _wc) // 6)} more sentence(s). Do NOT pad with "
+                   "adjectives or add a summary line: add another concrete beat "
+                   "carrying its own fact (a number, name, date or place)."
+                   if _wc < word_min else
+                   f" You are {max(0, _wc - word_max)} words OVER — cut connective "
+                   "tissue and adverbs, never the facts and never the final line.")
+                + "\nFix all of them and reply with ONLY the corrected JSON object."},
         ]
 
     log.error(f"Script generation failed after {max_attempts} attempts. Last raw: {last_raw[:300]}")
