@@ -701,6 +701,13 @@ _GENERIC_TAGS = {
     "viralshorts", "viralvideo", "trending", "trendingshorts", "youtube",
     "youtubeshorts", "yt", "ytshorts", "fyp", "foryou", "foryoupage",
     "reels", "reel", "explore", "subscribe", "like", "share", "video",
+    # Ride-alongs from multi-topic channels. Measured on a horror search:
+    # #school and #family both cleared the threshold because one family
+    # vlogger posts horror skits. They describe the CHANNEL, not the
+    # niche, and spend tag budget on an audience that did not come for
+    # this.
+    "school", "family", "comedy", "funny", "prank", "vlog", "minivlog",
+    "song", "music", "dance", "status", "love",
 }
 
 
@@ -735,6 +742,21 @@ def _harvest_tags(title: str, counter: dict, owner: str = "") -> None:
         counter.setdefault(tag, set()).add(owner or "?")
 
 
+def _looks_like_channel_tag(tag: str) -> bool:
+    """Is this a creator's own brand tag rather than a niche query?
+
+    Distinct-channel counting removes most of them, but not a creator
+    whose tag gets copied by imitators — measured live: #Nagarajshorts
+    cleared the two-channel threshold. Names ending in the format word
+    are the giveaway, since no genuine search term is built that way.
+    """
+    t = (tag or "").lower()
+    for suffix in ("shorts", "short", "official", "tv", "yt", "vlogs", "studio"):
+        if t.endswith(suffix) and len(t) > len(suffix) + 3:
+            return True
+    return False
+
+
 def _select_tags(counter: dict, min_count: int = 2) -> list:
     """Keep tags that more than one ranking CHANNEL agreed on.
 
@@ -743,7 +765,8 @@ def _select_tags(counter: dict, min_count: int = 2) -> list:
     ones, but noisy-by-default is what this exists to prevent.
     """
     ranked = sorted(counter.items(), key=lambda kv: -len(kv[1]))
-    shared = [t for t, owners in ranked if len(owners) >= min_count]
+    shared = [t for t, owners in ranked
+              if len(owners) >= min_count and not _looks_like_channel_tag(t)]
     if shared:
         return shared
     return [t for t, _ in ranked][:6]

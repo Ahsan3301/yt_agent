@@ -106,8 +106,26 @@ no camera direction — only what the person permanently looks like.
 Anyone appearing in two or more shots MUST be in `cast`. If the story
 has no recurring person, use an empty array.
 
+If the narration NAMES a person, that name goes in `cast` even when you
+think they appear once — a 30-second story about one person is the case
+where a stable face matters most. A live storyboard for a script about
+"Arthur" returned six shots reading "old man looking at vintage sign",
+never once using the name, so `cast` came back empty and every shot
+invented a different face. Do not describe a named character by role
+("the old man", "the woman"); use the name.
+
 In each shot's `ai_prompt`, refer to a cast member by their exact
 `name` so their description can be substituted in.
+
+SHOT 1 IS NOT AN ESTABLISHING SHOT. 50-60% of the viewers who leave do
+so in the first three seconds, so the opening frame has to carry the
+hook, not set up the location. Make shot 1 the most visually arresting
+moment available — close, specific, and containing MOTION or a subject
+mid-action. A wide, dim, empty room is the single most common way the
+opening frame is wasted: "abandoned bus depot interior, dim lighting"
+shows the viewer nothing to stay for, while "departure board panels
+flipping, one row resolving to a name" shows them the wrong thing
+itself. Establish the place later, or not at all.
 
 Respond with ONLY a JSON object in this shape:
 {{
