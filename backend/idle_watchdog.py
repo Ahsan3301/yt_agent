@@ -100,11 +100,53 @@ def _firestore_queued_for_us() -> int:
         n = 0
         for doc in snap:
             v = doc.to_dict() or {}
-            if not v.get("backend_instance_id"):
-                n += 1
+            if v.get("backend_instance_id"):
+                continue
+            if not _claimable_by_us(v):
+                continue
+            n += 1
         return n
     except Exception:
         return 0
+
+
+def _claimable_by_us(job: dict) -> bool:
+    """Could THIS worker actually take this job?
+
+    The count above is what keeps a Kaggle GPU alive while work is
+    pending, so counting a job we can never claim pins the card open
+    until the hard lifetime cap. Reported twice: the notebook sat idle
+    for about an hour each time, rendering nothing, and had to be killed
+    by hand — roughly two hours of a 30 h/week budget spent waiting for
+    a job that was addressed to another worker.
+
+    The function was named _firestore_queued_for_us but tested only
+    "queued and unclaimed", never the "for us" half.
+
+    Deliberately permissive: anything we cannot evaluate counts as
+    claimable. A watchdog that shuts down while real work is pending is
+    a much worse failure than one that lingers.
+    """
+    try:
+        label = (os.getenv("INSTANCE_LABEL", "") or "").strip().lower()
+        inst = (os.getenv("INSTANCE_ID", "") or "").strip()
+
+        # Addressed to a specific instance that is not us.
+        tw = str(job.get("target_worker") or "").strip()
+        if tw and inst and tw != inst:
+            return False
+
+        # allowed_workers is the channel's ordered preference list. An
+        # empty list means "no restriction"; a populated one that does
+        # not mention us means this job is not ours to run.
+        allowed = job.get("allowed_workers") or []
+        if isinstance(allowed, (list, tuple)) and allowed and label:
+            names = [str(a).strip().lower() for a in allowed if str(a).strip()]
+            if names and not any(a in label or label in a for a in names):
+                return False
+        return True
+    except Exception:
+        return True
 
 
 def touch():
