@@ -151,6 +151,14 @@ def fetch_metadata(video_ids: list[str]) -> list[dict]:
             "description": sn.get("description") or "",
             "tags":        sn.get("tags") or [],
             "views":       int(st.get("viewCount") or 0),
+            # Who uploaded it. Needed to tell a niche tag from a creator's
+            # own brand tag: a creator stamps their name on every upload,
+            # so counting videos still promotes it, while counting distinct
+            # CHANNELS does not. Absent from this payload until now, which
+            # meant researcher._select_tags saw one anonymous owner for
+            # everything and silently kept every tag it was given.
+            "channel_id":    sn.get("channelId") or "",
+            "channel_title": sn.get("channelTitle") or "",
             # Declared language, when the uploader set one. search.list's
             # relevanceLanguage is only a ranking hint, not a filter, so
             # this is the sole reliable language signal available.

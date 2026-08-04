@@ -112,6 +112,31 @@ def _check_word_budget():
     return True, f"{wmin}-{wmax} words -> worst case {worst_secs:.1f}s (cap {cap:.0f}s)"
 
 
+@probe("ranking tag harvest", critical=False)
+def _check_tag_harvest():
+    # The creator-vs-niche tag filter counts DISTINCT CHANNELS, so it
+    # depends on fetch_metadata returning channel_id. It did not, and the
+    # failure was invisible: every tag collapsed to one anonymous owner,
+    # the threshold passed everything, and creator brand tags would have
+    # shipped on your videos. Assert the field exists rather than trust it.
+    from modules import seo_borrower as sb
+    import inspect
+    src = inspect.getsource(sb.fetch_metadata)
+    if "channel_id" not in src:
+        return False, ("fetch_metadata does not return channel_id — the tag "
+                       "filter cannot tell a creator's brand tag from a niche "
+                       "tag and will keep both")
+    from modules import researcher as rs
+    c = {}
+    rs._harvest_tags("#brandtag #nichetag", c, owner="a")
+    rs._harvest_tags("#brandtag", c, owner="a")
+    rs._harvest_tags("#nichetag", c, owner="b")
+    kept = rs._select_tags(c)
+    if "brandtag" in kept:
+        return False, "filter kept a single-channel tag — threshold is not applying"
+    return True, "single-channel tags dropped, multi-channel tags kept"
+
+
 @probe("publish deferral routing", critical=False)
 def _check_deferral():
     label = (os.getenv("INSTANCE_LABEL", "") or "").lower()

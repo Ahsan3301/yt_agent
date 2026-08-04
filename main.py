@@ -884,6 +884,46 @@ def run_pipeline(
             script["youtube_title"] = publish_ready.get("youtube_title") or script.get("youtube_title") or ""
             script["description"]   = publish_ready.get("description")   or script.get("description") or ""
             script["tags"]          = publish_ready.get("tags")          or script.get("tags") or []
+
+            # Fold in the hashtags harvested from the ranking lookup. These
+            # come off the videos actually winning this niche right now,
+            # INCLUDING the non-English ones — a Hindi horror tag on an 8M
+            # view short is a real query people type, and the reach it
+            # represents does not care what script the title was written in.
+            # Previously the whole title was discarded by the language
+            # filter and these went with it.
+            try:
+                from modules import researcher as _rs
+                _ranked = [t for t in getattr(_rs, "LAST_RANKING_TAGS", []) if t]
+                if _ranked:
+                    _have = {str(t).lower() for t in script["tags"]}
+                    # Script tags first: they describe THIS video. Ranking
+                    # tags are reach, not relevance, so they fill the tail.
+                    _merged = list(script["tags"])
+                    for _t in _ranked:
+                        if _t.lower() not in _have:
+                            _merged.append(_t)
+                            _have.add(_t.lower())
+                    # YouTube rejects the whole update over a 500-char tag
+                    # budget, so trim to fit rather than risk the request.
+                    _out, _budget = [], 0
+                    for _t in _merged:
+                        _cost = len(_t) + 1
+                        if _budget + _cost > 480:
+                            break
+                        _out.append(_t)
+                        _budget += _cost
+                    log.info(f"tags: {len(script['tags'])} from script + "
+                             f"{len(_ranked)} harvested from rankings -> "
+                             f"{len(_out)} published ({_budget} chars)")
+                    script["tags"] = _out
+            except Exception as _tag_e:             # noqa: BLE001
+                log.warning(f"tags: ranking merge skipped ({_tag_e})")
+
+            # Comma-separated form. The dashboard and several publish paths
+            # want a string, and each was splitting/joining the list its own
+            # way; deriving it once here keeps them from disagreeing.
+            script["tags_csv"] = ", ".join(script["tags"])
             # Persist BOTH the raw script AND the publish_ready block so
             # side_jobs.py + history UI can render either shape.
             summary["script"] = {

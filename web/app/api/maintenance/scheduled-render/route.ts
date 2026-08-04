@@ -395,7 +395,11 @@ async function _handler(req: NextRequest) {
             cf_own_account_id: "",
             cf_own_api_token: "",
             cf_pool: "",
-            agnes_source: "off",
+            // "off" here is not "no per-channel override" — channel_agnes
+            // POPS AGNES_API_KEY when it sees it, so this legacy path was
+            // disabling the primary text/image/video provider for every
+            // job it created. "pool" is the correct no-override value.
+            agnes_source: "pool",
             agnes_own_api_key: "",
             llm_priority: "",
             // Legacy daily_targets path has no channel row and therefore

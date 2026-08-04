@@ -456,7 +456,9 @@ def _premise_from_demand(unused: list, language: str = "en") -> tuple:
     if not unused:
         return ("", "")
     try:
-        seeds = _ranking_topic_seeds("horror", language=language, limit=12)
+        LAST_RANKING_TAGS.clear()
+        seeds = _ranking_topic_seeds("horror", language=language, limit=12,
+                                     tag_sink=LAST_RANKING_TAGS)
     except Exception:
         seeds = []
     if not seeds:
@@ -578,7 +580,8 @@ def _usable_seed(title: str, language: str = "en") -> bool:
     return len(core) >= 15
 
 
-def _ranking_topic_seeds(channel_type: str, language: str = "en", limit: int = 12) -> list[str]:
+def _ranking_topic_seeds(channel_type: str, language: str = "en", limit: int = 12,
+                         tag_sink: list | None = None) -> list[str]:
     """Titles of videos ACTUALLY ranking in this niche right now.
 
     Does its OWN search rather than reusing seo_borrower.find_viral_pool:
@@ -609,6 +612,8 @@ def _ranking_topic_seeds(channel_type: str, language: str = "en", limit: int = 1
     angles = [f"{base} shorts", f"{base} story", base]
     seen: set = set()
     titles: list[str] = []
+    foreign: list[str] = []   # non-English titles, translated below
+    tag_counts: dict = {}     # hashtag -> how many ranking videos used it
     for q in angles:
         if len(titles) >= limit:
             break
@@ -628,17 +633,171 @@ def _ranking_topic_seeds(channel_type: str, language: str = "en", limit: int = 1
             if t in seen:
                 continue
             seen.add(t)
+            # Harvest tags from EVERY ranking title, including the ones
+            # that are unusable as English seeds. A Hindi horror short at
+            # 8M views still tells us #horrorshorts is what the algorithm
+            # is serving — the hashtags are language-independent signal
+            # and were previously thrown away with the title.
+            _owner = str(m.get("channel_id") or m.get("channel_title") or "")
+            _harvest_tags(t, tag_counts, owner=_owner)
+            # The videos.list `tags` field is the uploader's REAL tag list,
+            # which is richer and cleaner than hashtags scraped out of a
+            # title — title hashtags are whatever fit in 100 chars. Both
+            # feed the same counter so the channel-frequency filter applies
+            # to them equally.
+            for _vt in (m.get("tags") or [])[:15]:
+                _harvest_tags("#" + re.sub(r"\s+", "", str(_vt)), tag_counts,
+                              owner=_owner)
             if _usable_seed(t, language):
                 titles.append(t[:120])
+            elif len(foreign) < 12:
+                # Do NOT discard. Measured live: only 2 of 75 results
+                # survived the English filter, so the topic model was
+                # being asked to learn a niche from two examples. These
+                # are the most-viewed videos in the niche — the ideas are
+                # exactly what we want, it is only the script that is
+                # unreadable to an English prompt. Translate them below.
+                _core = t.split("#")[0].strip()
+                if len(_core) >= 12:
+                    foreign.append(_core[:120])
             if len(titles) >= limit:
                 break
+
+    if foreign and len(titles) < limit:
+        translated = _translate_titles(foreign[: limit - len(titles)])
+        if translated:
+            log.info(f"topic seeds: recovered {len(translated)} title(s) by "
+                     f"translation that the language filter would have dropped")
+            titles.extend(translated)
+
     if titles:
-        log.info(f"topic seeds: {len(titles)} usable ranking title(s) "
-                 f"from {len(angles)} search angle(s) in {channel_type}")
+        log.info(f"topic seeds: {len(titles)} ranking title(s) from "
+                 f"{len(angles)} search angle(s) in {channel_type} "
+                 f"({len(tag_counts)} distinct tag(s) seen)")
     else:
-        log.info(f"topic seeds: no usable titles for {channel_type} "
-                 f"(all filtered as non-English or hashtag spam)")
+        log.info(f"topic seeds: no usable titles for {channel_type}")
+    if tag_sink is not None:
+        _sel = _select_tags(tag_counts)
+        log.info(f"topic seeds: {len(_sel)} tag(s) kept of {len(tag_counts)} seen "
+                 f"(dropped single-video tags — those are creator names, not niche queries)")
+        tag_sink.extend(t for t in _sel if t not in tag_sink)
     return titles
+
+
+# Hashtags that describe the FORMAT rather than the subject. They are on
+# every Short in every niche, so they carry no targeting signal and would
+# crowd out the specific tags in a 500-char tag budget.
+# Tags harvested from the most recent ranking lookup, in view order.
+# A module global rather than a return value because the two topic paths
+# (generate_horror_premise and _generic_research) return a premise tuple
+# and a dict respectively, and threading a third value through both
+# signatures would touch every caller. Cleared at the start of each
+# lookup so a failed search cannot leak the previous run's tags into
+# this video's metadata.
+LAST_RANKING_TAGS: list = []
+
+_GENERIC_TAGS = {
+    "shorts", "short", "shortsfeed", "shortsvideo", "shortvideo", "viral",
+    "viralshorts", "viralvideo", "trending", "trendingshorts", "youtube",
+    "youtubeshorts", "yt", "ytshorts", "fyp", "foryou", "foryoupage",
+    "reels", "reel", "explore", "subscribe", "like", "share", "video",
+}
+
+
+def _harvest_tags(title: str, counter: dict, owner: str = "") -> None:
+    """Count subject hashtags across ranking titles.
+
+    Counts rather than collects, because a raw harvest is dominated by
+    tags that belong to ONE creator, not to the niche. Measured live on
+    horror: #sejal, #soneha, #minivlog, #school — a creator's name and
+    their unrelated series. Tagging our video with another channel's
+    name is worse than having no tag: it is off-topic to the viewer and
+    to the algorithm. Frequency separates them cleanly — a channel tag
+    appears on that channel's videos only, a niche tag appears across
+    many. _select_tags applies the threshold.
+
+    Deliberately keeps NON-English tags. A Hindi horror tag on a video
+    with 8M views is a real query people type; dropping it because the
+    script is Devanagari discards the reach it represents.
+    """
+    for raw in set(re.findall(r"#([^\s#]{2,40})", title or "")):
+        tag = re.sub(r"[^0-9A-Za-zÀ-￿_]", "", raw).strip()
+        if not tag or tag.lower() in _GENERIC_TAGS:
+            continue
+        if len(tag) < 3 or len(tag) > 30:
+            continue
+        # Keyed by the CHANNEL that used it, not by video. A creator
+        # tags their own name on every upload, so counting videos still
+        # promotes it — measured: #amarraghu and #akshaynagwadiya both
+        # cleared a 2-video threshold. Counting distinct channels is the
+        # discriminator that actually separates "this creator" from
+        # "this niche": only a real niche tag is used by strangers.
+        counter.setdefault(tag, set()).add(owner or "?")
+
+
+def _select_tags(counter: dict, min_count: int = 2) -> list:
+    """Keep tags that more than one ranking CHANNEL agreed on.
+
+    Falls back to the single-occurrence tags only if the threshold
+    leaves nothing at all — no tags is a worse outcome than a few noisy
+    ones, but noisy-by-default is what this exists to prevent.
+    """
+    ranked = sorted(counter.items(), key=lambda kv: -len(kv[1]))
+    shared = [t for t, owners in ranked if len(owners) >= min_count]
+    if shared:
+        return shared
+    return [t for t, _ in ranked][:6]
+
+
+def _translate_titles(titles: list) -> list:
+    """Translate non-English ranking titles into English seed lines.
+
+    One call for the whole batch, not one per title: this runs on the
+    render path and each round trip is real latency. Returns [] on any
+    failure — every caller treats seeds as optional.
+    """
+    if not titles:
+        return []
+    try:
+        from modules import nim
+    except Exception:
+        return []
+    numbered = "\n".join(f"{i+1}. {t}" for i, t in enumerate(titles))
+    lines = [
+        "Below are YouTube video titles, mostly not in English.",
+        "",
+        numbered,
+        "",
+        "Translate each into natural English, preserving the SPECIFIC IDEA "
+        "(the situation, object or claim). Do not transliterate — a reader "
+        "who does not know the source language must understand what the "
+        "video is about.",
+        "Drop any that are pure clickbait with no idea in them.",
+        "Reply with ONLY the translations, one per line, no numbering and "
+        "no commentary.",
+    ]
+    try:
+        out = nim.chat(
+            [{"role": "user", "content": chr(10).join(lines)}],
+            max_tokens=1200, temperature=0.2,
+        )
+    except Exception as e:
+        log.info(f"topic seeds: translation failed ({e}) — continuing without")
+        return []
+    if not out:
+        return []
+    got = []
+    for ln in str(out).splitlines():
+        ln = re.sub(r"^\s*\d+[.)]\s*", "", ln).strip().strip("-").strip()
+        if len(ln) < 12 or ln.startswith("#"):
+            continue
+        # A "translation" still full of non-Latin letters means the model
+        # echoed the input rather than translating it.
+        letters = [c for c in ln if c.isalpha()]
+        if letters and sum(1 for c in letters if not c.isascii()) > 2:
+            continue
+        got.append(ln[:120])
+    return got
 
 
 def _generic_research(channel_type: str, language: str = "en") -> dict | None:
