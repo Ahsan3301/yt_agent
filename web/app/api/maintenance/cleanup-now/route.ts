@@ -160,6 +160,31 @@ export async function POST(req: NextRequest) {
       // and storage only grew. The identical bug was found and fixed in
       // maintenance/cleanup/route.ts; this copy of the logic was missed.
       if (d.has_video) videoRunIdsToDelete.push(String(d.run_id || doc.id));
+
+      // Do NOT drop the row when we cannot account for its video. The
+      // row is the ONLY link between a stored object and the retention
+      // sweep: delete it while the bytes remain and the file becomes an
+      // orphan that no retention setting can ever reach again.
+      //
+      // That is precisely how this install ended up with 36 orphaned
+      // files holding 11.3 GB against 23 surviving rows. Before
+      // migration 0031, has_video was silently dropped by PocketBase, so
+      // it read falsy on every row: nothing was added to
+      // videoRunIdsToDelete, and then the row was deleted anyway. Every
+      // sweep converted retained videos into unreachable ones, and
+      // running cleanup made the problem it was meant to solve worse.
+      //
+      // A row whose video_url points at a file we are not deleting stays
+      // put. Keeping a stale index row is trivially recoverable; losing
+      // the only pointer to 300 MB of video is not.
+      const _url = String(d.video_url || d.public_url || "");
+      if (_url && !d.has_video) {
+        summary.errors.push(
+          `run ${doc.id}: has a video_url but has_video is not set — row kept ` +
+          `so the file does not become an orphan. Re-run after the index is repaired.`,
+        );
+        continue;
+      }
       try {
         await doc.ref.delete();
         // run_summaries mirrors runs_index by id — delete both.
