@@ -665,9 +665,55 @@ function StorageUsagePanel() {
       "watchable in the Library via YouTube; unpublished ones are " +
       "deleted permanently."
     )) return;
+    // cleanup-now is password-gated (settings.cleanup_password). This
+    // button POSTed with no body at all, so the route always answered
+    // "password required" and the page offered nowhere to type one —
+    // the action was unreachable from this screen entirely. The reports
+    // page has always prompted; storage was simply never given the same
+    // treatment.
+    // First run has no password at all, so prompting for one would fail
+    // no matter what was typed. Ask whether one is set, and if not, walk
+    // the user through creating it here rather than sending them to a
+    // settings screen that does not have this control.
+    let isSet = true;
+    try {
+      const s = await fetch("/api/settings/cleanup-password", { cache: "no-store" });
+      isSet = Boolean((await s.json().catch(() => ({}))).set);
+    } catch { /* assume set; the POST below will report the truth */ }
+
+    if (!isSet) {
+      const created = prompt(
+        "No cleanup password is set yet.\n\n" +
+        "Cleanup deletes files permanently, so it is password-gated. " +
+        "Choose a password now (minimum 6 characters)."
+      );
+      if (created === null) return;
+      const mk = await fetch("/api/settings/cleanup-password", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: created.trim() }),
+      });
+      if (!mk.ok) {
+        const e = await mk.json().catch(() => ({}));
+        toast.error("Could not set password", e.error || `HTTP ${mk.status}`);
+        return;
+      }
+      toast.info("Cleanup password set", "Keep it somewhere safe.");
+    }
+
+    const pwd = prompt("Cleanup password");
+    if (pwd === null) return;              // cancelled
+    if (!pwd.trim()) {
+      toast.error("Cleanup failed", "A password is required.");
+      return;
+    }
     setBusy(true);
     try {
-      const r = await fetch("/api/maintenance/cleanup-now", { method: "POST" });
+      const r = await fetch("/api/maintenance/cleanup-now", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: pwd.trim() }),
+      });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) toast.error("Cleanup failed", d.error || `HTTP ${r.status}`);
       else toast.info("Cleanup finished", (d.detail || []).join(" · ") || "Nothing was past retention.");
