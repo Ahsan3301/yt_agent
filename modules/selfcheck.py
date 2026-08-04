@@ -29,6 +29,12 @@ import os
 
 log = logging.getLogger(__name__)
 
+# Narration speed of the niche voices, measured with ffprobe on a real
+# edge-tts render (50 words -> 22.128s at the horror voice's -12% rate).
+# Every word-budget decision derives from this; an assumed value here
+# silently mis-sizes every video.
+_WORDS_PER_SEC = 2.26
+
 # (label, callable) -> (ok: bool, detail: str)
 # Each probe returns a two-tuple. A probe that throws is reported as
 # dead with the exception text, never propagated.
@@ -97,18 +103,26 @@ def _check_word_budget():
     wmin, wmax = c.get("target_word_min"), c.get("target_word_max")
     if not wmin or not wmax:
         return True, "unset — provider defaults apply"
-    # The niche voices run slowed (horror -12% => ~1.7 words/sec), and the
-    # validator allows 12% over target. If the worst case exceeds the cap
-    # the editor trims the TAIL, which is the recontextualising last line.
-    # That shipped silently for every 30s render until it was measured.
+    # MEASURED, not assumed. edge-tts at the horror voice's -12% rate
+    # delivered 50 words in 22.128s = 2.26 words/sec. I had guessed 1.70
+    # and set the word budget from that guess, which made scripts ~30%
+    # shorter than the slot: a 45-word script runs 19.9s in a 30s video.
+    # Re-measure with ffprobe on a real voiceover before changing this —
+    # the whole budget hangs off this one number.
     cap = float(os.getenv("MAX_VIDEO_SECONDS", "30") or 30)
     worst_words = round(wmax * 1.12)
-    worst_secs = worst_words / 1.7
+    worst_secs = worst_words / _WORDS_PER_SEC
     if worst_secs > cap:
         return False, (f"target {wmin}-{wmax} words -> worst case {worst_words} "
                        f"words = {worst_secs:.1f}s against a {cap:.0f}s cap. The "
                        f"editor will trim the ending off every render. Lower "
-                       f"target_word_max to <= {int(cap * 1.7 / 1.12)}.")
+                       f"target_word_max to <= {int(cap * _WORDS_PER_SEC / 1.12)}.")
+    typical = wmax / _WORDS_PER_SEC
+    if typical < cap * 0.75:
+        return True, (f"DEGRADED: a full {wmax}-word script runs only "
+                      f"{typical:.1f}s in a {cap:.0f}s slot — {cap - typical:.0f}s "
+                      f"of the video carries no narration. Raise target_word_max "
+                      f"toward {int(cap * _WORDS_PER_SEC / 1.12)}.")
     return True, f"{wmin}-{wmax} words -> worst case {worst_secs:.1f}s (cap {cap:.0f}s)"
 
 
