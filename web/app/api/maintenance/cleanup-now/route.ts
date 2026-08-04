@@ -152,7 +152,14 @@ export async function POST(req: NextRequest) {
     let n = 0;
     for (const doc of snap.docs) {
       const d = doc.data() as Record<string, unknown>;
-      if (d.has_video) videoRunIdsToDelete.push(doc.id);
+      // run_id, NOT doc.id. The storage key is videos/<run_id>.mp4 and
+      // doc.id is a 15-char HASH of run_id, so pushing doc.id means no
+      // key ever matches. S3/MinIO answer DeleteObject on a missing key
+      // with 204, so every one of those deletes reported success while
+      // the bucket was untouched — cleanup said "done", freed nothing,
+      // and storage only grew. The identical bug was found and fixed in
+      // maintenance/cleanup/route.ts; this copy of the logic was missed.
+      if (d.has_video) videoRunIdsToDelete.push(String(d.run_id || doc.id));
       try {
         await doc.ref.delete();
         // run_summaries mirrors runs_index by id — delete both.
