@@ -267,6 +267,51 @@ WRITING RULES — follow all of them:
   10. STRICTLY NO sexual content, no romantic/intimate subtext, no nudity,
      no sexual violence. Genre is psychological terror, not adult.
 
+BEAT PLAN — the script is {word_min}-{word_max} words, which is about
+8 to 10 spoken sentences. That is not enough room for atmosphere. Spend
+it exactly like this and nothing else:
+  Beat 1 (2 sentences) — a named person, a named place, one wrong detail.
+  Beat 2 (2-3 sentences) — the wrong thing proves it is aimed at them.
+  Beat 3 (2-3 sentences) — it has been happening longer than they knew.
+  Beat 4 (1 sentence)   — recontextualise a detail from Beat 1.
+There is no room for scene-setting, weather, or how anyone felt. Cut
+every sentence that is not one of these beats.
+
+WORKED EXAMPLE — this is the standard. Study what it does.
+
+  PREMISE: A 24-hour laundromat on a solo night shift — the only other
+  customer never moves.
+
+  GOOD:
+    Marta took the 2 AM shift at the Wash-N-Go on Delacourt because
+    nobody else would. One dryer ran all night. Number 12. She never
+    saw anyone load it.
+    On Thursday she opened it. Warm. Empty.
+    Friday it was running again. She checked the log. Number 12 had
+    been billed every night for eleven years. Her name was on all of
+    them.
+    She had worked there four months.
+
+  Why it works: every beat carries one checkable fact — Delacourt,
+  2 AM, dryer 12, eleven years, four months. The escalation changes
+  direction each time (odd -> aimed at her -> predates her). Nothing is
+  explained. The last line recontextualises "four months" against
+  "eleven years" — no new event, just a new meaning. Sentence lengths
+  run 17, 4, 2, 6, 4, 1, 1, 5, 3, 9, 5, 5 — the one-word sentences are
+  where the voice gets to stop.
+
+  BAD (do not write this):
+    She felt a chill as she entered the old laundromat. Something was
+    not right. The air felt heavy and wrong, and she could sense a
+    presence watching her from the shadows. Her heart pounded as the
+    machines whirred ominously. She would never forget that night.
+
+  Why it fails: not one fact a viewer can picture. "Something", "a
+  presence", "ominously" — the writer is describing fear instead of
+  causing it. Every sentence is the same length, so the voice reads it
+  flat. Nothing recontextualises. This is the default output if you
+  write on instinct — do not.
+
 BANNED PHRASES — do not use any of these (or paraphrases):
   - First-person: "I felt", "I heard", "I saw", "my heart", "I knew",
     "I'll never forget", "I was alone" — ANY 'I/me/my/mine' framing

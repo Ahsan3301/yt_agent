@@ -306,7 +306,13 @@ def generate_horror_premise(language: str = "en") -> tuple[str, str]:
     # separator used in the prompt's examples). Left alone that reaches
     # the scriptwriter and the on-screen title verbatim.
     def _clean(v: str) -> str:
-        v = re.sub(r"\s*\+\s*", " — ", (v or "").strip())
+        v = (v or "").strip()
+        # The label strip runs on "SETTING:" with the colon. When the model
+        # omits the colon ("SETTING a flooded suburb") the label survives as
+        # an ordinary word and ships in the title. Drop a leading label
+        # whether or not it is punctuated.
+        v = re.sub(r"^(?:the\s+)?(setting|hook|premise|scene)[\s:.\-—]*", "", v, flags=re.I)
+        v = re.sub(r"\s*\+\s*", " — ", v)
         v = re.sub(r"\s*—\s*", " — ", v)
         return v.strip().strip("—").strip().rstrip(".")
     _s = _clean(setting)
