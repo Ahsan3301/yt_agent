@@ -325,10 +325,19 @@ def _try_provider(name: str, messages, max_tokens, temperature,
             return None
         model = os.getenv("AGNES_TEXT_MODEL", "").strip() or _AGNES_DEFAULT_MODEL
         try:
+            # 45s was copied from the other providers, but Agnes is a
+            # reasoning model: it spends its token budget thinking before it
+            # emits anything, so a long script request routinely exceeds 45s
+            # of silence and read-times-out. In practice that meant Agnes —
+            # nominally the PRIMARY provider — answered almost never, and
+            # every render paid a dead 45s wait before falling through to
+            # groq. Env-tunable so this does not need a code change if their
+            # latency shifts again.
+            _agnes_timeout = int(os.getenv("AGNES_TIMEOUT_SECONDS", "150") or 150)
             c = _agnes_chat_fallback(messages, model=model, max_tokens=max_tokens,
                                      temperature=temperature,
                                      response_format=response_format,
-                                     timeout=45)
+                                     timeout=_agnes_timeout)
         except Exception as e:
             log.warning(f"LLM: Agnes ({model}) failed ({e}); falling to next provider")
             raise

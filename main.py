@@ -425,6 +425,23 @@ def run_pipeline(
     log.info(f"Starting pipeline | channel={channel_type} | run={run_id}")
     log.info("=" * 50)
 
+    # Capability self-check. Runs AFTER credentials and settings are in
+    # env/local (so it probes the same values the pipeline will read) and
+    # BEFORE any credit is spent. Every expensive bug in this pipeline has
+    # been a capability that was silently dead while appearing configured
+    # — Agnes disabled by a popped key, Playwright absent on the worker
+    # serving most renders, motion providers reading shot keys that do not
+    # exist. None of them raised; all were found by burning renders. This
+    # puts the answer at the top of every run log instead.
+    #
+    # Deliberately never fatal: a self-check that can stop a render is
+    # worse than the bugs it finds.
+    try:
+        from modules import selfcheck
+        selfcheck.run()
+    except Exception as _sc_err:                    # noqa: BLE001
+        log.warning(f"selfcheck: could not run ({_sc_err}) — continuing")
+
     # Preference-visibility audit (2026-07-13). The user asked that no
     # preference silently gets ignored. Log at pipeline start:
     #   - The full image_gen.priority list from settings.
