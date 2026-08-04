@@ -281,7 +281,7 @@ def generate_horror_premise(language: str = "en") -> tuple[str, str]:
             # rewarding, instead of a flat random draw over 225
             # hardcoded pairs. The pairs are still ours — this only
             # decides WHICH of them to use now.
-            setting, hook = _pick_combo_by_demand(unused, language)
+            setting, hook = _premise_from_demand(unused, language)
             key = f"{setting}|{hook}"
             used.add(key)
             _write_used_file(path, used)
@@ -409,52 +409,108 @@ def research(channel_type: str, language: str = "en"):
     return _generic_research(channel_type, language=lang)
 
 
-def _pick_combo_by_demand(unused: list, language: str = "en") -> tuple:
-    """Choose a (setting, hook) pair that matches what is ranking now.
+def _premise_from_demand(unused: list, language: str = "en") -> tuple:
+    """Write a premise informed by what is ranking, or fall back.
 
-    Horror premises were a flat random draw over 225 hardcoded pairs,
-    with no reference to anything real — which is precisely the
-    "randomly selected" complaint. The seeds fix only touched
-    _generic_research, and horror never calls it, so horror stayed
-    random.
+    Two earlier attempts failed and are worth recording so they are not
+    retried:
 
-    This keeps our curated pairs (they encode genre craft the API
-    cannot) but lets live demand decide which one to use: score each
-    pair on word overlap with titles currently ranking, then pick
-    randomly among the best few so successive renders still vary.
+      1. Flat random over 225 hardcoded (setting, hook) pairs — the
+         original. No connection to anything real.
+      2. Scoring those pairs by word-overlap with ranking titles. Shipped
+         and measured: it fired, found ZERO overlap between the titles
+         and any pair, and fell straight back to random. One title
+         against 225 fixed phrases will essentially never share a 4+
+         letter word. The pipeline ran; the influence was nil.
 
-    No LLM call, no extra quota beyond the one search. Falls back to
-    the original random choice whenever seeds are unavailable.
+    So the titles now GENERATE the premise instead of selecting from a
+    list. That also removes the 225-pair ceiling, which was itself a
+    source of repetition once the pool cycled.
+
+    Returns a (setting, hook) tuple to keep the caller's contract. Falls
+    back to a random unused pair whenever seeds or the LLM are
+    unavailable — a render must never fail for want of a topic.
     """
     if not unused:
         return ("", "")
     try:
-        seeds = _ranking_topic_seeds("horror", language=language, limit=8)
+        seeds = _ranking_topic_seeds("horror", language=language, limit=12)
     except Exception:
         seeds = []
     if not seeds:
         return random.choice(unused)
-    import re as _re
-    stop = {"the","and","that","with","from","this","have","they","been",
-            "your","what","when","were","will","into","just","them","than"}
-    bag: set = set()
-    for t in seeds:
-        bag |= {w for w in _re.findall(r"[a-z]{4,}", t.lower()) if w not in stop}
-    if not bag:
+
+    # Show the model what we already used, so it does not re-tread.
+    sample_pairs = [f"{s_} + {h_}" for s_, h_ in random.sample(unused, min(6, len(unused)))]
+    _parts = [
+        "You write premises for short-form horror videos.",
+        "",
+        "These horror videos are ranking on YouTube RIGHT NOW:",
+        *[f"  - {t}" for t in seeds[:12]],
+        "",
+        "Study what this audience is responding to: the kind of situation,",
+        "how specific it is, and what is left unexplained.",
+        "",
+        "Premises we have used before, for tone reference only:",
+        *[f"  - {t}" for t in sample_pairs],
+        "",
+        "Now invent ONE NEW premise that would appeal to the same audience",
+        "but is NOT a reword of any title above and NOT one of our previous",
+        "premises.",
+        "",
+        "Return ONLY two lines, no labels, no markdown:",
+        "line 1: the SETTING - a specific place and situation",
+        "line 2: the HOOK - the single wrong thing that happens there",
+    ]
+    prompt = chr(10).join(_parts)
+
+    try:
+        from modules import nim as _nim
+        raw = _nim.chat(messages=[{"role": "user", "content": prompt}],
+                        max_tokens=4000, temperature=0.95)
+    except Exception as e:
+        log.info(f"topic: premise generation failed ({e}); using the pool")
         return random.choice(unused)
-    scored = []
-    for combo in unused:
-        words = set(_re.findall(r"[a-z]{4,}", f"{combo[0]} {combo[1]}".lower()))
-        scored.append((len(words & bag), combo))
-    scored.sort(key=lambda x: -x[0])
-    best = scored[0][0]
-    if best <= 0:
+    # Tolerant parse. "Return only two lines" is a request, not a
+    # guarantee: models add preambles ("Here is the premise:"), numbering,
+    # bold markers, or a trailing note. Insisting on exactly two clean
+    # lines meant a perfectly good premise was thrown away and the render
+    # fell back to the hardcoded pool — which looked identical to the
+    # feature not working at all.
+    raw_lines = []
+    for l in str(raw or "").splitlines():
+        t = l.strip().strip("*_`")
+        t = re.sub(r"^\s*(?:line\s*)?[0-9]+[\.\):]\s*", "", t, flags=re.I)
+        t = re.sub(r"^\s*(?:setting|hook)\s*[:\-]\s*", "", t, flags=re.I)
+        t = t.strip(" -*	")
+        # Drop preambles and meta-commentary rather than treating them
+        # as the premise.
+        if not t or len(t) < 15:
+            continue
+        if re.match(r"^(here|sure|of course|certainly|below)", t, flags=re.I):
+            continue
+        raw_lines.append(t)
+    if len(raw_lines) == 1:
+        # One rich line is still a premise — the model sometimes writes
+        # setting and hook as a single sentence. Split on a natural
+        # boundary rather than throwing it away and falling back to the
+        # hardcoded pool, which is what "1 usable line" used to cost.
+        only = raw_lines[0]
+        m = re.split(r"\s+(?:but|and then|when|where|until|except)\s+", only, maxsplit=1, flags=re.I)
+        if len(m) == 2 and len(m[0]) >= 15 and len(m[1]) >= 15:
+            raw_lines = [m[0].strip(), m[1].strip()]
+        else:
+            # No clean split: use the whole line as the setting and let
+            # the scriptwriter infer the wrong-thing from it.
+            raw_lines = [only, only]
+    if len(raw_lines) < 2:
+        log.info("topic: generation produced nothing usable; using the pool")
         return random.choice(unused)
-    # Randomise among the joint-best so the same pair is not picked
-    # every day while demand is stable.
-    top = [c for sc, c in scored if sc == best]
-    log.info(f"topic: {len(top)} premise(s) match current demand (score {best}); picking among them")
-    return random.choice(top)
+    # Take the FIRST two substantial lines — the model writes setting
+    # then hook, and any trailing note comes after.
+    setting, hook = raw_lines[0][:200], raw_lines[1][:200]
+    log.info(f"topic: generated from {len(seeds)} ranking title(s) — {setting[:60]}")
+    return (setting, hook)
 
 
 def _usable_seed(title: str, language: str = "en") -> bool:
@@ -500,52 +556,66 @@ def _usable_seed(title: str, language: str = "en") -> bool:
     return len(core) >= 15
 
 
-def _ranking_topic_seeds(channel_type: str, language: str = "en", limit: int = 8) -> list[str]:
+def _ranking_topic_seeds(channel_type: str, language: str = "en", limit: int = 12) -> list[str]:
     """Titles of videos ACTUALLY ranking in this niche right now.
 
-    Topic selection was an LLM inventing subjects with no reference to
-    what performs, which is the definition of the "randomly selected"
-    problem: the model reaches for the most generic instance of a genre
-    every time, so a horror channel gets abandoned-house-number-forty.
+    Does its OWN search rather than reusing seo_borrower.find_viral_pool:
+    that helper caps at TOP_N=3 metadata fetches because it is tuned for
+    borrowing keywords off one topic, and after the language filter it
+    routinely yielded ONE usable title — measured live. One title cannot
+    inform a topic choice.
 
-    A real ranking title carries information a cold prompt cannot: what
-    the audience is currently clicking, which framings are working, and
-    which specific hooks are live this week. Feeding those in as SEEDS
-    (not templates to copy) moves the model from inventing to
-    responding.
+    Searches several angles per niche because a single query returns one
+    corner of it, and takes titles from all of them. ~100 quota units per
+    search against a 10,000/day budget, so 3 angles is affordable daily.
 
-    Costs one YouTube search (~101 quota units) against the 10,000/day
-    budget. Returns [] on any miss so the caller falls back to the
-    previous behaviour rather than failing the render.
+    Returns [] on any miss; every caller falls back to prior behaviour.
     """
     try:
-        from modules import seo_borrower, channels as _ch
+        from modules import seo_borrower as _sb, channels as _ch
     except Exception:
         return []
     try:
         cfg = _ch.resolve(channel_type) or {}
     except Exception:
         cfg = {}
-    # Search the niche itself, not a specific story: we want the
-    # neighbourhood this channel competes in.
-    query = (cfg.get("search_seed") or cfg.get("display_name")
-             or channel_type or "").strip()
-    if not query:
+    base = (cfg.get("search_seed") or cfg.get("display_name")
+            or channel_type or "").strip()
+    if not base:
         return []
-    try:
-        pool = seo_borrower.find_viral_pool(query, language=language)
-    except Exception as e:
-        log.info(f"topic seeds: lookup failed ({e}); using generated topics")
-        return []
-    titles = []
-    for m in pool:
-        t = str(m.get("title") or "").strip()
-        if _usable_seed(t, language):
-            titles.append(t[:120])
+    # Angles, not synonyms: each surfaces a different slice of the niche.
+    angles = [f"{base} shorts", f"{base} story", base]
+    seen: set = set()
+    titles: list[str] = []
+    for q in angles:
         if len(titles) >= limit:
             break
+        try:
+            hits = _sb.yt_search(q, max_results=25)
+        except Exception as e:
+            log.info(f"topic seeds: search {q!r} failed ({e})")
+            continue
+        if not hits:
+            continue
+        try:
+            meta = _sb.fetch_metadata([h["video_id"] for h in hits[:25]])
+        except Exception:
+            meta = []
+        for m in sorted(meta, key=lambda x: -int(x.get("views") or 0)):
+            t = str(m.get("title") or "").strip()
+            if t in seen:
+                continue
+            seen.add(t)
+            if _usable_seed(t, language):
+                titles.append(t[:120])
+            if len(titles) >= limit:
+                break
     if titles:
-        log.info(f"topic seeds: {len(titles)} ranking title(s) from the {channel_type} niche")
+        log.info(f"topic seeds: {len(titles)} usable ranking title(s) "
+                 f"from {len(angles)} search angle(s) in {channel_type}")
+    else:
+        log.info(f"topic seeds: no usable titles for {channel_type} "
+                 f"(all filtered as non-English or hashtag spam)")
     return titles
 
 
