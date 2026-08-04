@@ -112,6 +112,23 @@ def _check_word_budget():
     return True, f"{wmin}-{wmax} words -> worst case {worst_secs:.1f}s (cap {cap:.0f}s)"
 
 
+@probe("YouTube research quota", critical=False)
+def _check_yt_keys():
+    from modules import seo_borrower as sb
+    keys = sb._api_keys()
+    if not keys:
+        return False, "no YOUTUBE_API_KEY — topic research falls back to the pool"
+    spent = len(getattr(sb, "_SPENT_KEYS", set()))
+    if spent >= len(keys):
+        return False, (f"all {len(keys)} key(s) quota-spent this process — topics "
+                       f"come from the pool until midnight Pacific. Add another "
+                       f"key (YOUTUBE_API_KEY accepts a comma-separated list).")
+    if len(keys) == 1:
+        return True, ("1 key — the daily search quota is per-key, so one heavy "
+                      "day takes research down entirely. A second key doubles it.")
+    return True, f"{len(keys)} keys, {spent} spent this process"
+
+
 @probe("ranking tag harvest", critical=False)
 def _check_tag_harvest():
     # The creator-vs-niche tag filter counts DISTINCT CHANNELS, so it

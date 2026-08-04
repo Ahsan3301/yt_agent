@@ -50,9 +50,52 @@ LOOKBACK_DAYS = 90
 TOP_N = 3
 
 
+def _api_keys() -> list:
+    """Every configured YouTube Data API key, in order.
+
+    Accepts a comma- or newline-separated list in the same env var, so
+    adding a second key is a credential-store edit and not a code change.
+    A single key stays a one-element list — nothing about the existing
+    setup changes.
+
+    Rotation matters because the daily quota is per-KEY and per-project:
+    one exhausted key currently takes ALL research down until midnight
+    Pacific, which is how a whole day of renders ends up falling back to
+    the hardcoded topic pool.
+    """
+    raw = os.getenv("YOUTUBE_API_KEY", "") or ""
+    if not raw.strip():
+        try:
+            from backend import keys_sync
+            raw = keys_sync.get_key("YOUTUBE_API_KEY") or ""
+        except Exception as e:
+            log.debug(f"seo_borrower: central key lookup failed: {e}")
+            raw = ""
+    out, seen = [], set()
+    for part in raw.replace("\n", ",").split(","):
+        k = part.strip()
+        if k and k not in seen:
+            seen.add(k)
+            out.append(k)
+    return out
+
+
+# Keys that returned quota-exhausted this process. Skipped on later
+# calls so a run with several searches does not spend the first request
+# of each one re-confirming a key it already knows is spent.
+_SPENT_KEYS: set = set()
+
+
 def _api_key() -> Optional[str]:
-    """The YouTube Data API key — stored as a normal Firestore key
-    alongside the other secrets, OR read from env for local dev."""
+    """First key that has not exhausted its quota in this process."""
+    keys = _api_keys()
+    for k in keys:
+        if k not in _SPENT_KEYS:
+            return k
+    if keys:
+        # All spent — return the first anyway so the caller gets a real
+        # API error rather than a confusing "not configured".
+        return keys[0]
     k = os.getenv("YOUTUBE_API_KEY", "").strip()
     if k:
         return k
@@ -76,13 +119,36 @@ def _http_get(url: str, params: dict) -> dict:
     """Single-purpose JSON GET. Standard requests dependency already
     installed via uploader.py."""
     import requests
-    r = requests.get(url, params=params, timeout=15)
-    if r.status_code == 403:
-        # Quota exhausted or key revoked — treat as a soft failure.
-        log.warning(f"YouTube API 403: {r.text[:200]}")
-        return {}
-    r.raise_for_status()
-    return r.json()
+    keys = _api_keys()
+    tried = []
+    for attempt in range(max(1, len(keys)) ):
+        k = _api_key()
+        if k:
+            params = dict(params, key=k)
+        r = requests.get(url, params=params, timeout=15)
+
+        # 403 is quota-exhausted or key-revoked; 429 is rate-limited.
+        # 429 previously fell through to raise_for_status and took the
+        # whole search down with an exception — measured live, it killed
+        # topic research outright. Both mean "this key is done for now",
+        # which is a reason to try the NEXT key, not to give up.
+        if r.status_code in (403, 429):
+            log.warning(f"YouTube API {r.status_code} on key ...{(k or '')[-6:]}: "
+                        f"{r.text[:160]}")
+            if k:
+                _SPENT_KEYS.add(k)
+                tried.append(k)
+            if len(_SPENT_KEYS) >= len(keys) or not keys:
+                log.warning(
+                    "YouTube API: all %d configured key(s) are quota-spent. "
+                    "Research falls back for the rest of the day — add another "
+                    "key to YOUTUBE_API_KEY (comma-separated) to widen the "
+                    "daily budget.", max(1, len(keys)))
+                return {}
+            continue                        # rotate to the next key
+        r.raise_for_status()
+        return r.json()
+    return {}
 
 
 def yt_search(query: str, max_results: int = 10) -> list[dict]:
