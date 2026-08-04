@@ -787,7 +787,10 @@ function StorageUsagePanel() {
         {(u.orphaned?.count || 0) > 0 && (
           <div>
             {u.orphaned?.count} file{u.orphaned?.count === 1 ? "" : "s"} ({u.orphaned?.mb} MB)
-            have no Library entry and are removed separately after 7 days.
+            have no Library entry, so the retention sweep cannot see them —
+            &ldquo;Run cleanup now&rdquo; will not remove these however old they get.
+            They are handled by the separate orphan sweep after 7 days, counted
+            from the file&rsquo;s own age.
           </div>
         )}
         <div className="text-neutral-600">

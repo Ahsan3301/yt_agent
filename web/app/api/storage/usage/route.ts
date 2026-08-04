@@ -76,7 +76,20 @@ export async function GET(req: NextRequest) {
         orphaned.count += 1;
         orphaned.bytes += v.size;
       }
-      if (v.last_modified > 0 && v.last_modified < cutoff) {
+      // `known` matters: the retention sweep walks runs_index rows and
+      // deletes the storage object for each one. A file with no
+      // runs_index row is invisible to it and can never be removed by
+      // retention no matter how old it gets — only the orphan track
+      // (cleanup-stale) can take those.
+      //
+      // Counting orphans here made the panel promise work the sweep
+      // cannot do: it advertised "next sweep removes 36 videos
+      // (11291 MB)" while every one of those 36 was an orphan, so
+      // cleanup ran and correctly reported "nothing was past
+      // retention". The number and the outcome disagreed because they
+      // were computed from different sources — this panel from bucket
+      // mtimes, the sweep from runs_index.
+      if (known && v.last_modified > 0 && v.last_modified < cutoff) {
         deletable.bytes += v.size;
         if (published.get(v.run_id)) deletable.published += 1;
         else deletable.unpublished += 1;
