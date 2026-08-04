@@ -76,18 +76,20 @@ _EXEMPLARS = {
     "science": """WORKED EXAMPLE — this is the standard.
 
   GOOD:
-    Voyager 1 is 15 billion miles away and still sending data on a
-    22-watt transmitter. That is weaker than the bulb in your fridge.
+    A stuck bit broke Voyager 1 from 15 billion miles away.
+    It has been flying since 1977 and still sends data on a 22-watt
+    transmitter — weaker than the bulb in your fridge.
     By the time it arrives the signal is a fraction of a billionth of
     a watt. Earth listens with a 70-metre dish to hear it. In 2023 it
     started sending gibberish. One engineer traced it to a single
     stuck bit in a chip built in 1975. They fixed it from 15 billion
     miles away.
 
-  Why it works: every sentence carries a number you can picture — 22
-  watts, 70 metres, one bit, 1975. The fridge bulb makes an abstract
-  figure physical. The last line reframes the opening distance from a
-  fact into an achievement.
+  Why it works: the hook is nine words and states the payoff before any
+  context — the viewer has to stay to learn what a stuck bit even is.
+  Every sentence after it carries a number you can picture. The fridge
+  bulb makes an abstract figure physical. The last line reframes the
+  opening distance from a problem into an achievement.
 
   BAD (do not write this):
     Space is truly incredible and full of amazing mysteries. Voyager 1
@@ -103,15 +105,18 @@ _EXEMPLARS = {
     "history": """WORKED EXAMPLE — this is the standard.
 
   GOOD:
-    In 1518 in Strasbourg, a woman stepped into the street and began
-    to dance. She did not stop for six days. By August, 400 people
+    Four hundred people danced until they died.
+    Strasbourg, 1518. One woman stepped into the street and did not
+    stop for six days. By August, 400 people
     were dancing with her. The city's response was to build a stage
     and hire musicians — they believed the cure was more dancing.
     People died of exhaustion and stroke, up to fifteen a day. The
     physicians' official diagnosis was hot blood.
 
-  Why it works: a date, a city, six days, 400 people, fifteen a day.
-  The escalation changes direction — strange, then contagious, then
+  Why it works: the hook is six words, states the worst outcome first,
+  and withholds where and when — the context lands second as the answer
+  to a question the viewer is already asking. A date, a city, six days,
+  400 people, fifteen a day. The escalation changes direction — strange, then contagious, then
   the authorities make it worse. The last line reframes the whole
   event as something people confidently misunderstood.
 
@@ -128,13 +133,16 @@ _EXEMPLARS = {
     "finance": """WORKED EXAMPLE — this is the standard.
 
   GOOD:
-    In 1997 a man bought 100 shares of a bookstore website for $1,800.
-    He sold in 1999 for $18,000 — a ten-bagger, and he was thrilled.
+    His best trade ever cost him four million dollars.
+    In 1997 he bought 100 shares of a bookstore website for $1,800 and
+    sold in 1999 for $18,000 — a ten-bagger. He was thrilled.
     Those shares would be worth about $4.5 million today. The company
     was Amazon. The lesson is not that he sold. It is that selling a
     ten-bagger felt like the disciplined thing to do at the time.
 
-  Why it works: 1997, 100 shares, $1,800, $18,000, $4.5 million — the
+  Why it works: the hook is eight words and contains a contradiction
+  the viewer needs resolved — a best trade that COST him. Context
+  follows. 1997, 100 shares, $1,800, $18,000, $4.5 million — the
   arithmetic does the emotional work. The reveal is withheld one beat.
   The last line reframes a story that looked like a mistake into one
   about how good decisions feel while you are making them.
@@ -215,17 +223,33 @@ NON-NEGOTIABLE RETENTION RULES:
      violence beyond what the channel naturally requires (e.g. mild
      dread for horror). No content targeting minors as a subject.
 
-BEAT PLAN — {word_min}-{word_max} words is about 8 to 10 spoken
-sentences. That is not room for an introduction, a summary, or
-atmosphere. Spend it exactly like this:
-  Beat 1 (2 sentences) — the single most surprising concrete fact,
-                         stated flat, with its number/name/date.
-  Beat 2 (2-3 sentences) — why that fact is not what the viewer
-                         assumed. Introduce the tension.
-  Beat 3 (2-3 sentences) — the mechanism or consequence, still
-                         concrete. This is the payoff of the open loop.
-  Beat 4 (1 sentence)   — reframe Beat 1 so it now means something
-                         different. Not a summary. A new meaning.
+RETENTION MODEL — not style advice, this is how the format works.
+50-60% of the viewers who leave do so inside the FIRST THREE SECONDS,
+and YouTube decides distribution on that window.
+
+  - The hook must be DELIVERED in about 2.5 seconds — at narration pace
+    that is 6-9 words. ONE short sentence, not two.
+  - Write the first line and the last line as a matched pair BEFORE
+    writing anything between them. The last line must pay off the exact
+    promise the first makes; the middle is the bridge between them.
+  - Lead with the payoff, then explain how it got there. Short form
+    inverts normal storytelling: context first is the single most
+    common way a Short dies.
+  - 60%+ of viewers watch with sound OFF, so the first line has to work
+    read as text, with no audio and no prior context.
+  - Never open with a greeting, a topic announcement, or a set-up
+    clause ("Have you ever...", "Today we look at...", "In 1518 in
+    Strasbourg..."). Open on the claim itself.
+
+BEAT PLAN — {word_min}-{word_max} words is 8 to 10 spoken sentences.
+Spend them exactly like this:
+  Beat 1 (1 sentence, 6-9 words) — the single most surprising fact,
+                         stated flat, no adjectives, no context yet.
+  Beat 2 (2 sentences)   — the context that makes it real: who, when,
+                         the number that proves it.
+  Beat 3 (2-3 sentences) — why it is not what the viewer assumed.
+  Beat 4 (2-3 sentences) — the mechanism or consequence, still concrete.
+  Beat 5 (1 sentence)    — give Beat 1 a NEW MEANING. Not a summary.
 Anything that is not one of these beats gets cut.
 
 {exemplar}
@@ -387,15 +411,51 @@ WRITING RULES — follow all of them:
   10. STRICTLY NO sexual content, no romantic/intimate subtext, no nudity,
      no sexual violence. Genre is psychological terror, not adult.
 
-BEAT PLAN — the script is {word_min}-{word_max} words, which is about
-8 to 10 spoken sentences. That is not enough room for atmosphere. Spend
-it exactly like this and nothing else:
-  Beat 1 (2 sentences) — a named person, a named place, one wrong detail.
-  Beat 2 (2-3 sentences) — the wrong thing proves it is aimed at them.
-  Beat 3 (2-3 sentences) — it has been happening longer than they knew.
-  Beat 4 (1 sentence)   — recontextualise a detail from Beat 1.
-There is no room for scene-setting, weather, or how anyone felt. Cut
-every sentence that is not one of these beats.
+RETENTION MODEL — this is not style advice, it is how the format works.
+50-60% of everyone who leaves does so inside the FIRST THREE SECONDS,
+and YouTube decides distribution on that window. Your first line is not
+an introduction to the story. It IS the story's worst moment, stated
+before the viewer knows who it happened to.
+
+  - The hook must be DELIVERED in about 2.5 seconds. At narration pace
+    that is 6-9 words. One short sentence. Not two.
+  - Write the FIRST line and the LAST line as a matched pair before you
+    write anything between them. The last line must pay off the exact
+    promise the first line makes. Everything in the middle is the bridge.
+  - Context comes AFTER the hook, never before it. "Marta took the 2 AM
+    shift at the laundromat on Delacourt" is setup — it is the single
+    most common way a Short dies. Open on the wrong thing itself.
+  - 60%+ of viewers watch with sound OFF, so the first line must make
+    sense read as text with no audio and no prior context.
+
+BEAT PLAN — {word_min}-{word_max} words is 8 to 10 spoken sentences.
+Spend them exactly like this:
+  Beat 1  (1 sentence, 6-9 words)  — THE WRONG THING. Mid-event, no
+          names, no scene-setting. The viewer should not yet know who
+          this is happening to. That question is what holds them.
+  Beat 2  (2 sentences) — now answer it: who, where, one checkable
+          detail. The context lands as relief, then curdles.
+  Beat 3  (2-3 sentences) — establish a pattern, then fracture it. The
+          repetition is what makes the break frightening.
+  Beat 4  (2-3 sentences) — escalate in a direction Beat 3 did not
+          hint at. Repeating the same scare louder is the most common
+          failure in this genre.
+  Beat 5  (1 sentence) — the turn. Give a detail from Beat 1 or 2 a new
+          meaning. Not a new event: a new reading of something already
+          said. This is what makes a Short get rewatched, and rewatches
+          are the strongest retention signal the format has.
+
+ONE PROTAGONIST, ONE PRONOUN. Decide the character's gender before you
+write and keep it for every reference. A live generation produced "Elias
+Thorne opened them" and then "the figures standing behind her ... She
+scrolled" — one person, two genders, inside five sentences. It reads as
+carelessness and breaks the spell instantly. If you name someone, every
+later pronoun must match that name. Do not add a second character unless
+a beat genuinely needs one.
+
+NEVER EXPLAIN THE PHENOMENON. No ghost named, no curse described, no
+rules of the haunting. What is implied frightens; what is explained
+stops frightening. State what happened and refuse to say why.
 
 WORKED EXAMPLE — this is the standard. Study what it does.
 
@@ -403,22 +463,24 @@ WORKED EXAMPLE — this is the standard. Study what it does.
   customer never moves.
 
   GOOD:
+    Dryer 12 has been running for eleven years.
     Marta took the 2 AM shift at the Wash-N-Go on Delacourt because
-    nobody else would. One dryer ran all night. Number 12. She never
-    saw anyone load it.
-    On Thursday she opened it. Warm. Empty.
-    Friday it was running again. She checked the log. Number 12 had
-    been billed every night for eleven years. Her name was on all of
-    them.
+    nobody else would. She opened 12 on Thursday. Warm. Empty.
+    Friday it was running again. Saturday. Sunday.
+    She checked the billing log. Every night for eleven years, paid in
+    full, same card.
+    Her name was on all of them.
     She had worked there four months.
 
-  Why it works: every beat carries one checkable fact — Delacourt,
-  2 AM, dryer 12, eleven years, four months. The escalation changes
+  Why it works: the hook is eight words and lands in about 2.5 seconds,
+  and it withholds WHO — that gap is what stops the scroll. Context
+  arrives second, as relief, then turns. Thursday/Friday/Saturday/Sunday
+  is a pattern; the billing log fractures it. The escalation changes
   direction each time (odd -> aimed at her -> predates her). Nothing is
-  explained. The last line recontextualises "four months" against
-  "eleven years" — no new event, just a new meaning. Sentence lengths
-  run 17, 4, 2, 6, 4, 1, 1, 5, 3, 9, 5, 5 — the one-word sentences are
-  where the voice gets to stop.
+  explained. The last line reframes "four months" against "eleven
+  years" — no new event, only a new meaning. Sentence lengths run
+  8, 17, 5, 1, 1, 4, 1, 1, 14, 5, 5 — the one-word sentences are where
+  the voice is forced to stop, and silence is what makes a line land.
 
   BAD (do not write this):
     She felt a chill as she entered the old laundromat. Something was
