@@ -445,6 +445,18 @@ Spend them exactly like this:
           said. This is what makes a Short get rewatched, and rewatches
           are the strongest retention signal the format has.
 
+          RESTATING IS NOT REFRAMING, and this is the beat that fails
+          most often. A live generation ended "Only his name appeared
+          below it. It was his name." — the same fact twice, which lands
+          as a stutter rather than a turn. The test: the last line must
+          make an EARLIER line mean something it did not mean the first
+          time you read it. If the closing sentence could be deleted
+          without losing information, it is a restatement. Rewrite it.
+          Working shape: state a second fact that collides with the
+          first — "The billing log ran eleven years. She had worked
+          there four months." Two facts, one contradiction, no
+          explanation.
+
 ONE PROTAGONIST, ONE PRONOUN. Decide the character's gender before you
 write and keep it for every reference. A live generation produced "Elias
 Thorne opened them" and then "the figures standing behind her ... She
