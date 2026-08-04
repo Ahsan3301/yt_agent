@@ -150,7 +150,23 @@ async function _handler(req: NextRequest) {
         if (!dryRun) {
           await adminDb().collection("jobs").doc(jobId).update({
             status: "failed",
-            error: "Video file no longer exists (removed by storage cleanup) — cannot publish. Re-render to produce a new one.",
+            // Do NOT assert a cause that was never checked. This used to
+            // read "removed by storage cleanup", which is only one of two
+            // possibilities and was the wrong one for job eiujjbm5lkuezny:
+            // video_url and public_url were both empty and the run had
+            // finished the same day, so the upload never happened and
+            // retention (30d default) could not have been involved. The
+            // message sent the reader to audit retention over a bug that
+            // was actually in the render's storage upload.
+            error: (() => {
+              const everStored = Boolean(
+                (j.video_url as string | undefined) ||
+                (j.public_url as string | undefined),
+              );
+              return everStored
+                ? "Video was uploaded but is no longer in storage — most likely removed by retention cleanup. Re-render to produce a new one."
+                : "No video was ever stored for this run (video_url and public_url are both empty), so the render's upload step did not complete. This is a render-side failure, not retention. Re-render to produce a new one.";
+            })(),
             current_step: "done",
             current_step_label: "Failed — video gone",
             updated_at: FieldValue.serverTimestamp(),
