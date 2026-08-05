@@ -42,9 +42,12 @@ async function _handler(req: NextRequest) {
   // empty queue while Oracle claimed the render.
   let queued = 0;
   let queuedKaggleEligible = 0;
+  // Hoisted so the second pass below (which checks whether queued jobs
+  // are claimable by an alive non-GPU worker) can reuse it. Empty
+  // outside the try means the second pass simply falls back to job
+  // snapshots, matching the guard's own soft-fail behaviour.
+  const channelsByName = new Map<string, string[]>();
   try {
-    // Live channel config keyed by name — one read, reused for every job.
-    const channelsByName = new Map<string, string[]>();
     try {
       const chSnap = await db.collection("channels").limit(100).get();
       chSnap.forEach((doc) => {
@@ -98,11 +101,20 @@ async function _handler(req: NextRequest) {
   let gpu_has_headroom = false;
   let any_alive = false;
   let saturation_reason = "";
+  // Labels of every live worker regardless of tier. Used below to check
+  // whether the queued jobs are already claimable by the existing fleet
+  // — previously only `tier === "gpu"` counted, so Oracle (dashboard
+  // tier, always up) was invisible to this decision. Result: every job
+  // with allowed_workers=['oracle','kaggle'] woke Kaggle, and Oracle
+  // then claimed the job in seconds before Kaggle's 2-3 min boot
+  // finished. Kaggle burnt quota sitting in an empty queue every time.
+  const live_labels: string[] = [];
   try {
     const snap = await db.collection("backends").limit(50).get();
     for (const d of snap.docs) {
       const v = d.data() as {
         tier?: string;
+        label?: string;
         last_seen?: unknown;
         last_seen_at?: unknown;
         queue_depth?: number;
@@ -111,6 +123,7 @@ async function _handler(req: NextRequest) {
       const ms = _toEpochMs(v.last_seen_at ?? v.last_seen);
       if (ms == null || ms < cutoff) continue;
       any_alive = true;
+      live_labels.push(String(v.label || "").toLowerCase());
       if (v.tier === "gpu") {
         gpu_alive = true;
         const qd = Number(v.queue_depth ?? 0);
@@ -131,6 +144,44 @@ async function _handler(req: NextRequest) {
     );
   }
 
+  // How many queued Kaggle-eligible jobs would ALSO be claimable by a
+  // non-GPU live worker? Same eligibility rule the claim path uses:
+  // any allowed_workers entry that appears in a live worker's label.
+  // If every Kaggle-eligible job is already claimable by something
+  // else that is up, waking Kaggle is a guaranteed waste — the other
+  // worker will beat it to the claim by minutes.
+  let queuedClaimableByAliveNonGpu = 0;
+  try {
+    const snap2 = await db
+      .collection("jobs")
+      .where("status", "==", "queued")
+      .limit(50)
+      .get();
+    snap2.forEach((doc) => {
+      const v = doc.data() as {
+        backend_instance_id?: string | null;
+        allowed_workers?: unknown;
+        source_channel_name?: string;
+      };
+      if (v.backend_instance_id) return;
+      const snapshotArr = Array.isArray(v.allowed_workers)
+        ? (v.allowed_workers as unknown[]).filter((x): x is string => typeof x === "string")
+        : [];
+      const liveArr = channelsByName.get(String(v.source_channel_name || "").trim());
+      const allowedArr = (liveArr && liveArr.length > 0) ? liveArr : snapshotArr;
+      if (!(allowedArr.length === 0 || allowedArr.includes("kaggle"))) return;
+      // Non-GPU live worker whose label contains an allowed_workers
+      // entry (or vice versa) — matches the substring test the
+      // idle_watchdog eligibility check uses.
+      const nonGpuLabels = live_labels.filter((l) => l && !l.includes("kaggle"));
+      const covered = allowedArr.some((a) => {
+        const al = String(a).toLowerCase();
+        return nonGpuLabels.some((lbl) => lbl.includes(al) || al.includes(lbl));
+      });
+      if (covered) queuedClaimableByAliveNonGpu += 1;
+    });
+  } catch { /* best-effort — falls through to old behaviour */ }
+
   let needs_worker = false;
   let reason = "";
   if (queued === 0) {
@@ -143,13 +194,20 @@ async function _handler(req: NextRequest) {
     reason = `${queued} queued job(s) but none allow Kaggle (channel(s) opted out)`;
   } else if (gpu_has_headroom) {
     reason = "queued jobs present but a GPU worker with headroom is alive";
+  } else if (queuedClaimableByAliveNonGpu >= queuedKaggleEligible) {
+    // Every Kaggle-eligible queued job is ALSO claimable by an
+    // already-alive non-GPU worker (Oracle typically). Waking Kaggle
+    // would boot a 2-3 min T4 into an empty queue because the other
+    // worker beats it to the claim in seconds. This is the case that
+    // was burning Kaggle GPU quota on every "wake" fired by the cron.
+    reason = `${queued} queued job(s), all claimable by an alive non-GPU worker (${live_labels.filter(l => !l.includes("kaggle")).join(", ") || "n/a"}) — Kaggle wake would race and lose`;
   } else if (gpu_alive && !gpu_has_headroom) {
     // Existing GPU is saturated → spin up an extra to parallelise.
     needs_worker = true;
     reason = `${queued} queued job(s); ${saturation_reason}`;
   } else {
     needs_worker = true;
-    reason = `${queuedKaggleEligible}/${queued} queued job(s) allow Kaggle and no GPU worker alive`;
+    reason = `${queuedKaggleEligible}/${queued} queued job(s) allow Kaggle and no GPU (or claim-eligible non-GPU) worker alive`;
   }
 
   // Optional wake trigger — when ?wake=1 is passed AND we need a worker,
