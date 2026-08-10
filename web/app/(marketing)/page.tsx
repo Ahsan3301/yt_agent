@@ -5,10 +5,11 @@ import { adminDb } from "@/lib/firebase-admin";
 import { Reveal } from "@/components/Reveal";
 import { MarketingNav } from "@/components/MarketingNav";
 import { Tilt3D } from "@/components/Tilt3D";
-import { PricingCard } from "@/components/PricingCard";
 import { HeroBackdropMount } from "@/components/HeroBackdropMount";
 import { ProductShowcase } from "@/components/ProductShowcase";
-import { ArrowRight, Sparkles, Zap, Layers, Waves } from "lucide-react";
+import { InboundForm } from "@/components/InboundForm";
+import { NICHES, NICHE_COUNT } from "@/lib/niches";
+import { ArrowRight, Sparkles, Zap, Layers, Waves, Check } from "lucide-react";
 
 /**
  * Yven — public landing.
@@ -35,7 +36,6 @@ export const revalidate = 60;
 const CONTENT_ID = "landingcontent0";
 
 type Feature = { title: string; body: string; icon?: string };
-type Tier = { name: string; price: string; sub?: string; features?: string[]; highlight?: boolean };
 type PipelineStep = { n: string; title: string; sub: string };
 
 const DEFAULT_CONTENT = {
@@ -70,80 +70,20 @@ const DEFAULT_CONTENT = {
     { n: "02", title: "Configure", sub: "Pick the niche, the language, the voice, how many videos a day, and what hour they go out." },
     { n: "03", title: "Autopilot", sub: "It researches, writes, narrates, edits and publishes on that schedule — and reports what each video actually did." },
   ] as PipelineStep[],
-  // Empty on purpose. Pricing is read from the `plans` collection at
-  // request time (see _loadPlans) so the page cannot advertise
-  // something different from what a customer is actually given.
+  // No pricing_tiers key: the page no longer publishes prices at all.
+  // What a channel costs depends on render volume, language and whether
+  // it uses generated motion footage, so any single number on this page
+  // was going to be wrong for most readers in one direction or the
+  // other. The #quote section asks for those three things instead.
   //
-  // It previously hardcoded Starter $49 / Pro $149 / Agency $399 with
-  // limits and features that matched no real plan: the actual plans are
-  // Free (1 channel, 30 renders) and Pro (5 channels, 150 renders),
-  // "Agency" did not exist at all, and "Channel DNA analysis",
-  // "White-label", "API access" and "Approval mode" are not built.
-  // Someone buying "Starter, 10 videos/month" would have received
-  // something else entirely.
-  pricing_tiers: [] as Tier[],
+  // The tier table that used to live here also advertised Starter $49 /
+  // Pro $149 / Agency $399 against plans that did not exist, and the
+  // `plans`-backed replacement rendered cents as dollars ($4900/mo).
+  // Both failure modes are gone with the table.
   footer_links: [] as Array<{ label: string; href: string }>,
 };
 
 
-/**
- * Real plans, straight from the `plans` collection.
- *
- * The point is that marketing pricing and the entitlement a customer
- * actually receives come from ONE place. Any hardcoded tier list drifts
- * the moment a limit changes, and the drift is invisible until someone
- * pays for the wrong thing.
- *
- * Internal plans (operator/founder) are filtered out — they exist for
- * running the platform, not for sale.
- */
-async function _loadPlans(): Promise<Tier[]> {
-  try {
-    const snap = await adminDb().collection("plans").limit(50).get();
-    const rows: Array<Record<string, unknown>> = [];
-    snap.forEach((d) => rows.push(d.data() as Record<string, unknown>));
-
-    return rows
-      .filter((p) => p.active !== false)
-      .filter((p) => {
-        const f = (p.features || {}) as Record<string, unknown>;
-        return !f.operator;                       // hide internal plans
-      })
-      .sort((a, b) => Number(a.price_monthly || 0) - Number(b.price_monthly || 0))
-      .map((p) => {
-        const f = (p.features || {}) as Record<string, unknown>;
-        const chans  = Number(p.max_channels || 0);
-        const rends  = Number(p.max_renders_month || 0);
-        const price  = Number(p.price_monthly || 0);
-        const feats: string[] = [];
-        // 0 means unlimited in the plans schema — spell that out rather
-        // than rendering "0 channels".
-        feats.push(chans > 0 ? `${chans} channel${chans === 1 ? "" : "s"}` : "Unlimited channels");
-        feats.push(rends > 0 ? `${rends} videos / month` : "Unlimited videos");
-        if (f.byo_worker)      feats.push("Bring your own render worker");
-        if (f.shared_workers)  feats.push("Rendering included");
-        if (f.priority_queue)  feats.push("Priority render queue");
-        feats.push("YouTube publishing");
-        feats.push("Performance tracking");
-        return {
-          name: String(p.name || "Plan"),
-          price: price > 0 ? `$${price}` : "Free",
-          sub: String(p.tagline || ""),
-          features: feats,
-          highlight: Boolean(f.shared_workers),
-        } as Tier;
-      });
-  } catch {
-    // Showing no pricing beats showing wrong pricing.
-    return [];
-  }
-}
-
-
-/** Real platform totals for the trust strip. Same source as
- *  /api/marketing/stats; read directly here to avoid a self-fetch
- *  during SSR. Returns show:false below the threshold so the strip
- *  renders nothing rather than something small and sad. */
 async function _loadStats(): Promise<{published:number;views:number;languages:number;show:boolean}> {
   try {
     const snap = await adminDb().collection("runs_index").limit(2000).get();
@@ -182,9 +122,6 @@ async function _loadContent() {
       pipeline_steps: Array.isArray(d.pipeline_steps) && d.pipeline_steps.length > 0
                         ? (d.pipeline_steps as PipelineStep[])
                         : DEFAULT_CONTENT.pipeline_steps,
-      pricing_tiers: Array.isArray(d.pricing_tiers) && d.pricing_tiers.length > 0
-                       ? (d.pricing_tiers as Tier[])
-                       : DEFAULT_CONTENT.pricing_tiers,
       footer_links:  Array.isArray(d.footer_links)  ? (d.footer_links as Array<{ label: string; href: string }>) : DEFAULT_CONTENT.footer_links,
     };
   } catch {
@@ -198,12 +135,7 @@ export default async function LandingPage() {
   if (isAuthed) redirect("/app");
 
   const c = await _loadContent();
-  // Real plans win over anything stored in the CMS. Pricing is the one
-  // piece of copy where being out of date is a promise you cannot keep,
-  // so it is sourced from the same table that grants the entitlement.
-  const realPlans = await _loadPlans();
   const stats = await _loadStats();
-  const tiers = realPlans.length > 0 ? realPlans : c.pricing_tiers;
 
   return (
     <div className="flex-1 flex flex-col relative">
@@ -269,7 +201,7 @@ export default async function LandingPage() {
                   countdown hardcoded to 2d 14h that restarted on every
                   page load. Both are gone. This points at the pricing
                   the product actually sells. */}
-              <Link href="#pricing"
+              <Link href="#quote"
                     className="inline-flex items-center gap-2 h-12 px-7 rounded-full border border-white/10 bg-white/[0.02] backdrop-blur-xl text-white/85 text-sm font-medium hover:border-white/20 hover:bg-white/[0.04] transition-all">
                 See pricing
               </Link>
@@ -393,29 +325,115 @@ export default async function LandingPage() {
         </div>
       </section>
 
-      {/* ── Pricing ──────────────────────────────────────────────── */}
-      {tiers.length > 0 && (
-        <section id="pricing" className="relative z-10 px-6 py-24 md:py-32 border-t border-white/5">
-          <div className="max-w-6xl mx-auto">
-            <Reveal>
-              <div className="text-center max-w-2xl mx-auto mb-20">
-                <div className="text-[11px] uppercase tracking-[0.18em] text-accent mb-4 font-semibold">Pricing</div>
-                <h2 className="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] text-white">
-                  One channel or ten. <span className="serif-accent text-neutral-400">Simple.</span>
-                </h2>
-              </div>
-            </Reveal>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
-              {tiers.map((t, i) => (
-                <Reveal key={i} delay={i * 100}>
-                  <PricingCard tier={t} ctaHref={c.hero_cta_href} />
-                </Reveal>
-              ))}
+      {/* ── Niches — what actually comes out of the pipeline ───── */}
+      <section id="niches" className="relative z-10 px-6 py-24 md:py-32 border-t border-white/5">
+        <div className="max-w-6xl mx-auto">
+          <Reveal>
+            <div className="max-w-2xl mb-14">
+              <div className="text-[11px] uppercase tracking-[0.18em] text-accent mb-4 font-semibold">What we make</div>
+              <h2 className="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] text-white">
+                {NICHE_COUNT} niches, each with{" "}
+                <span className="serif-accent text-transparent bg-clip-text bg-gradient-to-r from-accent to-accent-glow">its own voice.</span>
+              </h2>
+              <p className="mt-5 text-neutral-400 leading-relaxed">
+                A niche is a tuned preset — narrator, pacing, colour grade and search
+                vocabulary chosen for the subject. A horror short and a finance short
+                should not sound like the same video, so they don&apos;t.
+              </p>
             </div>
+          </Reveal>
+
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+            {NICHES.map((n, i) => (
+              <Reveal key={n.slug} delay={(i % 5) * 60}>
+                <Link
+                  href="/niches"
+                  className="group block h-full rounded-2xl border border-white/8 bg-white/[0.022] p-4 backdrop-blur-xl transition hover:border-accent/25 hover:bg-white/[0.035]"
+                >
+                  <div className="text-sm font-medium text-white leading-snug">{n.label}</div>
+                  <div className="mt-2 text-[11px] uppercase tracking-wider text-neutral-600">
+                    {n.research === "sourced" ? "Researched" : "Original"}
+                  </div>
+                </Link>
+              </Reveal>
+            ))}
           </div>
-        </section>
-      )}
+
+          <Reveal delay={200}>
+            <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+              <Link href="/niches" className="inline-flex items-center gap-1.5 text-accent hover:underline">
+                See what each one produces <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+              <Link href="/niches#request" className="text-neutral-400 hover:text-white transition">
+                Don&apos;t see yours? Request it →
+              </Link>
+            </div>
+          </Reveal>
+        </div>
+      </section>
+
+      {/* ── Quote request ──────────────────────────────────────────
+          Replaces the published price table. What a channel costs
+          depends on volume, language and how much motion footage it
+          uses — a fixed number on this page would be wrong for most
+          people who read it, in both directions. */}
+      <section id="quote" className="relative z-10 px-6 py-24 md:py-32 border-t border-white/5">
+        <div className="max-w-5xl mx-auto grid grid-cols-1 lg:grid-cols-[1fr_1.1fr] gap-12 lg:gap-16 items-start">
+          <Reveal>
+            <div>
+              <div className="text-[11px] uppercase tracking-[0.18em] text-accent mb-4 font-semibold">Pricing</div>
+              <h2 className="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] text-white">
+                Priced to your{" "}
+                <span className="serif-accent text-transparent bg-clip-text bg-gradient-to-r from-accent to-accent-glow">volume.</span>
+              </h2>
+              <p className="mt-5 text-neutral-400 leading-relaxed">
+                Cost tracks how much you actually render — videos per month, how many
+                channels, and whether they use generated motion footage or stills.
+                Tell us the shape of it and you get a real number, not a tier you have
+                to grow into.
+              </p>
+              <ul className="mt-8 space-y-3 text-sm text-neutral-400">
+                {[
+                  "No per-seat pricing — the engine runs, not your team",
+                  "Bring your own GPU worker and pay less",
+                  "Month to month; no annual lock-in",
+                ].map((t) => (
+                  <li key={t} className="flex items-start gap-2.5">
+                    <Check className="h-4 w-4 text-accent shrink-0 mt-0.5" />
+                    <span>{t}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </Reveal>
+
+          <Reveal delay={100}>
+            <div className="rounded-3xl border border-white/8 bg-white/[0.022] p-6 md:p-8 backdrop-blur-xl">
+              <InboundForm
+                endpoint="/api/marketing/quote"
+                submitLabel="Request a quote"
+                successTitle="Got it."
+                successBody="We'll come back with a number and what it covers, usually within a working day."
+                fields={[
+                  { name: "name", label: "Your name", required: true, half: true },
+                  { name: "email", label: "Email", type: "email", required: true, half: true },
+                  { name: "company", label: "Company", half: true },
+                  { name: "channel_url", label: "Channel URL", half: true,
+                    placeholder: "youtube.com/@…" },
+                  { name: "niche", label: "Niche", half: true,
+                    placeholder: "Horror, finance, something else…" },
+                  { name: "videos_month", label: "Videos per month", type: "select", half: true,
+                    options: ["Under 30", "30–100", "100–300", "300+", "Not sure yet"] },
+                  { name: "channel_count", label: "How many channels", type: "select", half: true,
+                    options: ["1", "2–5", "6–20", "20+"] },
+                  { name: "message", label: "Anything we should know", type: "textarea",
+                    placeholder: "Languages, deadlines, what you're using today." },
+                ]}
+              />
+            </div>
+          </Reveal>
+        </div>
+      </section>
 
       {/* ── Final CTA — restrained, single accent glow ─────────── */}
       <section className="relative z-10 px-6 py-32 md:py-40 text-center overflow-hidden border-t border-white/5">
@@ -458,7 +476,7 @@ export default async function LandingPage() {
             <p className="text-xs text-neutral-500 mt-2 max-w-[16rem] font-light">The complete video automation engine.</p>
           </div>
           {[
-            ["Product",   [["Features","/#features"], ["Pipeline","/#pipeline"], ["Pricing","/#pricing"], ["Roadmap","/roadmap"]]],
+            ["Product",   [["Features","/#features"], ["Pipeline","/#pipeline"], ["Niches","/niches"], ["Get a quote","/#quote"], ["Roadmap","/roadmap"]]],
             ["Tools",     [["Time Saved","/tools/calculator"], ["Roast Channel","/tools/roast"], ["Compare","/compare"]]],
             ["Account",   [["Sign in","/login"], ["Get access","/signup"]]],
           ].map(([label, links]) => (

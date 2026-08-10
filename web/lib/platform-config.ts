@@ -177,6 +177,26 @@ export const CONFIG_SCHEMA: Array<{
   { key: "GITHUB_OAUTH_CLIENT_ID",      category: "oauth", label: "GitHub OAuth client ID", help: "" },
   { key: "GITHUB_OAUTH_CLIENT_SECRET",  category: "oauth", label: "GitHub OAuth client secret", secret: true, help: "" },
 
+  // ── Email (SMTP) ───────────────────────────────────────────────
+  // Read at send time, never cached into a module-level transport, so
+  // pasting a password here takes effect on the next email with no
+  // redeploy. Until the host is set, every send is skipped — forms
+  // still save to the database, they just don't notify.
+  { key: "SMTP_HOST", category: "email", label: "SMTP host",
+    help: "Your mail provider's outgoing server, e.g. smtp.gmail.com, smtp.resend.com, smtp-relay.brevo.com. This one field is the on/off switch: leave it blank and email is simply skipped — nothing else breaks and no form is lost." },
+  { key: "SMTP_PORT", category: "email", label: "Port",
+    help: "587 for STARTTLS (the usual choice), 465 for implicit TLS, 25 unencrypted. Defaults to 587 when blank. If you pick 465, also turn on 'Use TLS directly' below." },
+  { key: "SMTP_SECURE", category: "email", label: "Use TLS directly",
+    help: "Type 'true' only when using port 465, where the connection is encrypted from the first byte. For 587 leave this blank — the connection starts plain and upgrades via STARTTLS, which is normal and still encrypted." },
+  { key: "SMTP_USER", category: "email", label: "Username",
+    help: "Usually the full email address you're sending from. Some providers (Resend, Postmark) use a fixed word like 'resend' or an API-key id instead — check their SMTP page." },
+  { key: "SMTP_PASSWORD", category: "email", label: "Password", secret: true,
+    help: "For Gmail and most providers with 2FA this must be an app-specific password, not your account password. For API-key providers, paste the key here.", },
+  { key: "SMTP_FROM", category: "email", label: "Send from",
+    help: "The From address recipients see, e.g. Yven <hello@yourdomain.com>. Must be an address your provider has verified, or messages will be rejected or land in spam. Falls back to the username when blank." },
+  { key: "SMTP_TO", category: "email", label: "Send notifications to",
+    help: "Where contact, quote and niche-request submissions are delivered. Comma-separate for several recipients. Falls back to the From address when blank, so mail still reaches you if you forget this one." },
+
   // ── Operations ─────────────────────────────────────────────────
   { key: "RENDER_TRIGGER_KEY",   category: "ops", label: "Maintenance API key", secret: true,
     help: "Authenticates the cron sidecar's calls to /api/maintenance/*." },

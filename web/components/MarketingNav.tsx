@@ -30,10 +30,15 @@ export function MarketingNav({ ctaHref = "/signup", ctaText = "Get Early Access"
       </Link>
       <ul className="hidden md:flex items-center gap-5 list-none text-xs font-medium">
         <li><Link href="/#features"       className="text-neutral-400 hover:text-white transition">Features</Link></li>
+        <li><Link href="/niches"          className="text-neutral-400 hover:text-white transition">Niches</Link></li>
         <li><Link href="/#pipeline"       className="text-neutral-400 hover:text-white transition">How It Works</Link></li>
-        <li><Link href="/#pricing"        className="text-neutral-400 hover:text-white transition">Pricing</Link></li>
+        {/* "Pricing" still, because that is the word a visitor looks
+            for — but it lands on the quote form, since prices are no
+            longer published. Renaming it "Quote" would make people scan
+            the nav twice looking for a Pricing link that isn't there. */}
+        <li><Link href="/#quote"          className="text-neutral-400 hover:text-white transition">Pricing</Link></li>
         <li><Link href="/roadmap"         className="text-neutral-400 hover:text-white transition">Roadmap</Link></li>
-        <li><Link href="/compare"         className="text-neutral-400 hover:text-white transition">Compare</Link></li>
+        <li><Link href="/contact"         className="text-neutral-400 hover:text-white transition">Contact</Link></li>
       </ul>
       <Link href={ctaHref}
             className="bg-gradient-to-br from-accent to-accent-2 text-[#050508] px-4 py-2 rounded-full font-bold text-xs hover:-translate-y-0.5 hover:shadow-[0_0_20px_rgba(167,139,250,0.4)] transition-all">

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import {
   Loader2, Save, SlidersHorizontal, Database, Lock, HardDriveDownload,
-  KeyRound, Wrench, CheckCircle2, AlertTriangle, Trash2,
+  KeyRound, Wrench, CheckCircle2, AlertTriangle, Trash2, Mail, Send,
 } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 
@@ -38,6 +38,8 @@ const CATEGORIES: Array<{ id: string; label: string; blurb: string; icon: React.
     blurb: "Nightly offsite copies of the database and rendered media. Until these are set, the backup job runs and exits without doing anything." },
   { id: "oauth",  label: "Connections",  icon: KeyRound,
     blurb: "Credentials for the services Yven talks to on your behalf." },
+  { id: "email",  label: "Email (SMTP)", icon: Mail,
+    blurb: "Where contact, quote and custom-niche submissions get delivered. Settings apply to the very next email — no redeploy. Until a host is set, forms still save to the database and nothing is lost; you just won't be emailed about them. Use Send test email below to confirm it works before you rely on it." },
   { id: "retention", label: "Retention", icon: Trash2,
     blurb: "How long each kind of data is kept before the nightly sweep removes it. Blank uses the built-in default; values under 1 day are ignored rather than obeyed. Deleting a video file does not remove it from the Library — published videos keep playing from YouTube." },
   { id: "ops",    label: "Operations",   icon: Wrench,
@@ -50,6 +52,27 @@ export default function PlatformConfigPage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; detail: string } | null>(null);
+
+  // Sends using the SAVED settings, not the typed ones — the server has
+  // no idea what is in the inputs. The button is disabled while there
+  // are unsaved edits so a "test" can never report on a stale password.
+  const testEmail = async () => {
+    setTesting(true); setTestResult(null);
+    try {
+      const r = await fetch("/api/superadmin/config/test-email", { method: "POST" });
+      const j = await r.json().catch(() => ({}));
+      setTestResult({
+        ok: Boolean(j.ok),
+        detail: j.detail || j.error || `HTTP ${r.status}`,
+      });
+    } catch (e) {
+      setTestResult({ ok: false, detail: String(e) });
+    } finally {
+      setTesting(false);
+    }
+  };
 
   const load = async () => {
     try {
@@ -178,6 +201,40 @@ export default function PlatformConfigPage() {
                 </div>
               ))}
             </div>
+
+            {cat.id === "email" && (
+              <div className="border-t border-line/60 pt-4">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <button
+                    onClick={testEmail}
+                    disabled={testing || dirty > 0}
+                    className="btn btn-ghost h-8 text-xs"
+                    title={dirty > 0 ? "Save your changes first" : "Send a test message using the saved settings"}
+                  >
+                    {testing
+                      ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Sending…</>
+                      : <><Send className="h-3.5 w-3.5" /> Send test email</>}
+                  </button>
+                  {dirty > 0 && (
+                    <span className="text-[11px] text-neutral-500">
+                      Save first — the test uses the saved settings, not what&apos;s typed above.
+                    </span>
+                  )}
+                </div>
+                {testResult && (
+                  <div
+                    className={`mt-3 text-xs flex items-start gap-2 ${
+                      testResult.ok ? "text-success" : "text-danger"
+                    }`}
+                  >
+                    {testResult.ok
+                      ? <CheckCircle2 className="h-4 w-4 shrink-0 mt-px" />
+                      : <AlertTriangle className="h-4 w-4 shrink-0 mt-px" />}
+                    <span className="break-words">{testResult.detail}</span>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         );
       })}

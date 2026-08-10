@@ -38,6 +38,12 @@ const PUBLIC_PATHS = new Set([
   // Public marketing endpoints.
   "/api/marketing/demo/waitlist",
   "/api/tools/roast",
+  // Inbound forms on the public site. These MUST be listed here — a
+  // form that 401s is indistinguishable from a broken one to a visitor,
+  // and we would never know they tried.
+  "/api/marketing/contact",
+  "/api/marketing/quote",
+  "/api/marketing/niche-request",
 ]);
 
 // API routes that use their own X-API-Key auth (worker↔dashboard).
@@ -69,6 +75,8 @@ export async function middleware(req: NextRequest) {
       pathname === "/roadmap" ||
       pathname === "/compare" ||
       pathname === "/demo" ||
+      pathname === "/contact" ||
+      pathname === "/niches" ||
       pathname.startsWith("/tools/") ||
       // Referral short-links must be reachable when signed out.
       pathname.startsWith("/r/");
