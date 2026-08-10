@@ -316,11 +316,28 @@ services:
     #   but the redeploy button silently failed. Fork-bomb protection
     #   is lost; if it becomes a problem, set it via the deploy block
     #   only (pids: 512 under deploy.resources.limits) — never both.
+    #   cpus: REMOVED 2026-08-10. It was "1.6", sized for 2 vCPUs. The
+    #   host is now 1 vCPU / 5 GiB, and Docker REJECTS a cpus value
+    #   above the host's core count outright:
+    #     "range of CPUs is from 0.01 to 1.00, as there are only 1 CPUs"
+    #   That aborted the whole compose run. Because the deploy had
+    #   already torn the old stack down, the site stayed hard-down for
+    #   80 minutes on a 503 — an absolute cap that exceeds the machine
+    #   is a deploy-time bomb that goes off on any resize.
+    #
+    #   cpu_shares alone does the job it was meant to do. It is RELATIVE
+    #   (512 vs the default 1024 = half priority for the neighbouring
+    #   tenant under contention) so it stays valid no matter how many
+    #   cores the host has. The render worker is already throttled in
+    #   software anyway — modules/editor computes ffmpeg -threads from
+    #   the visible CPU count and runs at 75%.
     deploy:
       resources:
         limits:
-          cpus: "1.6"
-          memory: 6g
+          # 3g against 5 GiB of RAM. Was 6g, which exceeded the resized
+          # host — Docker tolerates that where it rejects an oversized
+          # cpus, so it would have failed later and less obviously.
+          memory: 3g
     cpu_shares: 512
 
 networks:
