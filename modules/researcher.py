@@ -872,15 +872,54 @@ def _generic_research(channel_type: str, language: str = "en") -> dict | None:
                   "appeal to the same viewer."
             )
 
+        # Fact-based niches must name something REAL and checkable.
+        #
+        # Without this the model invents claims and states them as
+        # history. Measured on this exact prompt: "the world's largest
+        # fintech company was actually born from a crypto exchange that
+        # burned $4.5 billion" and "the day Alexander the Great
+        # challenged King Porus to single combat" — the second is a real
+        # battle with an invented duel bolted on. The scriptwriter then
+        # writes 50 confident words around a false premise, which is
+        # exactly what "AI slop" means to a viewer who knows the subject.
+        #
+        # research_mode is declared per niche in modules/channels.py.
+        _factual = str(cfg.get("research_mode") or "") in ("fact_research", "trend_aggregator")
+        _truth_rule = (
+            "\n\nTHIS CHANNEL MAKES FACTUAL CLAIMS, so the topic must be "
+            "something that actually happened and can be checked.\n"
+            "  - Name the real thing: the person, company, place, mission, "
+            "species or event, by name.\n"
+            "  - Do NOT invent statistics, dollar amounts, dates or records. "
+            "If you are not confident a number is real, leave it out and let "
+            "the research step find it.\n"
+            "  - Do NOT attach invented drama to a real event (no duels, "
+            "quotes or confrontations that did not happen).\n"
+            "  - Prefer a specific documented incident over a sweeping claim: "
+            "'the 1976 Viking lander result that was re-read in 2018' beats "
+            "'the biggest discovery in space history'.\n"
+            "  - If you cannot think of a real one, say a real but smaller "
+            "story rather than inventing a bigger one."
+        ) if _factual else (
+            "\n\nThis channel is a STORYTELLING format, so the topic is a "
+            "premise you are inventing — but keep it concrete and grounded: "
+            "an ordinary situation with one specific thing wrong, not a "
+            "vague mood."
+        )
+
         prompt = (
             f"Suggest ONE specific, surprising topic for a 60-second YouTube Short "
             f"on the {cfg.get('display_name') or channel_type} channel.\n\n"
             f"Channel tone: {cfg.get('tone')}\n"
             f"Hook style: {cfg.get('hook_style')}\n"
             f"Language of the finished video: {lang}\n\n"
-            f"Reply with ONLY the topic — one short sentence, no preamble, no markdown. "
+            f"Reply with ONLY the topic — ONE COMPLETE SENTENCE under 20 words, "
+            f"no preamble, no markdown, no trailing 'and…'. It is cut off at 280 "
+            f"characters, so a rambling answer arrives at the scriptwriter "
+            f"truncated mid-clause.\n"
             f"Make it concrete enough that a scriptwriter could write 200 words about it. "
             f"Pick something fresh — avoid the obvious top-of-mind subject for this niche."
+            f"{_truth_rule}"
             f"{seed_hint}"
             f"{recent_hint}"
         )
