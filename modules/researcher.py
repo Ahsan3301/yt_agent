@@ -410,24 +410,22 @@ def research(channel_type: str, language: str = "en"):
             "premise_key": key,
         }
 
-    elif channel_type == "wisdom":
-        topics = get_trending_topics() or get_rss_topics()
-        if not topics:
-            topics = ["life lessons", "mindset", "productivity"]
-        # Shuffle so we don't pick the same trend twice in a row on a
-        # slow news day — same fix as the generic path.
-        random.shuffle(topics)
-        chosen = topics[0]
-        return {
-            "type": "wisdom",
-            "raw_title": chosen,
-            "raw_body": "",
-            "source_url": "",
-            "keywords": topics[:5],
-            "language": lang,
-            "premise_key": chosen[:200],
-        }
-
+    # NOTE: `wisdom` used to short-circuit here, taking a RAW headline
+    # straight off Google Trends or an RSS feed and handing it to the
+    # scriptwriter as the topic. Measured output: "Top 10 AI Content
+    # Generator & Writer Tools in 2022" and "How I Get Free Traffic from
+    # ChatGPT in 2025 (AIO vs SEO)" — someone else's video titles,
+    # off-niche for a reflective channel and already dated.
+    #
+    # It also meant wisdom skipped every guard the generic path has:
+    # no meta-response check, no listicle check, no seed-copy check, no
+    # dedup against recent topics. Fixing those did nothing for this
+    # niche because the code never reached them.
+    #
+    # Trends are still useful — as INPUT to the topic model, which is
+    # exactly what _generic_research already does with its ranking
+    # seeds. So wisdom now goes through the same path as every other
+    # non-horror niche instead of having a private one.
     return _generic_research(channel_type, language=lang)
 
 
@@ -924,10 +922,23 @@ def _generic_research(channel_type: str, language: str = "en") -> dict | None:
             f"{recent_hint}"
         )
         premise = ""
-        try:
+        # Up to 3 goes before falling back. The fallback is a random
+        # footage keyword plus a flavour word ("haunted house — quick
+        # facts"), which is markedly worse than one more attempt at a
+        # real topic, and a single rejected reply used to drop straight
+        # into it.
+        for _try in range(3):
+          _p = prompt if _try == 0 else (
+            prompt
+            + chr(10) + chr(10)
+            + "Your previous reply was rejected because it described the "
+              "REQUEST instead of naming a topic. Do not restate the task, do "
+              "not preface, do not explain. Reply with the topic sentence and "
+              "nothing else."
+          )
+          try:
             raw = _nim.chat(
-                messages=[{"role": "user", "content": prompt}],
-                model="meta/llama-3.3-70b-instruct",
+                messages=[{"role": "user", "content": _p}],
                 max_tokens=200,
                 temperature=0.9,
                 stream=False,
@@ -942,6 +953,81 @@ def _generic_research(channel_type: str, language: str = "en") -> dict | None:
                     f"(short/colon-soup — likely reasoning fragment)"
                 )
                 cleaned = ""
+            # Meta-response guard. The model sometimes RESTATES the
+            # request instead of answering it — this shipped as a real
+            # topic: "The user wants a single, specific, surprising topic
+            # for a 60-second YouTube Short on a History + Mythology
+            # channel." It passed every check above (long enough, one
+            # colon, few full stops) and the scriptwriter then wrote a
+            # video about it.
+            #
+            # The longer the instruction block, the likelier this is, so
+            # it became more probable exactly when the prompt gained the
+            # factuality rules. Cheap to detect: a topic never talks
+            # about the request, the assistant, or the channel format.
+            if cleaned:
+                _low = cleaned.lower()
+                _meta = (
+                    "the user want", "the user is", "you want", "the request",
+                    "here is", "here's", "sure,", "certainly", "okay,", "of course",
+                    "as an ai", "i'll suggest", "i will suggest", "i'd suggest",
+                    "my suggestion", "topic:", "suggestion:",
+                    "60-second youtube short", "youtube short on", "for a short",
+                    "this channel", "the channel", "specific, surprising",
+                )
+                if any(_low.startswith(m) or m in _low[:60] for m in _meta):
+                    log.warning(
+                        f"researcher: rejecting META topic {cleaned[:90]!r} — the "
+                        f"model restated the prompt instead of answering it"
+                    )
+                    cleaned = ""
+
+            # Roundup/listicle guard. "Top 10 AI Tools…", "5 Best…" are
+            # what the ranking seeds are full of in some niches, and the
+            # model reaches for the format because it is right there.
+            # They make poor narrative Shorts — there is no single thing
+            # to open on and nothing to reframe at the end — and they
+            # date instantly (one came back citing 2022). The pipeline is
+            # built around one specific subject per video.
+            if cleaned and re.match(
+                r"^\s*(top|best|the\s+top|the\s+best)\s+\d+\b|^\s*\d+\s+(best|top|things|ways|reasons|tools)\b",
+                cleaned, re.I,
+            ):
+                log.warning(
+                    f"researcher: rejecting listicle topic {cleaned[:70]!r} — "
+                    f"roundups have no single subject to build a Short around"
+                )
+                cleaned = ""
+
+            # Seed-copy guard. The seeds are shown so the model can read
+            # what this audience responds to; the prompt says not to copy
+            # them, and the model copies them anyway. Measured on wisdom:
+            # it returned "Top 10 AI Tools That Will Transform Your
+            # Content Creation in 2025" — a competitor's title verbatim,
+            # off-niche for the channel and already dated.
+            #
+            # Word overlap rather than exact match, because a "light
+            # reword" is the same failure and is what the prompt
+            # explicitly forbids.
+            if cleaned and _seeds:
+                _cw = {w for w in re.findall(r"[a-z0-9']{4,}", cleaned.lower())}
+                for _sd in _seeds:
+                    _sw = {w for w in re.findall(r"[a-z0-9']{4,}", str(_sd).lower())}
+                    if not _sw or not _cw:
+                        continue
+                    # 0.45, not 0.6. Measured: "Top 10 AI Content
+                    # Generator & Writer Tools in 2022" scored 0.50
+                    # against the seed it was plainly rewritten from and
+                    # sailed through a 0.6 gate.
+                    _shared = len(_cw & _sw) / max(1, min(len(_cw), len(_sw)))
+                    if _shared >= 0.45:
+                        log.warning(
+                            f"researcher: rejecting topic {cleaned[:70]!r} — "
+                            f"{_shared:.0%} word overlap with a ranking seed "
+                            f"({str(_sd)[:60]!r}); that is copying, not learning"
+                        )
+                        cleaned = ""
+                        break
             # Reject collisions with recent topics.
             if cleaned and cleaned in used:
                 log.warning(
@@ -950,8 +1036,10 @@ def _generic_research(channel_type: str, language: str = "en") -> dict | None:
                 )
                 cleaned = ""
             premise = cleaned
-        except Exception as e:
-            log.warning(f"researcher._generic_research: NIM call failed ({e})")
+          except Exception as e:
+            log.warning(f"researcher._generic_research: topic call failed ({e})")
+          if premise:
+            break
 
         if not premise:
             # RANDOMIZED fallback: pick a random footage keyword AND
