@@ -10,6 +10,7 @@ match. Failed shots are skipped (caller falls through gracefully).
 """
 import os
 import time
+import threading as _threading
 import logging
 import base64
 import hashlib
@@ -1751,6 +1752,37 @@ def _archive_clips_enabled() -> bool:
             not in ("0", "false", "no", "off"))
 
 
+# The live endpoint enforces "2 requests per 1 minute" on video
+# creation (measured: HTTP 429 rate_limit_exceeded). Pace ourselves to
+# that rather than firing six shots and letting most of them bounce —
+# a bounced create used to cost the shot its motion entirely.
+_AGNES_VIDEO_RPM = int(os.getenv("AGNES_VIDEO_RPM", "2") or 2)
+_AGNES_VIDEO_MAX_TRIES = int(os.getenv("AGNES_VIDEO_MAX_TRIES", "4") or 4)
+_agnes_video_calls: list = []
+_agnes_video_lock = _threading.Lock()
+
+
+def _agnes_video_gate() -> None:
+    """Block until another video create is allowed under the RPM cap.
+
+    Shots are generated concurrently, so this has to be shared state
+    behind a lock rather than a per-call sleep.
+    """
+    if _AGNES_VIDEO_RPM <= 0:
+        return
+    while True:
+        with _agnes_video_lock:
+            now = time.time()
+            # Drop calls older than the window.
+            while _agnes_video_calls and now - _agnes_video_calls[0] > 60.0:
+                _agnes_video_calls.pop(0)
+            if len(_agnes_video_calls) < _AGNES_VIDEO_RPM:
+                _agnes_video_calls.append(now)
+                return
+            wait = 60.0 - (now - _agnes_video_calls[0]) + 0.5
+        time.sleep(max(1.0, min(wait, 60.0)))
+
+
 def _agnes_video_shots() -> int:
     """How many opening shots get a generated clip. 0 disables it.
 
@@ -1907,7 +1939,15 @@ def _agnes_video_generate(prompt: str, output_dir: str, idx: int, seconds: float
         body = {
             "model": _AGNES_VIDEO_MODEL,
             "prompt": _directed[:1200],
-            "width": 720, "height": 1280,
+            # 1080x1920, not 720x1280. The model normalises to 480p/720p/
+            # 1080p tiers (wiki.agnes-ai.com/en/docs/agnes-video-v20.md),
+            # so asking for 720p meant every clip was then scaled UP 1.5x
+            # to the 1080x1920 output — softening detail and smearing
+            # exactly the fine texture that reads as "artifacting". The
+            # 1080p tier is available; generate at output resolution and
+            # the upscale disappears.
+            "width": int(os.getenv("AGNES_VIDEO_W", "1080")),
+            "height": int(os.getenv("AGNES_VIDEO_H", "1920")),
             "num_frames": _frames, "frame_rate": 24,
             # Documented and never sent. This is the standard lever for
             # artifact reduction — more denoising steps mean fewer of
@@ -1932,10 +1972,42 @@ def _agnes_video_generate(prompt: str, output_dir: str, idx: int, seconds: float
             # portrait needs no upload anywhere.
             body["image"] = init_image_url
             log.info(f"agnes-video: shot {idx} driven by a character reference")
-        r = _rq.post(f"{_AGNES_BASE}/videos", headers=headers, timeout=60, json=body)
-        if r.status_code >= 400:
-            log.warning(f"agnes-video: create failed HTTP {r.status_code}: {r.text[:160]}")
-            return None
+        # Retry the two errors the live endpoint actually returns under
+        # load. Measured against it directly:
+        #
+        #   429 {"code":"rate_limit_exceeded"} — "allows 2 requests per
+        #       1 minute(s)". Six shots means we WILL hit this.
+        #   503 {"code":"video_queue_full"}    — their queue is busy.
+        #
+        # Both are transient and explicitly retryable, and the previous
+        # code treated every >=400 as fatal and returned None. The caller
+        # reads None as "no motion available" and quietly substitutes a
+        # still, so a momentary rate limit permanently downgraded that
+        # shot. That is the likeliest reason motion looked inconsistent
+        # across a video and across niches — nothing errored, shots just
+        # went missing.
+        _RETRYABLE = (408, 409, 425, 429, 500, 502, 503, 504)
+        r = None
+        for _attempt in range(_AGNES_VIDEO_MAX_TRIES):
+            _agnes_video_gate()          # client-side 2/min limiter
+            r = _rq.post(f"{_AGNES_BASE}/videos", headers=headers, timeout=60, json=body)
+            if r.status_code < 400:
+                break
+            if r.status_code not in _RETRYABLE or _attempt == _AGNES_VIDEO_MAX_TRIES - 1:
+                log.warning(f"agnes-video: create failed HTTP {r.status_code}: {r.text[:160]}")
+                return None
+            # Honour Retry-After when present, else back off. The window
+            # is a minute, so waiting out a rate limit is cheap next to
+            # losing the shot.
+            try:
+                _wait = float(r.headers.get("Retry-After") or 0)
+            except Exception:
+                _wait = 0
+            _wait = _wait or min(90.0, 20.0 * (_attempt + 1))
+            log.info(f"agnes-video: shot {idx} got HTTP {r.status_code} "
+                     f"({(r.text or '')[:60]}) — retrying in {_wait:.0f}s "
+                     f"[{_attempt + 1}/{_AGNES_VIDEO_MAX_TRIES}]")
+            time.sleep(_wait)
         task_id = (r.json() or {}).get("task_id") or (r.json() or {}).get("id")
         if not task_id:
             log.warning("agnes-video: no task id in create response")
