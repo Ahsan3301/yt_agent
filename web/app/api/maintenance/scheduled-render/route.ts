@@ -295,13 +295,38 @@ async function _handler(req: NextRequest) {
         // release is exact regardless of how long the render took.
         const publishAtEpoch = (() => {
           const now = new Date();
-          const d = new Date(now);
+          // channelHour is an hour in the CHANNEL'S timezone — it is
+          // compared against currentHourInTz above. Writing it with
+          // setUTCHours treated it as UTC, so a channel set to 19:00
+          // America/New_York published at 19:00 UTC: five hours early,
+          // into a dead slot. Silent, because the video did appear and
+          // nothing logged an error.
+          //
+          // Resolve the offset by asking Intl what the wall-clock time
+          // in that zone is right now, and correcting by the difference.
+          const offsetMs = (() => {
+            if (!channelTz || channelTz === "UTC") return 0;
+            try {
+              // Same instant formatted in the target zone, re-parsed as
+              // if it were UTC → the delta is that zone's current offset,
+              // DST included.
+              const asTz = new Date(now.toLocaleString("en-US", { timeZone: channelTz }));
+              const asUtc = new Date(now.toLocaleString("en-US", { timeZone: "UTC" }));
+              return asTz.getTime() - asUtc.getTime();
+            } catch {
+              return 0;   // unknown zone → behave as UTC, as elsewhere
+            }
+          })();
+
+          const d = new Date(now.getTime() + offsetMs);
           d.setUTCMinutes(0, 0, 0);
           d.setUTCHours(channelHour);
-          // If the target hour has already passed today, the render is
-          // running ahead of a target that is genuinely tomorrow.
-          if (d.getTime() <= now.getTime()) d.setUTCDate(d.getUTCDate() + 1);
-          return Math.floor(d.getTime() / 1000);
+          // Back out of zone-local into a real instant.
+          let target = d.getTime() - offsetMs;
+          // If that hour has already passed today, the render is running
+          // ahead of a target that is genuinely tomorrow.
+          if (target <= now.getTime()) target += 86_400_000;
+          return Math.floor(target / 1000);
         })();
         if (channelHour !== currentHourInTz) {
           logRoute(reqId, "scheduled-render catch-up", {
@@ -559,6 +584,20 @@ async function _handler(req: NextRequest) {
         agnes_source: slot.agnes_source,
         agnes_own_api_key: slot.agnes_own_api_key,
         llm_priority: slot.llm_priority,
+        // The channel's next publish slot, as an epoch. Every other
+        // slot.* value was copied onto the job; THIS ONE WAS NOT, and
+        // that single omission disabled scheduled publishing entirely:
+        // publishAtEpoch was computed, stored on the slot, and thrown
+        // away here. With no publish_at on the row, backend/jobs.py
+        // hands upload_video(publish_at=None), which omits status.
+        // publishAt — so every video published the instant its render
+        // finished instead of at the hour chosen for reach.
+        //
+        // It also silently disabled DEFER_PUBLISH_TO_SIDE_WORKER
+        // (main.py gates the defer on `publish_at` being set) and left
+        // runs_index.published_at at 0 forever, because that column is
+        // only written on the deferred publish path.
+        publish_at: slot.publish_at || 0,
         updated_at: FieldValue.serverTimestamp(),
       };
       await adminDb().collection("jobs").doc(jobId).set(job);

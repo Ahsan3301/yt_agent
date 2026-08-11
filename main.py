@@ -884,6 +884,14 @@ def run_pipeline(
             script["youtube_title"] = publish_ready.get("youtube_title") or script.get("youtube_title") or ""
             script["description"]   = publish_ready.get("description")   or script.get("description") or ""
             script["tags"]          = publish_ready.get("tags")          or script.get("tags") or []
+            # The SEO writer picks a YouTube category per niche, and this
+            # was the only place it could reach the uploader — which reads
+            # script_data["youtube_category_id"] (uploader.py:368). It was
+            # logged below but never copied, so every upload silently fell
+            # back to the generic settings default and the per-niche
+            # category was computed and thrown away.
+            if publish_ready.get("youtube_category_id"):
+                script["youtube_category_id"] = publish_ready["youtube_category_id"]
 
             # Fold in the hashtags harvested from the ranking lookup. These
             # come off the videos actually winning this niche right now,

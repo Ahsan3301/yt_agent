@@ -236,6 +236,17 @@ VIRAL HOOK PATTERNS for this niche (title MUST follow the STRUCTURE of one of th
 BANNED TITLE OPENERS (title must NOT begin with any of these — case-insensitive):
 {chr(10).join(f'  - {b}' for b in banned_openers)}
 
+DO NOT CLAIM THE STORY IS TRUE unless the narration itself is built on
+documented events. A live description read "True horror based on real
+trail closures and unexplained phenomena" about a story that was written
+from scratch — that is a fabricated claim of authenticity, and it is the
+kind of thing that costs a channel its credibility when a viewer checks.
+Nothing in the metadata may assert the events happened, cite a real place
+as the setting of an invented event, or imply sourcing that does not
+exist. Some tag seeds below contain the word "true" — those are search
+terms people type, and using one as a TAG is fine. Writing "this is true"
+in the description is not.
+
 TAG SEEDS for this niche (use most of these + add 2-3 long-tail extras from the narration):
 {', '.join(tag_seeds) if tag_seeds else '(none — infer from the narration)'}
 
@@ -272,15 +283,25 @@ Return a JSON object with EXACTLY these keys:
       viewers ever read, and the part search weights most heavily. Follow the
       first-2-lines style above. Do not exceed 150 characters here.
     * Blank line
-    * 3-5 short value-bullet lines starting with • that reference SPECIFIC content from the narration
-    * Blank line
-    * 1-line credibility or context
+    * 2-3 short lines that set up WHY the video is worth watching, WITHOUT
+      revealing what happens. NEVER list the events of the narration.
+      A live description bulleted every single beat of a horror short,
+      including its ending — anyone reading it had no reason to watch.
+      Shorts are ranked on watch-through, so a description that spoils
+      the video attacks the one signal that actually drives reach.
+      Say what KIND of thing happens and what is at stake. Never the
+      outcome, never the last line, never the twist.
     * Blank line
     * CTA line (follow the CTA style above)
     * Blank line
-    * The first 3 hashtags on one line separated by spaces
-    * Blank line
-    * A single line of the 10 tags joined by ", "  (this improves search discoverability)
+    * The first 3 hashtags on one line separated by spaces. These render
+      as clickable links ABOVE the title, so they are real estate — make
+      them specific.
+    * NOTHING AFTER THE HASHTAGS. Do not append a comma-separated list
+      of the tags. Tags belong in the `tags` field, which YouTube reads
+      directly; repeating them as visible text is keyword stuffing,
+      which YouTube's spam policy names explicitly, and it is the last
+      thing a human reader sees.
 - tags: array of EXACTLY {_TAGS_COUNT} strings, ranked most-specific → broadest
 - hashtags: array of EXACTLY {_HASHTAGS_COUNT} strings, each starting with #.
     Order matters: the FIRST THREE are displayed above the video title, so make
@@ -493,6 +514,42 @@ def _validate(data: dict, viral: dict, expected_language: str = "en") -> list[st
     desc = data.get("description")
     if not isinstance(desc, str) or len(desc.strip()) < 60:
         problems.append("description missing or too short (need >=60 chars)")
+    elif isinstance(desc, str):
+        # These three shipped to YouTube for months. The prompt now
+        # forbids them, but a prompt is a request — this is the gate.
+        _d = desc.strip()
+
+        # 1. Keyword stuffing. The old contract asked for the tag list to
+        #    be repeated as visible text at the end. YouTube's spam policy
+        #    names this directly, and it is what a human reader sees last.
+        _last = [ln for ln in _d.splitlines() if ln.strip()][-1] if _d.splitlines() else ""
+        if _last.count(",") >= 4 and not _last.strip().startswith("#"):
+            problems.append(
+                "description ends with a comma-separated keyword list — that is "
+                "keyword stuffing. Delete that line entirely; tags belong in the "
+                "`tags` field."
+            )
+
+        # 2. Spoilers. Bullets used to be sliced verbatim out of the
+        #    narration, which on a 50-word Short reproduced the whole
+        #    story including its ending.
+        if "•" in _d:
+            problems.append(
+                "description contains • bullets. Remove them — they were being "
+                "filled with the narration's own sentences, which gives away the "
+                "video and destroys the watch-through Shorts are ranked on."
+            )
+
+        # 3. Fabricated authenticity on invented stories.
+        _truth = re.search(
+            r"\b(based on (a )?(real|true)|true story|really happened|actual events|"
+            r"documented case|real events)\b", _d, re.I)
+        if _truth:
+            problems.append(
+                f"description claims the story is real ('{_truth.group(0)}'). Unless "
+                f"the narration was built from documented events, remove the claim — "
+                f"asserting invented events are true is a credibility risk."
+            )
 
     # Language leak check: if we asked for non-English metadata and the
     # title OR the first ~30 words of description look English, force a
@@ -619,19 +676,26 @@ def _regex_fallback(narration: str, script: dict, channel_cfg: dict, viral: dict
         tags.append(niche.lower())
     tags = tags[:_TAGS_COUNT]
 
-    tag_strip = ", ".join(tags)
+    # NO bullets and NO tag strip.
+    #
+    # _bullet_points slices sentences verbatim out of the narration, so
+    # on a 50-word Short it reproduced the entire story — including the
+    # ending — above the fold. Shorts rank on watch-through; a
+    # description that gives away the video attacks the only signal that
+    # matters. And the trailing ", ".join(tags) was visible keyword
+    # stuffing, which YouTube's spam policy names directly. The tags go
+    # in the `tags` field, which YouTube reads on its own.
+    #
+    # This is the fallback path, so it must be safe rather than clever:
+    # a hook, one line of context, the CTA, three hashtags.
     description = "\n".join([
         hook_line,
         "",
-        body[:400],
-        "",
-        *[f"• {b}" for b in bullets],
+        _summarise(narration, 180),
         "",
         cta,
         "",
         hashtag_line,
-        "",
-        tag_strip,
     ]).strip()
 
     # Thumbnail ideas — pick 3 short keyword phrases from the narration
