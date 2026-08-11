@@ -635,20 +635,43 @@ def _call_nim(prompt, extra_messages=None):
 
 
 def _call_llm(prompt, extra_messages=None):
-    """Dispatcher: prefer NIM, fall back to Groq on failure.
+    """Write the script using the configured provider chain.
 
-    NIM gives us a stronger model (llama-3.3-70b) with a 40 RPM free tier
-    which is more than enough for a single video. Groq remains the safety
-    net in case NIM is down or the key is missing.
+    This used to be a hardcoded NIM-then-Groq dispatcher, written before
+    LLM_PRIORITY existed and never migrated to it. The consequences were
+    invisible and expensive:
+
+      * Agnes NEVER wrote a script. LLM_PRIORITY is
+        "agnes,groq,openrouter,nim" and the operator set Agnes as
+        primary deliberately, but this function did not consult it —
+        every script came from NIM, or from Groq when NIM failed.
+      * NIM's chat endpoint read-times-out persistently on the free
+        tier. Measured on the worker: 42 timeout events in 90 minutes,
+        each burning ~20s per attempt across NIM's internal model chain
+        before falling through. That is minutes per render spent waiting
+        on a provider the priority list had already demoted to LAST.
+
+    nim.chat() is the chain entry point despite its module name — with
+    no `model=` it walks LLM_PRIORITY in order. Passing the chain here
+    means Agnes answers first and NIM is only reached if everything
+    ahead of it is genuinely down.
     """
-    if nim.is_available():
-        try:
-            text = _call_nim(prompt, extra_messages)
-            if text and text.strip():
-                return text
-            log.warning("NIM returned empty content; falling back to Groq")
-        except Exception as e:
-            log.warning(f"NIM call failed ({e}); falling back to Groq")
+    try:
+        text = nim.chat(
+            _build_messages(prompt, extra_messages),
+            max_tokens=2048,
+            temperature=0.7,
+            response_format={"type": "json_object"},
+            timeout=180,
+        )
+        if text and text.strip():
+            return text
+        log.warning("LLM chain returned empty content; falling back to Groq directly")
+    except Exception as e:
+        log.warning(f"LLM chain failed ({e}); falling back to Groq directly")
+    # Groq stays as an explicit last resort: the chain can be misconfigured
+    # (empty LLM_PRIORITY has happened) and a script is the one artifact
+    # the render cannot proceed without.
     return _call_groq(prompt, extra_messages)
 
 
@@ -885,7 +908,14 @@ def write_script(research_data, max_attempts=3):
             word_min=word_min, word_max=word_max, hard_cap=hard_cap,
         )
 
-    primary = "NIM (" + nim.TEXT_MODEL_PRIMARY + ")" if nim.is_available() else f"Groq ({GROQ_MODEL})"
+    # Report the chain, not a guess. This line used to print
+    # "primary=NIM (nemotron)" unconditionally whenever a NIM key
+    # existed — which is how the dispatcher bug above stayed hidden:
+    # the log confidently named a primary that had nothing to do with
+    # LLM_PRIORITY, and it happened to be telling the truth only
+    # because the dispatcher really was ignoring the chain.
+    _chain = (os.getenv("LLM_PRIORITY", "") or "").strip() or "(unset)"
+    primary = f"chain [{_chain}]"
     log.info(f"Calling LLM | primary={primary} | prompt_version={PROMPT_VERSION} "
              f"| tone={tone} | words={word_min}-{word_max}")
     extra = None
