@@ -237,7 +237,11 @@ function RunIdLazyPlayer({
 function _labelForUrl(u: string): string {
   try {
     const host = new URL(u).host;
-    if (host.includes("thyker.online")) return "MinIO";
+    // Self-hosted MinIO is served from our own origin, whatever that
+    // origin currently is — matching a specific domain name here meant
+    // the label silently became the bare hostname the moment the
+    // deployment moved. Anything on this page's own host is MinIO.
+    if (typeof window !== "undefined" && host === window.location.host) return "MinIO";
     if (host.endsWith(".r2.dev") || host.includes("cloudflare")) return "R2";
     if (host.endsWith(".amazonaws.com")) return "S3";
     if (host.endsWith(".hostinger")) return "Hostinger";

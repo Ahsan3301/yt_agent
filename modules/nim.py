@@ -875,8 +875,16 @@ def _openrouter_chat_fallback(messages, max_tokens=2048, temperature=0.7,
             "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",
             # OpenRouter recommends these for attribution + rate-limit tiers
-            "HTTP-Referer": os.getenv("OPENROUTER_REFERER", "https://yt-agent.thyker.online"),
-            "X-Title": "yt-agent",
+            # Falls back to PUBLIC_BASE_URL so this follows the
+            # deployment instead of pinning a domain that goes stale on
+            # a move. OpenRouter only uses it for attribution and
+            # rate-limit tiering, so a generic value is safe.
+            "HTTP-Referer": (
+                os.getenv("OPENROUTER_REFERER")
+                or os.getenv("PUBLIC_BASE_URL")
+                or "https://yven.io"
+            ),
+            "X-Title": "Yven",
         }
         r = requests.post(
             "https://openrouter.ai/api/v1/chat/completions",
