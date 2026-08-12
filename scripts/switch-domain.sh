@@ -75,10 +75,33 @@ OLD_DOMAIN="$(grep -E '^SERVICE_FQDN_CADDY=' "$ENV_FILE" | cut -d= -f2- || true)
 say "old domain: ${OLD_DOMAIN:-none}  ->  new: $NEW_DOMAIN"
 [ "$OLD_DOMAIN" = "$NEW_DOMAIN" ] && { say "already on $NEW_DOMAIN — nothing to do"; exit 0; }
 
-# ── 1+2. app .env ─────────────────────────────────────────────────
-run "cp '$ENV_FILE' '$ENV_FILE.bak.\$(date +%s)'"
-run "sed -i 's#${OLD_DOMAIN}#${NEW_DOMAIN}#g' '$ENV_FILE'"
-say "updated .env (backup kept alongside it)"
+# ── 1+2. Coolify's environment variables (THE source of truth) ────
+# NOT the .env file on disk. Coolify regenerates that file from its own
+# database on every deploy, so editing it looks like it worked and is
+# silently reverted the moment you redeploy — which is exactly what
+# happened on the first run of this script: the switch appeared to
+# succeed, the deploy reported healthy, and Traefik was still routing
+# the old host with its default self-signed cert.
+#
+# POCKETBASE_ADMIN_EMAIL is deliberately skipped: it is a login
+# identity that happens to contain the domain, not a URL. Rewriting it
+# would rename the database superuser and lock us out.
+if [ -n "$DRY_RUN" ]; then
+  say "DRY: would rewrite Coolify env vars containing $OLD_DOMAIN"
+else
+  docker exec coolify php artisan tinker --execute="
+    \$a = \App\Models\Application::where('uuid','mhbbo4wuiineahv4comdjh5k')->first();
+    foreach (\$a->environment_variables as \$e) {
+      if (\$e->key === 'POCKETBASE_ADMIN_EMAIL') { continue; }
+      if (str_contains((string)\$e->value, '${OLD_DOMAIN}')) {
+        \$e->value = str_replace('${OLD_DOMAIN}', '${NEW_DOMAIN}', \$e->value);
+        \$e->save();
+        echo '  env ' . \$e->key . ' -> ' . \$e->value . PHP_EOL;
+      }
+    }
+  " 2>/dev/null | tail -20
+fi
+say "updated Coolify env vars"
 
 # ── 3+4. database: storage public_base and PUBLIC_BASE_URL ────────
 PB=$(docker ps --format '{{.Names}}' | grep pocketbase | head -1)
@@ -143,13 +166,36 @@ fi
 if [ -n "$DRY_RUN" ]; then
   say "DRY: would update Coolify application fqdn"
 else
+  # BOTH fields. `fqdn` is what the UI shows; `docker_compose_domains`
+  # is what actually generates the Traefik Host() label for a
+  # docker-compose application — and it is per-service, keyed by the
+  # service name that owns the ingress ("caddy" here).
+  #
+  # Setting only fqdn is the trap: the UI reads correct, the deploy
+  # reports healthy, and Traefik keeps routing the OLD host with its
+  # self-signed default cert, so the new domain answers nothing. That
+  # cost two full rebuilds to find. The label is the ground truth —
+  # verify it after deploying, not the health check.
   docker exec coolify php artisan tinker --execute="
     \$a = \App\Models\Application::where('uuid','mhbbo4wuiineahv4comdjh5k')->first();
-    if (\$a) { \$a->fqdn = 'https://${NEW_DOMAIN}'; \$a->save(); echo 'fqdn set'; }
-    else { echo 'application not found'; }
+    if (\$a) {
+      \$a->fqdn = 'https://${NEW_DOMAIN}';
+      \$d = json_decode((string)\$a->docker_compose_domains, true) ?: [];
+      foreach (\$d as \$svc => \$_) { \$d[\$svc]['domain'] = 'https://${NEW_DOMAIN}'; }
+      if (!\$d) { \$d = ['caddy' => ['domain' => 'https://${NEW_DOMAIN}']]; }
+      \$a->docker_compose_domains = json_encode(\$d);
+      \$a->save();
+      echo 'fqdn + docker_compose_domains set';
+    } else { echo 'application not found'; }
   " 2>/dev/null || say "WARNING: could not update Coolify fqdn — set it in the UI"
 fi
 
+say ""
+say "After redeploying, VERIFY THE LABEL, not the health check:"
+say "  docker inspect <caddy-container> --format '{{json .Config.Labels}}' \\"
+say "    | tr ',' '\n' | grep 'routers.https-0.*rule'"
+say "It must read Host(\`${NEW_DOMAIN}\`). A deploy reports healthy while"
+say "still serving the old host, because it probes the old host."
 say ""
 say "Config done. NOW REDEPLOY — NEXT_PUBLIC_* are compiled into the"
 say "frontend bundle, so a restart alone will serve the old value:"
