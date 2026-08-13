@@ -529,133 +529,14 @@ from modules.providers.pollinations import (  # noqa: E402
     reset_pollinations_breaker,
 )
 
-# ── HuggingFace Inference API (free fallback when Pollinations is rate-limited) ─
-# Same breaker pattern as Pollinations. HF returns image bytes directly.
-# Default model is SDXL base 1.0 — fast and gives decent horror/cinematic.
-_HF_CONSECUTIVE_FAILS = 0
-_HF_OPEN_UNTIL = 0.0
-_HF_BACKOFF_THRESHOLD = 3
-_HF_OPEN_FOR_SECONDS = 120
-
-_HF_MODEL = os.getenv("HF_IMAGE_MODEL",
-                     "stabilityai/stable-diffusion-xl-base-1.0")
-
-
-def _hf_breaker_skip():
-    return time.time() < _HF_OPEN_UNTIL
-
-
-def _hf_breaker_record(success: bool, http_status: int | None = None):
-    global _HF_CONSECUTIVE_FAILS, _HF_OPEN_UNTIL
-    if success:
-        if _HF_CONSECUTIVE_FAILS:
-            log.info("HuggingFace: circuit breaker reset after successful call")
-        _HF_CONSECUTIVE_FAILS = 0
-        return
-    # Any failure (5xx, 429, network) counts. Trip the breaker on N
-    # consecutive fails so we don't hammer a sick service.
-    _HF_CONSECUTIVE_FAILS += 1
-    if _HF_CONSECUTIVE_FAILS >= _HF_BACKOFF_THRESHOLD:
-        _HF_OPEN_UNTIL = time.time() + _HF_OPEN_FOR_SECONDS
-        log.warning(
-            f"HuggingFace: circuit breaker OPEN — {_HF_CONSECUTIVE_FAILS} "
-            f"consecutive failures (status={http_status}); skipping for "
-            f"{_HF_OPEN_FOR_SECONDS}s"
-        )
-
-
-def reset_hf_breaker():
-    global _HF_CONSECUTIVE_FAILS, _HF_OPEN_UNTIL
-    _HF_CONSECUTIVE_FAILS = 0
-    _HF_OPEN_UNTIL = 0.0
-
-
-def _huggingface_generate(prompt, output_dir, trial, negative_prompt=""):
-    """Generate one image via HF Inference API. Returns (path, seed) on
-    success, (None, seed) on failure. Honours its own circuit breaker.
-
-    Needs HF_TOKEN env var. Token is free at
-    https://huggingface.co/settings/tokens (Read scope is enough).
-    negative_prompt is passed to SDXL as a real parameter (native
-    support), unlike Pollinations Flux which has no negative field."""
-    token = os.getenv("HF_TOKEN", "").strip()
-    seed = int(hashlib.md5(f"{prompt}|{trial}|hf".encode()).hexdigest()[:8], 16)
-    if not token:
-        return None, seed
-    if _hf_breaker_skip():
-        wait = int(_HF_OPEN_UNTIL - time.time())
-        log.info(f"HuggingFace: breaker OPEN (skipping; reopens in {wait}s)")
-        return None, seed
-
-    dest = os.path.join(output_dir, f"huggingface_{seed:08x}.jpg")
-    # HuggingFace shut down api-inference.huggingface.co in mid-2025 when
-    # they rebranded to Inference Providers. The domain no longer resolves
-    # at all (DNS NXDOMAIN). New endpoint is under router.huggingface.co,
-    # backed by the hf-inference provider by default. Configurable via
-    # HF_INFERENCE_PROVIDER env in case the user wants replicate/fal via
-    # HF's routing layer instead.
-    provider = os.getenv("HF_INFERENCE_PROVIDER", "hf-inference").strip() or "hf-inference"
-    url = f"https://router.huggingface.co/{provider}/models/{_HF_MODEL}"
-    try:
-        r = requests.post(
-            url,
-            headers={
-                "Authorization": f"Bearer {token}",
-                # Wait for model to warm up rather than 503 immediately —
-                # HF caches models in memory after a few requests.
-                "x-wait-for-model": "true",
-                # Get a fresh image, not a cached one for the same prompt.
-                "x-use-cache": "false",
-            },
-            json={
-                "inputs": prompt,
-                "parameters": {
-                    # SDXL natively wants 1024x1024; we resize later. 9:16
-                    # generation is supported but quality drops at extreme
-                    # aspects, so stay square and crop in the editor.
-                    "width": 1024,
-                    "height": 1024,
-                    "guidance_scale": 7.5,
-                    "num_inference_steps": 25,
-                    "seed": seed,
-                    # Native negative-prompt support on SDXL. Empty string
-                    # is fine — the API treats it the same as omitting.
-                    "negative_prompt": negative_prompt or "",
-                },
-                "options": {"wait_for_model": True},
-            },
-            timeout=120,
-        )
-        if r.status_code == 429:
-            _hf_breaker_record(success=False, http_status=429)
-            log.warning("HuggingFace 429 — rate limited")
-            return None, seed
-        if r.status_code == 503:
-            # Model still loading — short wait + breaker bump
-            _hf_breaker_record(success=False, http_status=503)
-            log.info("HuggingFace 503 — model loading, will retry next shot")
-            return None, seed
-        r.raise_for_status()
-        # HF returns raw image bytes (jpeg or png).
-        with open(dest, "wb") as f:
-            f.write(r.content)
-        if not os.path.exists(dest) or os.path.getsize(dest) < 4096:
-            _hf_breaker_record(success=False)
-            log.warning("HuggingFace returned <4 KB file — treating as failure")
-            return None, seed
-        _hf_breaker_record(success=True)
-        return dest, seed
-    except requests.HTTPError as e:
-        status = e.response.status_code if e.response is not None else None
-        _hf_breaker_record(success=False, http_status=status)
-        log.warning(f"HuggingFace gen failed (HTTP {status}): {e}")
-        return None, seed
-    except Exception as e:
-        _hf_breaker_record(success=False)
-        log.warning(f"HuggingFace gen failed: {e}")
-        return None, seed
-
-
+# HuggingFace MOVED to modules/providers/huggingface.py - breaker
+# state, body and the run-start reset together. Re-exported under the
+# original names so the dispatch table and reset call are unchanged.
+from modules.providers.huggingface import (  # noqa: E402
+    _huggingface_generate,
+    _hf_breaker_skip,
+    reset_hf_breaker,
+)
 # ── Local SDXL (via diffusers) — free GPU-only fallback ──────────
 #
 # Runs on the worker's own CUDA device (T4/P100 on Colab/Kaggle).

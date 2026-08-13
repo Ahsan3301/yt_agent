@@ -3,57 +3,35 @@
 Only things genuinely common to several providers belong here. A helper
 used by exactly one provider belongs in that provider's file, where it
 can be deleted along with it.
+
+HISTORY — breaker_reason() lived here and is gone.
+--------------------------------------------------
+It existed to de-duplicate a breaker check that three providers made
+against state living in shotfinder. Once pollinations, horde and
+huggingface each took ownership of their own breaker state, every one
+of them could check it directly in two lines, and the shared indirection
+had nothing left to share.
+
+It is recorded rather than silently deleted because the shape is worth
+recognising: a helper that only exists to reach ACROSS a boundary is
+usually a sign the boundary is in the wrong place. Fixing the ownership
+made the helper redundant. Adding a fourth caller would have entrenched
+it instead.
 """
 
 from __future__ import annotations
-
-import time
-from typing import Optional
 
 
 def shotfinder():
     """The shotfinder module, imported lazily.
 
-    Every provider needs this and every provider must import it late:
-    shotfinder imports the providers package, so a module-scope import
-    here is a cycle that fails at boot rather than at call time.
+    Providers that still read state owned by shotfinder need this, and
+    they must import late: shotfinder imports the providers package, so
+    a module-scope import is a cycle that fails at boot rather than at
+    call time.
+
+    Fewer providers need this with each migration. When none do, this
+    file goes too.
     """
     from modules import shotfinder as _sf
     return _sf
-
-
-def breaker_reason(
-    skip_attr: str,
-    until_attr: str,
-    label: str = "breaker open after repeated failures",
-) -> Optional["tuple[bool, str]"]:
-    """(False, reason) when the named circuit breaker is open, else None.
-
-    Now used only by huggingface, whose breaker state still lives in
-    shotfinder. pollinations and horde own their state outright and
-    check it directly, which is the end state for all of them.
-
-    Three providers implemented the identical pattern — a `_X_breaker_skip()`
-    predicate plus a `_X_OPEN_UNTIL` epoch — and each had its own copy of
-    the same four lines in the readiness chain. One of those copies was
-    additionally wrapped in `except NameError`, defending against its own
-    helper not existing, which is the shape of a bug being worked around
-    rather than fixed. getattr with a default handles that case honestly.
-
-    Returns None (not a tuple) when the breaker is CLOSED so callers can
-    write `r = breaker_reason(...); if r: return r` and continue.
-    """
-    sf = shotfinder()
-    skip = getattr(sf, skip_attr, None)
-    if not callable(skip):
-        # Helper genuinely absent — treat the breaker as closed rather
-        # than blocking the provider. A missing breaker means no failure
-        # history, which is the permissive case.
-        return None
-    try:
-        if not skip():
-            return None
-    except Exception:
-        return None
-    wait = int(float(getattr(sf, until_attr, 0) or 0) - time.time())
-    return False, f"{label} ({max(0, wait)}s remaining)"
