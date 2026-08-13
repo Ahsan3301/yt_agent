@@ -16,11 +16,27 @@ import time
 import uuid
 import queue
 import logging
+import re
 import threading
 from pathlib import Path
 from typing import Any, Optional
 
 log = logging.getLogger(__name__)
+
+
+def _yt_id_from_url(url: str) -> str:
+    """Extract the video id from any YouTube URL shape we emit.
+
+    Kept tiny and total: an unparseable URL returns "", which is exactly
+    what the field held before, so a bad parse can never be worse than
+    the status quo.
+    """
+    u = (url or "").strip()
+    if not u:
+        return ""
+    # https://youtu.be/<id>  |  .../watch?v=<id>  |  .../shorts/<id>
+    m = re.search(r"(?:youtu\.be/|[?&]v=|/shorts/|/embed/)([A-Za-z0-9_-]{6,})", u)
+    return m.group(1) if m else ""
 
 JOBS_DIR = Path("data/jobs")
 JOBS_DIR.mkdir(parents=True, exist_ok=True)
@@ -604,6 +620,20 @@ def _run_one(job: dict[str, Any]):
                         "description":   (summary.get("description") or "")[:500],
                         "tags":          summary.get("tags") or [],
                         "youtube_url":   (summary.get("published") or {}).get("youtube_url", ""),
+                        # The VIDEO ID, not just the URL. Everything that
+                        # reads back performance keys off this field —
+                        # the youtube-stats sweep, modules/performance,
+                        # the marketing counters — and it was only ever
+                        # written on the deferred-publish path
+                        # (side_jobs.py). That path never ran, because
+                        # publish_at never reached the job row, so all
+                        # 141 runs had it blank. The stats sweep then
+                        # scanned every row, matched none, and returned
+                        # {"ok": true, "checked": 0} — a green report for
+                        # a sweep that could not do anything.
+                        "youtube_video_id": _yt_id_from_url(
+                            (summary.get("published") or {}).get("youtube_url", "")
+                        ),
                     },
                 )
             except Exception as _e:

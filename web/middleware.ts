@@ -38,6 +38,13 @@ const PUBLIC_PATHS = new Set([
   // Public marketing endpoints.
   "/api/marketing/demo/waitlist",
   "/api/tools/roast",
+  // Public growth counters. The route has no auth check of its own —
+  // it is designed to be public and returns only aggregates — but it
+  // was never whitelisted, so it answered "unauthorised" to everyone.
+  // The landing page happened to work because it recomputes the same
+  // numbers server-side rather than calling this, which is also why
+  // nobody noticed.
+  "/api/marketing/stats",
   // Inbound forms on the public site. These MUST be listed here — a
   // form that 401s is indistinguishable from a broken one to a visitor,
   // and we would never know they tried.

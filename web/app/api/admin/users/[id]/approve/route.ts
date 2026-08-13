@@ -3,6 +3,7 @@ import { adminDb } from "@/lib/firebase-admin";
 import { requireTenant } from "@/lib/tenant";
 import { audit } from "@/lib/audit";
 import { markJoinedAndCheckUnlock, getOrCreateReferral } from "@/lib/referrals";
+import { grantEarnedRewards } from "@/lib/referral-rewards";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -41,11 +42,27 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     // Give the freshly-approved user their own referral code so they
     // can invite others. Idempotent — safe if a code already exists.
     let referralUnlocked: null | { referrerUserId: string; joinedCount: number; newlyUnlocked: boolean } = null;
+    let referralReward: Awaited<ReturnType<typeof grantEarnedRewards>> | null = null;
     try {
       await getOrCreateReferral(id);
       // If this user was themselves referred, flip that signup to
       // "joined" and check whether their referrer just crossed 5.
       referralUnlocked = await markJoinedAndCheckUnlock(id);
+
+      // Approval IS the qualifying event — "approved referrals" in the
+      // reward terms means exactly this transition, so the payout
+      // belongs here rather than on a nightly sweep that would leave
+      // people waiting a day for something they have already earned.
+      //
+      // Pays every unpaid tier at once: someone who brings ten friends
+      // before anyone is approved should collect both the 5 and the 10
+      // reward, not just the highest.
+      if (referralUnlocked?.referrerUserId) {
+        referralReward = await grantEarnedRewards(
+          referralUnlocked.referrerUserId,
+          referralUnlocked.joinedCount,
+        );
+      }
     } catch (e) {
       // Referral tracking is best-effort — never blocks user approval.
       console.error("referral bookkeeping failed:", e);
@@ -59,12 +76,14 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         email: d.email,
         previous_status: d.status || "pending",
         referral: referralUnlocked || undefined,
+        referral_reward: referralReward?.granted?.length ? referralReward : undefined,
       },
     }, req);
 
     return NextResponse.json({
       ok: true, id, status: "active",
       referral: referralUnlocked || undefined,
+      referral_reward: referralReward?.granted?.length ? referralReward : undefined,
     });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
