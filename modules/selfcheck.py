@@ -29,11 +29,25 @@ import os
 
 log = logging.getLogger(__name__)
 
-# Narration speed of the niche voices, measured with ffprobe on a real
-# edge-tts render (50 words -> 22.128s at the horror voice's -12% rate).
-# Every word-budget decision derives from this; an assumed value here
-# silently mis-sizes every video.
-_WORDS_PER_SEC = 2.26
+# Narration speed of the niche voices, measured with ffprobe on real
+# edge-tts renders. Every word-budget decision derives from this.
+#
+# 2.02, not the earlier 2.26, because PUNCTUATION DENSITY dominates this
+# number and the scriptwriter's style changed. Same voice, same 30s cap,
+# measured back to back:
+#
+#     flowing prose, few full stops   66 words / 19.1s = 3.46 w/s
+#     clipped, many full stops        57 words / 28.2s = 2.02 w/s
+#
+# The prompt now REQUIRES short sentences and full stops over commas —
+# that is what stops edge-tts sounding monotone, since it takes all its
+# pacing from punctuation. Every full stop buys a pause. So the fix for
+# the flat voiceover directly slowed delivery, and a budget carried over
+# from the old style overran the cap by ~3s and got its ending trimmed.
+#
+# If the script style changes again, RE-MEASURE. Do not carry this
+# number forward.
+_WORDS_PER_SEC = 2.02
 
 # (label, callable) -> (ok: bool, detail: str)
 # Each probe returns a two-tuple. A probe that throws is reported as
@@ -103,12 +117,10 @@ def _check_word_budget():
     wmin, wmax = c.get("target_word_min"), c.get("target_word_max")
     if not wmin or not wmax:
         return True, "unset — provider defaults apply"
-    # MEASURED, not assumed. edge-tts at the horror voice's -12% rate
-    # delivered 50 words in 22.128s = 2.26 words/sec. I had guessed 1.70
-    # and set the word budget from that guess, which made scripts ~30%
-    # shorter than the slot: a 45-word script runs 19.9s in a 30s video.
-    # Re-measure with ffprobe on a real voiceover before changing this —
-    # the whole budget hangs off this one number.
+    # See _WORDS_PER_SEC above for how that number was measured and why
+    # it moved twice. Both directions have now bitten: too low made
+    # scripts a third shorter than the slot, too high overran the cap and
+    # got the ending trimmed. This probe checks BOTH.
     cap = float(os.getenv("MAX_VIDEO_SECONDS", "30") or 30)
     worst_words = round(wmax * 1.12)
     worst_secs = worst_words / _WORDS_PER_SEC

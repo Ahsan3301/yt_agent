@@ -473,7 +473,20 @@ def upload_video(video_path, script_data, channel_type="horror", youtube_account
         chunksize=1024 * 1024 * 5,
     )
 
-    log.info(f"Uploading '{title}' as {privacy} | defaultLanguage={eff_lang!r}")
+    # Report what is actually in the request body, not the `privacy`
+    # variable. Those diverge whenever publishAt is set: the block above
+    # forces privacyStatus to "private" so YouTube will hold the video,
+    # but this line kept printing the CONFIGURED privacy. A correctly
+    # scheduled upload therefore logged "as public", which read as the
+    # scheduling having failed. It cost a real investigation before
+    # YouTube's own API confirmed the video was private with a publishAt.
+    _sent_privacy = body["status"].get("privacyStatus", privacy)
+    _sent_at = body["status"].get("publishAt")
+    log.info(
+        f"Uploading '{title}' as {_sent_privacy}"
+        + (f", scheduled to go live {_sent_at}" if _sent_at else " (immediate)")
+        + f" | defaultLanguage={eff_lang!r}"
+    )
     request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
 
     try:
