@@ -176,7 +176,7 @@ DEFAULT_SETTINGS = {
         # local_sdxl if user explicitly enables.
         # Cloudflare (Flux 2 dev via Workers AI) leads — best free-tier
         # quality with a documented daily quota. Auto-soft-cap at 150/day
-        # (see modules.shotfinder._CF_DAILY_CAP) so overflow falls
+        # (see modules.providers.cloudflare._CF_DAILY_CAP) so overflow falls
         # through to Pollinations without any operator action.
         # Agnes leads. Measured best-in-class on text in this stack, and
         # it is the one provider that covers text, image AND video, so
