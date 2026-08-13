@@ -2462,10 +2462,28 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror",
         """Return (ready, reason-if-not). Combines user toggle + key/GPU check."""
         # Master enable in settings.image_gen.enabled AND the legacy
         # providers.<name> toggle both count as "off". Either off → skip.
+        #
+        # The operator toggles stay HERE on purpose. They are policy —
+        # "should this be used" — and a provider must not get to
+        # overrule the operator by declaring itself ready. Providers
+        # only answer capability: key present, breaker closed, GPU free.
         if ig_enabled.get(name, True) is False:
             return False, "disabled in settings"
         if providers.get(name, True) is False:
             return False, "disabled in providers toggle"
+
+        # Migrated providers own their own capability rule. Anything not
+        # yet moved falls through to the in-file chain below, so the two
+        # coexist and providers can move one at a time.
+        try:
+            from modules import providers as _prov_pkg
+            _p = _prov_pkg.get(name)
+            if _p is not None:
+                return _p.is_ready()
+        except Exception as _e:      # noqa: BLE001
+            # Never let the registry take down provider selection — fall
+            # through to the legacy chain, which is still correct.
+            log.debug(f"provider registry lookup failed for {name!r}: {_e}")
         if name == "huggingface":
             if not os.getenv("HF_TOKEN", "").strip():
                 return False, "no HF_TOKEN"
