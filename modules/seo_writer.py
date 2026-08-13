@@ -102,6 +102,39 @@ def write_seo_metadata(
             parsed, viral,
             expected_language=(channel_cfg.get("language") or "en"),
         )
+
+        # Claim check on the metadata, same wall the scriptwriter got.
+        # A description is published text like any other: it is the first
+        # thing a viewer reads and the part search indexes, so an invented
+        # "studies show 80%" here is no less false than in the narration.
+        #
+        # The support corpus is deliberately WIDER than the scriptwriter's.
+        # A description's job is to describe the video, so anything the
+        # narration legitimately says is fair ground for it to repeat —
+        # the narration passed its own claim check on the way here. Only
+        # figures and sources that appear in NEITHER the narration nor the
+        # research are inventions.
+        try:
+            from modules import factcheck as _fc
+            _support = "\n".join(str(x) for x in (
+                narration or "",
+                (research_data or {}).get("raw_title") or "",
+                (research_data or {}).get("summary") or "",
+                *[str(f) for f in ((research_data or {}).get("facts") or [])],
+                *[str(s) for s in ((research_data or {}).get("sources") or [])],
+            ) if x)
+            _checked = "\n".join(str(x) for x in (
+                parsed.get("description") or "",
+                parsed.get("youtube_title") or "",
+            ) if x)
+            _claims = _fc.unsupported_claims(_checked, _support)
+            if _claims:
+                log.warning(f"seo_writer attempt {attempt}: fabricated claims: {_claims}")
+                problems.extend(_claims)
+        except Exception as _e:                      # noqa: BLE001
+            # A broken guard must never cost a render its metadata.
+            log.debug(f"seo_writer factcheck skipped: {_e}")
+
         if not problems:
             parsed = _normalise(parsed, viral, script)
             parsed["_source"] = "nim"
