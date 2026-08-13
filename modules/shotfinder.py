@@ -2487,36 +2487,11 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror",
         if name == "huggingface":
             if not os.getenv("HF_TOKEN", "").strip():
                 return False, "no HF_TOKEN"
-        if name == "cloudflare":
-            # New: pool-aware readiness. The pool synthesises a single
-            # entry from CLOUDFLARE_ACCOUNT_ID/_API_TOKEN when
-            # CLOUDFLARE_ACCOUNTS_JSON is empty, so this check still
-            # catches the "no CF creds at all" case + covers the new
-            # multi-account path.
-            _pool = _cf_account_pool()
-            if not _pool:
-                return False, "no CLOUDFLARE_ACCOUNTS_JSON / CLOUDFLARE_ACCOUNT_ID+TOKEN"
-            # Every account in the pool marked burned for today? Skip
-            # the tier — there's no point crafting prompts we can't
-            # send. Auto-clears at 00:00 UTC.
-            _today = _cf_today_key()
-            _viable = [a for a in _pool if _CF_BURNED_TODAY.get(a["account_id"]) != _today]
-            if not _viable:
-                return False, f"all {len(_pool)} pool accounts exhausted for today"
-            # Daily soft-cap on the CURRENT single-account counter is
-            # kept for backwards compat with single-account setups. In
-            # multi-account mode the per-account counter only tracks
-            # the first-picked account until it burns and we rotate,
-            # so this check is more of a guardrail than a hard cap.
-            _used = _cf_quota_read()
-            if _used >= _CF_DAILY_CAP and len(_viable) == 1:
-                return False, f"daily soft-cap reached ({_used}/{_CF_DAILY_CAP})"
-            # If the CF breaker tripped earlier in this render, skip
-            # the WHOLE tier rather than paying 5× the "craft prompt →
-            # POST → 429" round-trip.
-            if _cf_breaker_skip():
-                wait = int(_CF_OPEN_UNTIL - time.time())
-                return False, f"breaker open ({wait}s remaining)"
+        # NOTE: cloudflare's readiness moved to
+        # modules/providers/cloudflare.py and is reached through the
+        # registry lookup above. It is NOT duplicated here on purpose —
+        # two copies of a four-branch rule would drift, and the copy
+        # that drifted would be the one nobody was reading.
         if name == "local_sdxl":
             if _LOCAL_SDXL_BROKEN:
                 return False, f"local pipeline broken ({_LOCAL_SDXL_BROKEN_REASON})"

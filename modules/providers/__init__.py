@@ -49,3 +49,4 @@ from modules.providers.base import (       # noqa: F401
 # "why is this provider active?" much harder to answer, and the failure
 # mode of a bad auto-import is a worker that will not boot.
 from modules.providers import agnes        # noqa: F401,E402
+from modules.providers import cloudflare   # noqa: F401,E402
