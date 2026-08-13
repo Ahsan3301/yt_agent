@@ -144,7 +144,7 @@ def _check_word_budget():
     c = _s.get("content", {}) or {}
     wmin, wmax = c.get("target_word_min"), c.get("target_word_max")
     if not wmin or not wmax:
-        return True, (f"derived per channel; slowest is '{_worst[0]}' at "
+        return True, (f"derived per channel; tightest fit is '{_worst[0]}' at "
                       f"{_worst[2]}-{_worst[3]} words = {_worst[1]:.1f}s "
                       f"(cap {_cap:.0f}s)")
     # Overrun is already ruled out above. What is left to check is the
@@ -174,7 +174,7 @@ def _check_word_budget():
         if wmax > _fits:
             _cfg_note = (f"; configured {wmin}-{wmax} is overridden on slower "
                          f"channels (only <= {_fits} fits '{_worst[0]}')")
-    return True, (f"slowest '{_worst[0]}' {_worst[2]}-{_worst[3]}w -> worst case "
+    return True, (f"tightest '{_worst[0]}' {_worst[2]}-{_worst[3]}w -> worst case "
                   f"{_worst[1]:.1f}s (cap {_cap:.0f}s){_cfg_note}")
 
 

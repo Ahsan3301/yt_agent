@@ -84,7 +84,7 @@ NICHE_VOICE_CATALOG: dict[str, dict[str, list[str]]] = {
         "en": [
             "en-US-GuyNeural",
             "en-US-AndrewMultilingualNeural",
-            "en-US-DavisNeural",
+            "en-US-EricNeural",
             "en-GB-ThomasNeural",
         ],
         "ur": ["ur-PK-AsadNeural"],
@@ -92,7 +92,7 @@ NICHE_VOICE_CATALOG: dict[str, dict[str, list[str]]] = {
     },
     "fitness": {
         "en": [
-            "en-US-DavisNeural",
+            "en-US-EricNeural",
             "en-US-GuyNeural",
             "en-US-RogerNeural",
             "en-US-BrianMultilingualNeural",
@@ -132,7 +132,7 @@ NICHE_VOICE_CATALOG: dict[str, dict[str, list[str]]] = {
     },
     "food": {
         "en": [
-            "en-US-JaneNeural",
+            "en-US-MichelleNeural",
             "en-US-EmmaMultilingualNeural",
             "en-US-AriaNeural",
             "en-GB-SoniaNeural",
@@ -143,7 +143,7 @@ NICHE_VOICE_CATALOG: dict[str, dict[str, list[str]]] = {
     "travel": {
         "en": [
             "en-US-EmmaMultilingualNeural",
-            "en-US-JaneNeural",
+            "en-US-MichelleNeural",
             "en-GB-SoniaNeural",
             "en-US-AndrewMultilingualNeural",
         ],
@@ -153,7 +153,7 @@ NICHE_VOICE_CATALOG: dict[str, dict[str, list[str]]] = {
     "gaming": {
         "en": [
             "en-US-RogerNeural",
-            "en-US-DavisNeural",
+            "en-US-EricNeural",
             "en-US-GuyNeural",
             "en-US-BrianMultilingualNeural",
         ],
@@ -325,7 +325,12 @@ CHANNEL_PRESETS: dict[str, dict] = {
         "display_name":   "Fitness + discipline",
         "tone":           "energetic, commanding, no-nonsense",
         "perspective":    "second_person_commanding — 'you walk into the gym', 'your form is wrong'. Direct address. Avoid first-person ('when I started lifting...') unless it's a genuine universal truth dressed as personal example.",
-        "voice":          "en-US-DavisNeural",
+        # Was en-US-DavisNeural until 2026-08-13, when a voice-rate
+        # calibration pass found it RETIRED from edge-tts — the fitness
+        # channel could not produce a voiceover at all. The fallback
+        # list below never engaged, so this was a hard failure, not a
+        # degraded one. Verified present against edge_tts.list_voices().
+        "voice":          "en-US-EricNeural",
         "rate":           "+11%",
         "pitch":          "+3Hz",
         "color_grade":    "vivid_high_contrast",
@@ -500,7 +505,9 @@ CHANNEL_PRESETS: dict[str, dict] = {
         "display_name":   "Food + cooking",
         "tone":           "warm, inviting, sensory",
         "perspective":    "second_person_invitational — 'you slice the onion', 'imagine the smell'. The viewer is doing/tasting/seeing. First-person ('I learned this recipe in Italy') is only OK as a brief credibility frame, never the whole script.",
-        "voice":          "en-US-JaneNeural",
+        # Was en-US-JaneNeural — retired from edge-tts, same outage as
+        # fitness above. See that note.
+        "voice":          "en-US-MichelleNeural",
         "rate":           "+0%",
         "pitch":          "+0Hz",
         "color_grade":    "warm_punchy",
@@ -740,7 +747,7 @@ Their description: "{desc or '(none — infer from the name)'}"
 Return a JSON object with these exact keys:
 - display_name: short human-facing label (under 40 chars)
 - tone: 1-line voice/style tag for the script LLM (e.g. "casual, sharp, sensory")
-- voice: one of these edge-tts voice ids — en-US-AriaNeural, en-US-JennyNeural, en-US-EmmaNeural, en-US-JaneNeural, en-US-GuyNeural, en-US-DavisNeural, en-US-AndrewMultilingualNeural, en-US-BrianMultilingualNeural, en-US-ChristopherNeural, en-US-RogerNeural
+- voice: one of these edge-tts voice ids — en-US-AriaNeural, en-US-JennyNeural, en-US-EmmaNeural, en-US-MichelleNeural, en-US-GuyNeural, en-US-EricNeural, en-US-AndrewMultilingualNeural, en-US-BrianMultilingualNeural, en-US-ChristopherNeural, en-US-RogerNeural
 - rate: edge-tts rate offset like "+3%", "-5%", "+0%"
 - pitch: edge-tts pitch offset like "+1Hz", "-2Hz", "+0Hz"
 - color_grade: one of cool_desaturated, warm_punchy, neutral, vivid_high_contrast

@@ -71,10 +71,64 @@ def parse_rate(rate: str | None) -> float:
     return 1.0 + pct / 100.0
 
 
+# Measured words/second per channel, 2026-08-13.
+#
+# HOW, and why not any easier way:
+#
+# Measured from REAL GENERATED SCRIPTS spoken by each channel's own
+# voice, two per channel, taking the SLOWER sample. A generic reference
+# paragraph was tried first and had to be thrown away: against real
+# narration it ran 21% fast for horror and 12% slow for science, because
+# edge-tts takes all its pacing from punctuation and every niche
+# punctuates differently. Only real scripts measure the real thing.
+#
+# The slower sample wins because within-channel variance is large —
+# finance measured 2.37 and 2.80 across two scripts, history 1.51 and
+# 1.87. Averaging would leave the slower half of scripts overrunning,
+# and overrunning means the editor cuts the ending.
+#
+# These numbers are why the derivation could not stay analytic. The
+# rate knob predicted nothing:
+#
+#   history  configured -9%  -> predicted 1.84, measured 1.51  (-18%)
+#   horror   configured -12% -> predicted 1.78, measured 1.91  (+7%)
+#   travel   configured +0%  -> predicted 2.02, measured 2.32  (+15%)
+#   wisdom   configured -8%  -> predicted 1.86, measured 2.38  (+28%)
+#
+# History is the one that mattered: a 48-word script measured 31.9s
+# against a 30s cap, so it was STILL being trimmed under the derived
+# budget. Voice identity dominates the prosody knob, and no formula over
+# the rate value would have found that.
+#
+# RE-MEASURE when the script style changes or a voice is swapped. The
+# calibration is modules-level data, not a constant of nature.
+MEASURED_WORDS_PER_SEC = {
+    "comedy":  2.21,
+    "finance": 2.37,
+    "fitness": 2.09,
+    "food":    2.53,
+    "gaming":  2.15,
+    "history": 1.51,
+    "horror":  1.91,
+    "science": 2.21,
+    "travel":  2.32,
+    "wisdom":  2.38,
+}
+
+
 def words_per_sec(channel_cfg: dict | None = None) -> float:
-    """Speaking rate for this channel, in words per second."""
-    rate = (channel_cfg or {}).get("rate") if isinstance(channel_cfg, dict) else None
-    return BASE_WORDS_PER_SEC * parse_rate(rate)
+    """Speaking rate for this channel, in words per second.
+
+    Prefers the measured value. Falls back to base * prosody rate for a
+    channel with no measurement — a custom niche, or a preset added
+    after the last calibration — which is an estimate, not a reading.
+    """
+    cfg = channel_cfg if isinstance(channel_cfg, dict) else {}
+    name = str(cfg.get("name") or "").strip().lower()
+    measured = MEASURED_WORDS_PER_SEC.get(name)
+    if measured:
+        return float(measured)
+    return BASE_WORDS_PER_SEC * parse_rate(cfg.get("rate"))
 
 
 def cap_seconds(settings: dict | None = None) -> float:
