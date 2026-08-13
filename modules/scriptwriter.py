@@ -825,6 +825,21 @@ def write_script(research_data, max_attempts=3):
             + "\n"
         )
 
+    # Everything the writer was legitimately given, for the post-generation
+    # claim check. Built from the same values that reach the prompt — if a
+    # figure or a source name is in here the script may use it, and if it
+    # is not, the script invented it. The title and summary are included
+    # because a date in the topic itself is fair game.
+    _facts_blob = "\n".join(
+        str(x) for x in (
+            research_data.get("raw_title") or "",
+            research_data.get("summary") or "",
+            research_data.get("research") or "",
+            *[str(f) for f in facts],
+            *[str(s) for s in sources],
+        ) if x
+    )
+
     # ── Real-events mode ────────────────────────────────────────
     # When ON the script MUST be grounded in something verifiable —
     # a documented true event, a published case, a recorded historical
@@ -972,6 +987,45 @@ def write_script(research_data, max_attempts=3):
         _wmax = int(round(word_max * 1.12))
         _wmin = max(30, int(round(word_min * 0.85)))
         problems = _validate(script, word_min=_wmin, word_max=_wmax)
+
+        # Claim check. The prompt has always ASKED the model to invent
+        # nothing beyond the research; it does it anyway — a wisdom
+        # script came back citing "a 2022 Stanford study" of "500
+        # helpers" reporting "47% higher stress" from research that
+        # contained no study, no institution and no numbers at all.
+        # Instructions are a request, so this is a wall: fabricated
+        # figures, dates and sources go back through the same retry loop
+        # as a schema violation, with the model told exactly what it
+        # made up. See modules/factcheck.py for what it does and does
+        # not flag.
+        try:
+            from modules import factcheck as _fc
+            _claim_problems = _fc.unsupported_claims(
+                str((script or {}).get("narration") or ""), _facts_blob
+            )
+            if _claim_problems:
+                log.warning(
+                    f"Attempt {attempt}: fabricated claims: {_claim_problems}"
+                )
+                problems.extend(_claim_problems)
+        except Exception as _e:                      # noqa: BLE001
+            # Never fail a render because the guard itself broke.
+            log.debug(f"factcheck skipped: {_e}")
+
+        # Hook-echo check. Same story as the claim check: the prompt's
+        # restatement-vs-reframe rule was being ignored in 2 of 3
+        # sampled scripts, with the closer simply re-saying the opening
+        # in fresh words. A Short whose ending lands where its opening
+        # did gives the viewer no reason to have stayed.
+        try:
+            from modules import retention_guard as _rg
+            _echo = _rg.hook_echoes(str((script or {}).get("narration") or ""))
+            if _echo:
+                log.warning(f"Attempt {attempt}: hook echo: {_echo}")
+                problems.extend(_echo)
+        except Exception as _e:                      # noqa: BLE001
+            log.debug(f"retention_guard skipped: {_e}")
+
         if not problems:
             log.info(f"Script written: '{script.get('youtube_title', '')}'")
             return script
