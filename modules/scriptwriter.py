@@ -779,12 +779,31 @@ def write_script(research_data, max_attempts=3):
     from modules import channels as _ch
 
     s = load_settings()
-    word_min = int(s["content"].get("target_word_min", 160))
-    word_max = int(s["content"].get("target_word_max", 200))
-    hard_cap = word_max + 100
 
     channel_type = research_data.get("type", "horror")
     channel_cfg = _ch.get_channel(channel_type)
+
+    # Word budget derived from the duration cap and THIS channel's
+    # speaking rate, not read straight from settings.
+    #
+    # The two were configured independently and disagreed: against a 30s
+    # cap the configured 70-85 target ran 34.7-42.1s, so every value in
+    # the accepted range overshot and the editor trimmed the ending off
+    # every render. Scripts landing at 72-74 words were not the model
+    # being lazy at the bottom of its range — that was the only part of
+    # the range that came close to fitting, and it still did not.
+    #
+    # It is per-channel because the rate is: horror speaks at -12% and
+    # comedy at +11%, a 26% spread, so one global count is necessarily
+    # wrong at both ends. A configured target that DOES fit is still
+    # honoured; see modules/word_budget.py.
+    from modules import word_budget as _wb
+    word_min, word_max, _budget_why = _wb.budget(channel_cfg, s)
+    log.info(f"Script word budget: {_budget_why}")
+    # Prompt-level ceiling. Kept proportional rather than a flat +100:
+    # at a 47-word target, "+100" is a cap of 147 words — three times the
+    # ask and 83s of narration, which is not a ceiling at all.
+    hard_cap = int(round(word_max * 1.25))
 
     # Tone resolution — priority order:
     #   1. research_data["tone_override"] — per-channel tone from the

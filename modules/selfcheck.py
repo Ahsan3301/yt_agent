@@ -47,7 +47,12 @@ log = logging.getLogger(__name__)
 #
 # If the script style changes again, RE-MEASURE. Do not carry this
 # number forward.
-_WORDS_PER_SEC = 2.02
+#
+# Imported rather than redeclared: the scriptwriter sizes its budget
+# from this same number, and a probe that validates the budget using a
+# private copy would keep passing after the real one moved. That is
+# exactly how the 70-85 target survived while overrunning a 30s cap.
+from modules.word_budget import BASE_WORDS_PER_SEC as _WORDS_PER_SEC
 
 # (label, callable) -> (ok: bool, detail: str)
 # Each probe returns a two-tuple. A probe that throws is reported as
@@ -112,30 +117,65 @@ def _check_agnes():
 
 @probe("word budget vs video length", critical=False)
 def _check_word_budget():
-    from modules import config
-    c = config.load_settings().get("content", {}) or {}
+    from modules import config, channels as _ch, word_budget as _wb
+    _s = config.load_settings()
+
+    # Check the budget the scriptwriter will ACTUALLY use, per channel,
+    # rather than the raw setting. The setting is now an input to the
+    # derivation, not the answer — checking it directly reported a
+    # problem the renderer no longer has, and would miss a real one on
+    # the slowest channel.
+    _worst = None
+    for _name in _ch.CHANNEL_PRESETS:
+        _cfg = _ch.get_channel(_name)
+        _lo, _hi, _ = _wb.budget(_cfg, _s)
+        _secs = (_hi * _wb.VALIDATOR_MARGIN) / _wb.words_per_sec(_cfg)
+        if _worst is None or _secs > _worst[1]:
+            _worst = (_name, _secs, _lo, _hi)
+    _cap = _wb.cap_seconds(_s)
+    if _worst and _worst[1] > _cap:
+        return False, (f"channel '{_worst[0]}' budgets {_worst[2]}-{_worst[3]} words "
+                       f"-> worst case {_worst[1]:.1f}s against a {_cap:.0f}s cap; "
+                       f"its ending will be trimmed")
+
+    if not _worst:
+        return True, "no channel presets to check"
+
+    c = _s.get("content", {}) or {}
     wmin, wmax = c.get("target_word_min"), c.get("target_word_max")
     if not wmin or not wmax:
-        return True, "unset — provider defaults apply"
-    # See _WORDS_PER_SEC above for how that number was measured and why
-    # it moved twice. Both directions have now bitten: too low made
-    # scripts a third shorter than the slot, too high overran the cap and
-    # got the ending trimmed. This probe checks BOTH.
-    cap = float(os.getenv("MAX_VIDEO_SECONDS", "30") or 30)
-    worst_words = round(wmax * 1.12)
-    worst_secs = worst_words / _WORDS_PER_SEC
-    if worst_secs > cap:
-        return False, (f"target {wmin}-{wmax} words -> worst case {worst_words} "
-                       f"words = {worst_secs:.1f}s against a {cap:.0f}s cap. The "
-                       f"editor will trim the ending off every render. Lower "
-                       f"target_word_max to <= {int(cap * _WORDS_PER_SEC / 1.12)}.")
-    typical = wmax / _WORDS_PER_SEC
-    if typical < cap * 0.75:
-        return True, (f"DEGRADED: a full {wmax}-word script runs only "
-                      f"{typical:.1f}s in a {cap:.0f}s slot — {cap - typical:.0f}s "
-                      f"of the video carries no narration. Raise target_word_max "
-                      f"toward {int(cap * _WORDS_PER_SEC / 1.12)}.")
-    return True, f"{wmin}-{wmax} words -> worst case {worst_secs:.1f}s (cap {cap:.0f}s)"
+        return True, (f"derived per channel; slowest is '{_worst[0]}' at "
+                      f"{_worst[2]}-{_worst[3]} words = {_worst[1]:.1f}s "
+                      f"(cap {_cap:.0f}s)")
+    # Overrun is already ruled out above. What is left to check is the
+    # other direction — a budget so conservative that the slot carries
+    # silence. Both have bitten before: too low made scripts a third
+    # shorter than the slot, too high overran the cap and got the ending
+    # trimmed.
+    #
+    # Measured on the TYPICAL script (word_max), not the worst accepted
+    # one, because that is what a normal render produces.
+    _thin = None
+    for _name in _ch.CHANNEL_PRESETS:
+        _cfg = _ch.get_channel(_name)
+        _lo, _hi, _ = _wb.budget(_cfg, _s)
+        _typ = _hi / _wb.words_per_sec(_cfg)
+        if _thin is None or _typ < _thin[1]:
+            _thin = (_name, _typ, _lo, _hi)
+    if _thin and _thin[1] < _cap * 0.70:
+        return True, (f"DEGRADED: a full {_thin[3]}-word script on '{_thin[0]}' runs "
+                      f"only {_thin[1]:.1f}s in a {_cap:.0f}s slot — "
+                      f"{_cap - _thin[1]:.0f}s carries no narration. Raise "
+                      f"video.max_video_seconds or check the channel rate.")
+
+    _cfg_note = ""
+    if wmin and wmax:
+        _fits = int((_cap * _wb.words_per_sec(_ch.get_channel(_worst[0]))) / _wb.VALIDATOR_MARGIN)
+        if wmax > _fits:
+            _cfg_note = (f"; configured {wmin}-{wmax} is overridden on slower "
+                         f"channels (only <= {_fits} fits '{_worst[0]}')")
+    return True, (f"slowest '{_worst[0]}' {_worst[2]}-{_worst[3]}w -> worst case "
+                  f"{_worst[1]:.1f}s (cap {_cap:.0f}s){_cfg_note}")
 
 
 @probe("YouTube research quota", critical=False)
