@@ -135,6 +135,21 @@ def write_seo_metadata(
             # A broken guard must never cost a render its metadata.
             log.debug(f"seo_writer factcheck skipped: {_e}")
 
+        # Spoiler check. The prompt has asked for a "curiosity gap" all
+        # along and titles kept shipping the answer instead. Shorts rank
+        # on watch-through, so a title carrying the payoff is actively
+        # self-defeating — it wins the impression and loses the view.
+        # Checked after _collapse_title_candidates so it applies to the
+        # title actually being published, not to a candidate we discard.
+        try:
+            from modules import retention_guard as _rg
+            _spoil = _rg.title_spoils(parsed.get("youtube_title") or "", narration)
+            if _spoil:
+                log.warning(f"seo_writer attempt {attempt}: spoiler title: {_spoil}")
+                problems.extend(_spoil)
+        except Exception as _e:                      # noqa: BLE001
+            log.debug(f"seo_writer spoiler check skipped: {_e}")
+
         if not problems:
             parsed = _normalise(parsed, viral, script)
             parsed["_source"] = "nim"

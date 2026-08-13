@@ -64,6 +64,13 @@ def _content_words(sentence: str) -> set[str]:
     """Meaning-bearing words, crudely normalised for plural/tense."""
     out = set()
     for w in _WORD.findall((sentence or "").lower()):
+        # Everything from the apostrophe on is dropped, which does three
+        # jobs at once: "humanity's" -> "humanity" (it previously
+        # tokenised to "humanity'" and silently failed to match, hiding a
+        # real spoiler), "Marcus's" -> "marcus", and contractions like
+        # "you're" -> "you", which is a stopword and correctly falls out.
+        # Left intact, "you're" counted as a distinctive reveal word.
+        w = re.sub(r"'.*$", "", w)
         if w in _STOPWORDS or len(w) < 2:
             continue
         # costs/cost and outlives/outlive should count as the same idea.
@@ -113,3 +120,75 @@ def hook_echoes(narration: str, threshold: float = 0.5) -> list[str]:
             # One is enough; fixing it usually fixes the rest.
             break
     return problems
+
+
+def title_spoils(title: str, narration: str, threshold: float = 0.5) -> list[str]:
+    """Return a problem when the title gives away the video's ending.
+
+    Shorts rank on watch-through, not on metadata, so a title carrying
+    the payoff is actively self-defeating: it harvests the impression
+    and then removes the reason to stay for the answer.
+
+    Compared against the FINAL THIRD of the narration, not the whole
+    thing, and that choice is the whole design:
+
+      - A title that echoes the HOOK is fine, often ideal. "Why being
+        reliable gets you used, not thanked" is the opening premise and
+        it is a good title - it opens the loop.
+      - A title that echoes the ENDING is the failure. "Why 15 billion
+        miles away is still humanity's last trace" hands over the
+        closing line, so the viewer has already had the payoff before
+        pressing play.
+
+    The signal is NOT bulk similarity, which was measured and does not
+    separate: real spoilers and clean titles both sit around 0.0-0.3
+    overlap with the ending, because a title is a handful of words and
+    an ending is several sentences.
+
+    What separates them is WHICH words are shared. A spoiler carries the
+    vocabulary the ending INTRODUCES - the words the video has been
+    withholding:
+
+      "Why 15 billion miles away is still humanity's last trace"
+        shares 'trace', 'humanity' - both appear nowhere before the
+        final third. That is the reveal, printed on the thumbnail.
+
+      "The night guard saw his own face on the monitor"
+        shares 'face'. One word, and it is the entire twist.
+
+      "Why being reliable gets you used, not thanked"     0 reveal words
+      "3:14 AM on Floor Three"                            0 reveal words
+
+    So the test is: does the title contain any word that the narration
+    saves for its ending? One is enough, because the withheld word IS
+    the payoff. Words the opening already said are free - a title
+    echoing the hook is good practice, not a spoiler.
+    """
+    if not isinstance(title, str) or not title.strip():
+        return []
+    sents = _sentences(narration)
+    if len(sents) < 3:
+        return []
+
+    # Final third, minimum two sentences - the reveal is rarely one line.
+    tail_start = max(1, len(sents) - max(2, len(sents) // 3))
+    tail_words = _content_words(" ".join(sents[tail_start:]))
+    setup_words = _content_words(" ".join(sents[:tail_start]))
+
+    # Vocabulary the ending introduces and the setup never used.
+    reveal_words = {w for w in (tail_words - setup_words) if len(w) >= 4}
+    if not reveal_words:
+        return []
+
+    shared = _content_words(title) & reveal_words
+    if not shared:
+        return []
+
+    return [
+        f"the title gives away the ending (\"{title[:70]}\" uses "
+        f"{', '.join(sorted(shared))} — words the narration withholds until its "
+        f"final lines). Shorts are ranked on watch-through, so a title carrying "
+        f"the payoff wins the impression and loses the view. Title the QUESTION "
+        f"the video answers or the situation it opens, never the answer itself. "
+        f"Echoing the OPENING is fine."
+    ]
