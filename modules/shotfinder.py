@@ -2484,9 +2484,6 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror",
             # Never let the registry take down provider selection — fall
             # through to the legacy chain, which is still correct.
             log.debug(f"provider registry lookup failed for {name!r}: {_e}")
-        if name == "huggingface":
-            if not os.getenv("HF_TOKEN", "").strip():
-                return False, "no HF_TOKEN"
         # NOTE: cloudflare's readiness moved to
         # modules/providers/cloudflare.py and is reached through the
         # registry lookup above. It is NOT duplicated here on purpose —
@@ -2529,18 +2526,12 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror",
             if time.time() < _AGNES_COOLDOWN_UNTIL:
                 wait = int(_AGNES_COOLDOWN_UNTIL - time.time())
                 return False, f"cooling after auth/quota error ({wait}s remaining)"
-        if name == "pollinations":
-            if _pollinations_breaker_skip():
-                wait = int(_POLL_OPEN_UNTIL - time.time())
-                return False, f"breaker open ({wait}s remaining)"
-        if name == "huggingface":
-            try:
-                if _huggingface_breaker_skip():
-                    wait = int(_HF_OPEN_UNTIL - time.time())
-                    return False, f"breaker open ({wait}s remaining)"
-            except NameError:
-                pass
-        # 'horde' + 'together' have no required key (horde works anon).
+        # pollinations, horde and huggingface readiness now lives in
+        # modules/providers/*.py and is reached through the registry
+        # lookup above. Only the two LOCAL GPU providers remain in this
+        # chain — they depend on gpu_topology and per-device broken
+        # state, and are the only providers whose availability differs
+        # between Oracle, Colab and Kaggle.
         return True, ""
 
     _AI_PROVIDERS = {

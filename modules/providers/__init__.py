@@ -50,3 +50,6 @@ from modules.providers.base import (       # noqa: F401
 # mode of a bad auto-import is a worker that will not boot.
 from modules.providers import agnes        # noqa: F401,E402
 from modules.providers import cloudflare   # noqa: F401,E402
+from modules.providers import pollinations # noqa: F401,E402
+from modules.providers import horde        # noqa: F401,E402
+from modules.providers import huggingface  # noqa: F401,E402
