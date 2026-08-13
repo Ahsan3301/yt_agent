@@ -617,7 +617,12 @@ def _stream_once(payload, headers, read_timeout, total_timeout):
 
 
 def chat(messages, model=None, max_tokens=2048, temperature=0.7, nim_only=False,
-         response_format=None, timeout=20, stream=None, thinking=False,
+         # 60s, not 20s. The NIM models in this chain measure 20-50s on
+         # the free tier, so a 20s default meant any caller that did not
+         # pass an explicit timeout could not reach them at all. The
+         # scriptwriter passes 180 and was fine; everything relying on
+         # the default was quietly timing out.
+         response_format=None, timeout=60, stream=None, thinking=False,
          tools=None, tool_choice=None, attempts=2):
     """
     OpenAI-compatible chat completion. Returns the assistant message string.
@@ -720,11 +725,31 @@ def chat(messages, model=None, max_tokens=2048, temperature=0.7, nim_only=False,
         else:
             use_stream = stream
 
-        # Tighter timeout on the flaky primary — 10s beats 20s when
-        # llama-3.3 is dead anyway; Nemotron picks up faster.
+        # Tight timeout for the model that is KNOWN flaky, named
+        # explicitly.
+        #
+        # This used to key off "is this the primary", written when
+        # llama-3.3 was primary and dead: 10s beat 20s because Nemotron
+        # would pick up faster. Then Nemotron BECAME the primary and the
+        # condition silently inverted — the 10s budget landed on the
+        # model that actually works and needs 20-50s, so every NIM call
+        # timed out at 10s, tripped the breaker, and fell through to
+        # Groq. NIM has been effectively dead as a provider since, which
+        # matters because it is the last resort when Agnes and Groq are
+        # both rate-limited.
+        #
+        # Naming the flaky model directly means promoting or demoting a
+        # primary cannot re-point this at a healthy one again.
+        _SLOW_TO_FAIL = ("meta/llama-3.3-70b-instruct",)
+        _flaky = m_name in _SLOW_TO_FAIL
+        # The breaker still tracks the PRIMARY specifically — it exists to
+        # stop us paying for a dead primary on every call, which is a
+        # separate question from how long to wait for this model.
         _is_primary = (m_name == TEXT_MODEL_PRIMARY)
-        _per_call_timeout = 10 if _is_primary else timeout
-        _per_read_timeout = 10 if _is_primary else 20
+        _per_call_timeout = 10 if _flaky else timeout
+        # Per-chunk read budget while streaming. 20s was fine for a
+        # 10s-capped call and far too tight for a 180s one.
+        _per_read_timeout = 10 if _flaky else max(30, min(60, timeout // 3))
         try:
             if use_stream:
                 content, reasoning = _post_chat_streamed_pair(
