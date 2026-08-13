@@ -217,7 +217,9 @@ NON-NEGOTIABLE RETENTION RULES:
      the open loop, (b) lands a memorable one-liner the viewer
      re-shares, or (c) flips the framing of everything just said.
      Never a "thanks for watching" or summary.
-  8. WORD COUNT: {word_min}-{word_max} words. Hard ceiling — a {hard_cap}-
+  8. WORD COUNT: aim for {word_target} words. Accepted range is
+     {word_min}-{word_max}; below {word_min} leaves the video part silent.
+     Hard ceiling — a {hard_cap}-
      word response gets rejected. Cut connective tissue, never imagery.
   9. STRICTLY NO sexual / romantic / intimate content. No explicit
      violence beyond what the channel naturally requires (e.g. mild
@@ -241,7 +243,7 @@ and YouTube decides distribution on that window.
     clause ("Have you ever...", "Today we look at...", "In 1518 in
     Strasbourg..."). Open on the claim itself.
 
-BEAT PLAN — {word_min}-{word_max} words is 8 to 10 spoken sentences.
+BEAT PLAN — {word_target} words is {sentence_lo} to {sentence_hi} spoken sentences.
 Spend them exactly like this:
   Beat 1 (1 sentence, 6-9 words) — the single most surprising fact,
                          stated flat, no adjectives, no context yet.
@@ -307,7 +309,7 @@ TAGS (exactly 10 YouTube tags, ranked most→least specific):
 Respond with ONLY this JSON object — no markdown fences, no prose
 around it:
 {{
-  "narration":       "{word_min}-{word_max} word narration meeting EVERY rule above",
+  "narration":       "~{word_target}-word narration meeting EVERY rule above",
   "youtube_title":   "title under 60 chars",
   "description":     "150-200 word SEO description",
   "tags":            ["tag1", "tag2", ...],
@@ -405,7 +407,8 @@ WRITING RULES — follow all of them:
      viewer already read past without concern. Not a new event: a new
      meaning for something specific already on screen. That is what
      makes a Short rewatchable.
-  9. LENGTH IS NOT OPTIONAL: narration must be {word_min}-{word_max} words.
+  9. LENGTH IS NOT OPTIONAL: aim for {word_target} words ({word_min}-{word_max}
+     accepted). Under {word_min} and the video runs short with silence.
      This is a HARD CEILING — a {hard_cap}-word response is rejected.
      Cut adverbs and connective tissue, never the imagery.
   10. STRICTLY NO sexual content, no romantic/intimate subtext, no nudity,
@@ -428,7 +431,7 @@ before the viewer knows who it happened to.
   - 60%+ of viewers watch with sound OFF, so the first line must make
     sense read as text with no audio and no prior context.
 
-BEAT PLAN — {word_min}-{word_max} words is 8 to 10 spoken sentences.
+BEAT PLAN — {word_target} words is {sentence_lo} to {sentence_hi} spoken sentences.
 Spend them exactly like this:
   Beat 1  (1 sentence, 6-9 words)  — THE WRONG THING. Mid-event, no
           names, no scene-setting. The viewer should not yet know who
@@ -518,7 +521,7 @@ BANNED PHRASES — do not use any of these (or paraphrases):
   - Abstract filler that describes nothing: "an eerie presence", "an
     unsettling feeling", "something was off", "the air grew cold",
     "an unexplainable dread", "shadows danced". If a sentence could
-    appear in ANY horror story, it is wasting one of your {word_max}
+    appear in ANY horror story, it is wasting one of your {word_target}
     words — replace it with the specific thing that happened.
   - explicit gore: "blood pooling", "intestines", "split skull" — unease,
     not splatter
@@ -568,7 +571,7 @@ Rules for keywords:
 
 Respond with ONLY a JSON object (no markdown, no prose around it):
 {{
-  "narration": "{word_min}-{word_max} word THIRD-PERSON STORYTELLER horror narration about a specific other person/place/event — NEVER first-person",
+  "narration": "~{word_target} word THIRD-PERSON STORYTELLER horror narration about a specific other person/place/event — NEVER first-person",
   "youtube_title": "...",
   "description": "150-200 word SEO description that hints at the hook",
   "tags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
@@ -583,7 +586,7 @@ Context keywords: {keywords}
 
 TONE: {tone_guidance}
 
-Write a 60-second narration ({word_min}-{word_max} words):
+Write a {target_seconds}-second narration (~{word_target} words):
   1. Sentence 1 is a HOOK — a surprising claim or pointed question.
   2. Second person ("you"), punchy, action-oriented.
   3. One clear insight. One concrete example or analogy.
@@ -805,6 +808,28 @@ def write_script(research_data, max_attempts=3):
     # ask and 83s of narration, which is not a ceiling at all.
     hard_cap = int(round(word_max * 1.25))
 
+    # ONE number for the model to aim at, plus figures derived from it.
+    #
+    # Every prompt asked for a RANGE ("45-51 words"). Given a range a
+    # model aims at neither end reliably, and the accepted band made that
+    # cheap: it ran 66%-99% of the slot, so a script could ship at 20s in
+    # a 30s video with a third of it silent. Sampled output landed at
+    # 20.9s, 22.7s and 19.9s — all accepted.
+    #
+    # Two other numbers in these prompts were simply wrong and pulled
+    # against the budget: the universal prompt asked for "a 60-second
+    # narration" against a 30s cap, and both beat plans hardcoded "8 to
+    # 10 spoken sentences" whatever the word count — at history's 35-40
+    # words that is four words a sentence.
+    _wb_cap = _wb.cap_seconds(s)
+    _wb_wps = _wb.words_per_sec(channel_cfg)
+    word_target = int(round((word_min + word_max) / 2))
+    target_seconds = int(round(word_target / _wb_wps)) if _wb_wps else int(_wb_cap)
+    # ~7 words per spoken sentence in this clipped style, so the sentence
+    # count follows the budget instead of contradicting it.
+    sentence_lo = max(3, int(round(word_target / 8)))
+    sentence_hi = max(sentence_lo + 1, int(round(word_target / 5.5)))
+
     # Tone resolution — priority order:
     #   1. research_data["tone_override"] — per-channel tone from the
     #      channels UI (main.py stashes it there for exactly this reason;
@@ -927,6 +952,8 @@ def write_script(research_data, max_attempts=3):
             title=research_data["raw_title"],
             tone_guidance=tone_guidance,
             word_min=word_min, word_max=word_max, hard_cap=hard_cap,
+            word_target=word_target, target_seconds=target_seconds,
+            sentence_lo=sentence_lo, sentence_hi=sentence_hi,
         )
     else:
         prompt = prefix_universal + UNIVERSAL_PROMPT.format(
@@ -940,6 +967,8 @@ def write_script(research_data, max_attempts=3):
             exemplar=_EXEMPLARS.get(channel_type, _DEFAULT_EXEMPLAR),
             facts_block=facts_block,
             word_min=word_min, word_max=word_max, hard_cap=hard_cap,
+            word_target=word_target, target_seconds=target_seconds,
+            sentence_lo=sentence_lo, sentence_hi=sentence_hi,
         )
 
     # Report the chain, not a guess. This line used to print
@@ -1004,7 +1033,20 @@ def write_script(research_data, max_attempts=3):
         # last line the prompt works hardest to produce. Tighten to 12%:
         # worst case now lands inside the cap instead of being cut.
         _wmax = int(round(word_max * 1.12))
-        _wmin = max(30, int(round(word_min * 0.85)))
+        # Floor tied to how much of the SLOT gets narrated, not to a
+        # percentage of the target. The old 0.85-of-target floor was set
+        # when the target itself was a guess and needed slack; now that
+        # the budget is measured per channel, that slack showed up as
+        # accepted scripts filling only 66% of the video. Sampled output
+        # shipped at 20.9s, 22.7s and 19.9s in a 30s slot — every one of
+        # them accepted, each leaving a third of the video with no
+        # narration under it.
+        #
+        # 80% of the cap is the floor now, which is the same arithmetic
+        # the budget itself uses, so the two cannot drift apart.
+        _wmin = max(20, int(0.80 * _wb_cap * _wb_wps))
+        # Never let the floor cross the ceiling on a very short cap.
+        _wmin = min(_wmin, _wmax - 1)
         problems = _validate(script, word_min=_wmin, word_max=_wmax)
 
         # Claim check. The prompt has always ASKED the model to invent
