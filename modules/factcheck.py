@@ -60,16 +60,32 @@ import re
 # exhaustive and does not need to be - it covers the names a model
 # reaches for when it wants a claim to sound sourced.
 _AUTHORITY_NAMES = (
-    "stanford", "harvard", "mit", "oxford", "cambridge", "yale",
+    "stanford", "harvard", "oxford", "cambridge", "yale",
     "princeton", "berkeley", "caltech", "johns hopkins", "cornell",
     "columbia university", "university of chicago", "carnegie mellon",
-    "nasa", "noaa", "cdc", "fbi", "cia", "nih", "who",
     "world health organization", "national institutes of health",
-    "the lancet", "lancet", "jama", "new england journal",
-    "nature", "scientific american", "pnas", "bmj",
-    "pew research", "pew", "gallup", "mckinsey", "deloitte", "nielsen",
+    "the lancet", "scientific american",
+    "pew research", "gallup", "mckinsey", "deloitte", "nielsen",
     "harvard business review", "mayo clinic", "cleveland clinic",
 )
+
+# Acronyms, matched CASE-SENSITIVELY against the original text.
+#
+# These were in the list above and lowercased with everything else,
+# which produced a real false positive: "WHO" for the World Health
+# Organization matched the pronoun "who", and a description reading
+# "...who never say no" was rejected for citing an invented source.
+# "MIT", "CIA" and "NIH" carry the same hazard in ordinary prose, and
+# an acronym is only an authority claim when it is capitalised.
+_AUTHORITY_ACRONYMS = (
+    "NASA", "NOAA", "CDC", "FBI", "CIA", "NIH", "WHO",
+    "JAMA", "PNAS", "BMJ", "MIT",
+)
+
+# Journal names that are also ordinary words. Same hazard as the
+# acronyms: "nature" is a common noun, "science" more so, and neither
+# is a citation unless capitalised mid-sentence.
+_AUTHORITY_TITLECASE = ("Nature", "Lancet", "The Lancet")
 
 # Phrases that assert evidence exists.
 _ATTRIBUTION_CUES = (
@@ -91,8 +107,28 @@ _SCALE_WORDS = ("million", "billion", "trillion")
 _NUM_RE = re.compile(r"\d[\d,]*(?:\.\d+)?")
 
 
+# Narration spells numbers out because it is read aloud; titles and
+# descriptions write them as digits. Without this map "fifteen billion
+# miles" in the script failed to support "15 billion miles" in the
+# title, and a perfectly grounded figure was reported as invented.
+_WORD_NUMBERS = {
+    "one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
+    "six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10",
+    "eleven": "11", "twelve": "12", "thirteen": "13", "fourteen": "14",
+    "fifteen": "15", "sixteen": "16", "seventeen": "17", "eighteen": "18",
+    "nineteen": "19", "twenty": "20", "thirty": "30", "forty": "40",
+    "fifty": "50", "sixty": "60", "seventy": "70", "eighty": "80",
+    "ninety": "90", "hundred": "100", "thousand": "1000",
+}
+
+
 def _digits(text: str) -> set[str]:
-    """Every number in `text`, comma-stripped, for containment tests."""
+    """Every number in `text`, comma-stripped, for containment tests.
+
+    Includes spelled-out numbers converted to digits, so research and
+    narration written for the ear still support metadata written for the
+    eye.
+    """
     out = set()
     for m in _NUM_RE.finditer(text or ""):
         raw = m.group(0).replace(",", "")
@@ -100,6 +136,10 @@ def _digits(text: str) -> set[str]:
         # 15.0 and 15 are the same claim.
         if raw.endswith(".0"):
             out.add(raw[:-2])
+    low = (text or "").lower()
+    for word, digit in _WORD_NUMBERS.items():
+        if re.search(rf"\b{word}\b", low):
+            out.add(digit)
     return out
 
 
@@ -172,6 +212,13 @@ def unsupported_claims(narration: str, facts_text: str) -> list[str]:
     # 4. Borrowed authority.
     for name in _AUTHORITY_NAMES:
         if re.search(rf"\b{re.escape(name)}\b", low) and name not in facts_low:
+            problems.append(
+                f"invented source: '{name}' is never mentioned in the research. "
+                f"Do not attribute claims to institutions you were not given."
+            )
+    # Case-sensitive against the ORIGINAL text — see the list definitions.
+    for name in _AUTHORITY_ACRONYMS + _AUTHORITY_TITLECASE:
+        if re.search(rf"\b{re.escape(name)}\b", narration) and name not in facts_text:
             problems.append(
                 f"invented source: '{name}' is never mentioned in the research. "
                 f"Do not attribute claims to institutions you were not given."

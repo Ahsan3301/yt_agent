@@ -54,6 +54,22 @@ it its it's you your yours i me my we our us they them their
 as so just only even still yet not no nor too very much many more most
 what when where who whom which why how all any both each few other some
 one two three
+
+# Function and temporal words. These carry no reveal on their own, and
+# leaving them in caused a real false positive: "What happens to a
+# message after 15 billion miles?" was rejected as a spoiler because
+# 'after' happened to appear only in the closing lines ("Long after the
+# oceans boil"). The title gave nothing away. The rejection burned a
+# retry and pushed the run to the regex fallback, so the guard made the
+# title WORSE than doing nothing. A reveal word has to be a word the
+# video was actually withholding.
+after before long still again once until since while back away around
+through over under above below every another without within upon toward
+towards near last first own same such well even ever never always often
+soon later already almost really quite rather maybe perhaps thing things
+something nothing anything everything someone everyone nobody anyone
+much little lot bit way ways going gone come came get got make made take
+took give gave know knew think thought want wanted need needed let put
 """.split())
 
 _SENT_SPLIT = re.compile(r"(?<=[.!?])\s+|\n+")
@@ -120,6 +136,105 @@ def hook_echoes(narration: str, threshold: float = 0.5) -> list[str]:
             # One is enough; fixing it usually fixes the rest.
             break
     return problems
+
+
+# Nouns that make a number a LIST PROMISE rather than a measurement.
+# A whitelist, not a "plural noun" pattern, and that is the whole point:
+# "This golden record has waited 48 years" and "3:14 AM on Floor Three"
+# both match number-plus-plural-noun and neither promises a list. Every
+# generic pattern tried here false-positived on ordinary titles.
+_LIST_NOUNS = (
+    "thing", "things", "way", "ways", "reason", "reasons", "sign", "signs",
+    "rule", "rules", "truth", "truths", "fact", "facts", "lesson", "lessons",
+    "mistake", "mistakes", "secret", "secrets", "tip", "tips", "habit",
+    "habits", "trait", "traits", "question", "questions", "step", "steps",
+    "type", "types", "kind", "kinds", "myth", "myths", "trick", "tricks",
+    "hack", "hacks", "stage", "stages", "phase", "phases", "level", "levels",
+    "warning", "warnings", "red flags", "red flag",
+)
+
+_NUM_WORDS = {
+    "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+    "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+}
+
+_ORDINAL_CUES = (
+    "first", "second", "third", "fourth", "fifth", "sixth", "seventh",
+    "number one", "number two", "number three", "next", "finally", "lastly",
+)
+
+
+def _promised_count(title: str) -> int:
+    """N when the title promises N list items, else 0."""
+    low = (title or "").lower()
+    nouns = "|".join(re.escape(n) for n in _LIST_NOUNS)
+    words = "|".join(_NUM_WORDS)
+    # Allow one adjective between the number and the noun: "3 quiet truths".
+    m = re.search(rf"\b(\d+|{words})\s+(?:[a-z\-]+\s+)?({nouns})\b", low)
+    if not m:
+        return 0
+    raw = m.group(1)
+    n = _NUM_WORDS.get(raw, 0) or (int(raw) if raw.isdigit() else 0)
+    return n if 2 <= n <= 10 else 0
+
+
+def _delivered_count(narration: str) -> int:
+    """How many list items the narration actually enumerates.
+
+    Counts two kinds of evidence, because scripts enumerate both ways:
+
+      explicit  "First... Second... Third..."
+      parallel  "You lose your evenings. You lose your name. You lose
+                 yourself." - three items, no ordinal words anywhere
+
+    Missing the parallel form would flag genuinely-delivered lists, so
+    the larger of the two counts wins.
+    """
+    sents = _sentences(narration)
+    low = (narration or "").lower()
+
+    explicit = sum(1 for cue in _ORDINAL_CUES if re.search(rf"\b{re.escape(cue)}\b", low))
+
+    # Longest run of consecutive sentences opening with the same word.
+    openers = []
+    for s in sents:
+        toks = _WORD.findall(s.lower())
+        openers.append(toks[0] if toks else "")
+    best = run = 1
+    for i in range(1, len(openers)):
+        if openers[i] and openers[i] == openers[i - 1]:
+            run += 1
+            best = max(best, run)
+        else:
+            run = 1
+
+    return max(explicit, best)
+
+
+def listicle_mismatch(title: str, narration: str) -> list[str]:
+    """Return a problem when a title promises a list the video never gives.
+
+    "3 things people who never say no learn too late" over narration that
+    enumerates nothing is a promise the video breaks in its first seconds.
+    On a format ranked by watch-through that is worse than a plain title:
+    the viewer arrives counting, never finds item one, and leaves.
+
+    It kept happening because the title model optimises for click shape
+    while never being held to the script's actual structure. Nothing
+    connected the two, so nothing objected.
+    """
+    n = _promised_count(title)
+    if n < 2:
+        return []
+    delivered = _delivered_count(narration)
+    if delivered >= n:
+        return []
+    return [
+        f"the title promises {n} items but the narration enumerates "
+        f"{delivered} — it is not a list. Either title it for what the "
+        f"script actually is (a single idea, a story, a question), or drop "
+        f"the count. Do not promise a structure the video does not have."
+    ]
 
 
 def title_spoils(title: str, narration: str, threshold: float = 0.5) -> list[str]:

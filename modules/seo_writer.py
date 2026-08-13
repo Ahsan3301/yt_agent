@@ -45,6 +45,13 @@ _DEFAULT_BANNED_OPENERS = (
 
 # ── Public entry ──────────────────────────────────────────────────
 
+# Attempts on the NIM path before dropping to _regex_fallback. Named
+# because the retention guards branch on it: they enforce strictly on
+# every attempt but the last, where a rejection would cost the run its
+# LLM-written metadata entirely.
+_MAX_SEO_ATTEMPTS = 2
+
+
 def write_seo_metadata(
     *,
     narration: str,
@@ -81,9 +88,10 @@ def write_seo_metadata(
     viral = (channel_cfg.get("viral_seo") or {}) if isinstance(channel_cfg, dict) else {}
     niche = channel_cfg.get("name", "generic") if isinstance(channel_cfg, dict) else "generic"
 
-    # Try NIM first (up to 2 attempts with error feedback), then regex fallback.
+    # Try NIM first (up to _MAX_SEO_ATTEMPTS attempts with error
+    # feedback), then regex fallback.
     problems = []
-    for attempt in range(1, 3):
+    for attempt in range(1, _MAX_SEO_ATTEMPTS + 1):
         raw = _call_llm(narration, script, channel_cfg, viral, research_data, borrowed_titles, problems, borrowed_tags, own_performance)
         if not raw:
             break
@@ -143,10 +151,47 @@ def write_seo_metadata(
         # title actually being published, not to a candidate we discard.
         try:
             from modules import retention_guard as _rg
-            _spoil = _rg.title_spoils(parsed.get("youtube_title") or "", narration)
+            _title = parsed.get("youtube_title") or ""
+            # Retention problems are ADVISORY on the final attempt.
+            #
+            # There are only two attempts here, and exhausting them drops
+            # the whole run to _regex_fallback — which sets the title to
+            # the raw topic string. Measured: enforcing these on the last
+            # attempt turned "What happens if Voyager's message outlasts
+            # humanity?" into "Why Voyager 1's golden record will outlive
+            # Earth", the unedited input topic. A title that leans a
+            # little revealing still beats no optimisation at all, so a
+            # rejection here must never be the reason we fall back.
+            #
+            # Attempt 1 still enforces them strictly, which is where they
+            # do their work: the retry is what produces the better title.
+            # Fabrication is NOT advisory and stays in `problems` above —
+            # a false claim must never ship, fallback or not.
+            _advisory: list[str] = []
+            _spoil = _rg.title_spoils(_title, narration)
             if _spoil:
                 log.warning(f"seo_writer attempt {attempt}: spoiler title: {_spoil}")
-                problems.extend(_spoil)
+                _advisory.extend(_spoil)
+            # Listicle promise the script never delivers. The title model
+            # optimises for click shape and was never held to the script's
+            # actual structure, so "3 things ..." kept landing on narration
+            # that enumerates nothing. A viewer who arrives counting and
+            # never finds item one leaves — worse than a plain title on a
+            # format ranked by watch-through.
+            _list = _rg.listicle_mismatch(_title, narration)
+            if _list:
+                log.warning(f"seo_writer attempt {attempt}: listicle mismatch: {_list}")
+                _advisory.extend(_list)
+
+            if _advisory:
+                if attempt < _MAX_SEO_ATTEMPTS:
+                    problems.extend(_advisory)
+                else:
+                    log.warning(
+                        f"seo_writer: accepting title despite {len(_advisory)} "
+                        f"retention issue(s) — a rejected LLM title would fall "
+                        f"back to the raw topic, which is worse."
+                    )
         except Exception as _e:                      # noqa: BLE001
             log.debug(f"seo_writer spoiler check skipped: {_e}")
 
