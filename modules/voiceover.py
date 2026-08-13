@@ -133,6 +133,103 @@ def _resolve_voice(preset: dict, language: str | None, voice_override: str | Non
     return voice, rate, pitch
 
 
+_KNOWN_VOICES: set[str] | None = None
+_KNOWN_VOICES_TRIED = False
+
+
+def _known_voices() -> set[str] | None:
+    """edge-tts's live voice list, fetched once per process.
+
+    Returns None when the list cannot be fetched, and every caller
+    treats None as "cannot tell" rather than "empty". Failing open
+    matters: a network blip during the lookup must not make us believe
+    every voice is dead and refuse to narrate anything.
+    """
+    global _KNOWN_VOICES, _KNOWN_VOICES_TRIED
+    if _KNOWN_VOICES_TRIED:
+        return _KNOWN_VOICES
+    _KNOWN_VOICES_TRIED = True
+    try:
+        import edge_tts
+        voices = asyncio.run(edge_tts.list_voices())
+        _KNOWN_VOICES = {v["ShortName"] for v in voices if v.get("ShortName")}
+        log.debug(f"edge-tts advertises {len(_KNOWN_VOICES)} voices")
+    except Exception as e:                           # noqa: BLE001
+        log.debug(f"could not fetch edge-tts voice list ({e}); skipping validation")
+        _KNOWN_VOICES = None
+    return _KNOWN_VOICES
+
+
+def _voice_chain(preset: dict, language: str | None,
+                 voice_override: str | None = None) -> list[str]:
+    """Ordered voice candidates for this channel, best first.
+
+    WHY A CHAIN AND NOT ONE VOICE
+    -----------------------------
+    Microsoft retires edge-tts voices without notice. On 2026-08-13,
+    en-US-DavisNeural and en-US-JaneNeural disappeared and the fitness
+    and food channels stopped producing ANY audio.
+
+    The presets already carried fallback voice lists. They were dead
+    code: resolution took candidates[0] and never looked further, so a
+    retired primary was a hard outage with three usable alternatives
+    sitting unread one line away. Worse, the caller wrapped the single
+    voice in retry(attempts=3) — and a retired voice fails identically
+    every time, so we paid three round trips to fail the same way.
+
+    So the whole list is returned, deduplicated and ordered, and voices
+    edge-tts no longer advertises are dropped up front. If validation
+    cannot run, nothing is dropped and the caller simply tries them in
+    turn.
+    """
+    lang = (language or preset.get("language") or "en").lower()[:2]
+    primary, _, _ = _resolve_voice(preset, language, voice_override=voice_override)
+
+    chain: list[str] = [primary]
+    # Everything the preset offers for this language, not just [0].
+    by_lang = (preset.get("voices_by_lang") or {}).get(lang)
+    if isinstance(by_lang, list):
+        chain.extend(str(v) for v in by_lang if v)
+    elif isinstance(by_lang, str) and by_lang:
+        chain.append(by_lang)
+    # The niche's own default, in case the steps above resolved elsewhere.
+    if preset.get("voice"):
+        chain.append(str(preset["voice"]))
+    # Cross-language defaults.
+    if lang in LANG_DEFAULT_VOICES:
+        for g in ("male", "female"):
+            v = LANG_DEFAULT_VOICES[lang].get(g)
+            if v:
+                chain.append(str(v))
+    # Last resort for English. Multilingual voices have outlived every
+    # retirement so far, which is the only reason to name one here.
+    if lang == "en":
+        chain.append("en-US-BrianMultilingualNeural")
+
+    seen, ordered = set(), []
+    for v in chain:
+        if v and v not in seen:
+            seen.add(v)
+            ordered.append(v)
+
+    known = _known_voices()
+    if known:
+        live = [v for v in ordered if v in known]
+        dead = [v for v in ordered if v not in known]
+        if dead:
+            log.warning(
+                f"voice(s) no longer offered by edge-tts and skipped: "
+                f"{', '.join(dead)} — update modules/channels.py for niche "
+                f"{preset.get('name')!r}"
+            )
+        # Never let validation empty the chain. If the whole list looks
+        # dead, the list is more likely wrong than every voice is.
+        if live:
+            return live
+        log.warning("every candidate voice looks retired; trying them anyway")
+    return ordered
+
+
 def _voice_config(channel_type, language=None, voice_override=None):
     """Build the per-channel voice config dict. Reads the niche preset
     (which is the source of truth) and merges any settings.json overrides
@@ -228,30 +325,59 @@ def generate_with_edge_tts(text, channel_type, output_path, language=None, voice
     Generate voiceover using Microsoft edge-tts (free, no key needed).
     Returns path to .mp3 file.
     """
+    from modules.channels import get_channel
     cfg = _voice_config(channel_type, language=language, voice_override=voice_override)
-    voice = cfg["edge"]
     rate = cfg.get("edge_rate", "+0%")
     pitch = cfg.get("edge_pitch", "+0Hz")
-    log.info(
-        f"Generating TTS with edge-tts | voice={voice} rate={rate} "
-        f"pitch={pitch} lang={cfg['language']} (timeout={EDGE_TTS_TIMEOUT}s/attempt)"
-    )
-    try:
-        retry(
-            lambda: asyncio.run(_edge_tts_async(text, voice, output_path, rate=rate, pitch=pitch)),
-            attempts=3,
-            on=(asyncio.TimeoutError, ConnectionError, OSError, Exception),
-            desc="edge-tts",
+    chain = _voice_chain(get_channel(channel_type), language, voice_override=voice_override)
+
+    # Walk the chain rather than hammering one voice. attempts=2 per
+    # voice covers a transient network failure; a retired voice fails
+    # identically every time, so spending a third attempt on it only
+    # delays reaching a voice that works. Total round trips are bounded
+    # by 2 * len(chain) but in practice the first voice answers.
+    last_err: Exception | None = None
+    for idx, voice in enumerate(chain):
+        if idx:
+            log.warning(f"edge-tts: falling back to voice #{idx + 1} {voice!r}")
+        log.info(
+            f"Generating TTS with edge-tts | voice={voice} rate={rate} "
+            f"pitch={pitch} lang={cfg['language']} (timeout={EDGE_TTS_TIMEOUT}s/attempt)"
         )
-    except Exception as e:
-        log.error(f"edge-tts failed after retries: {e}")
-        return None
-    # Validate the produced file actually has content.
-    if not os.path.exists(output_path) or os.path.getsize(output_path) < 1024:
-        log.error(f"edge-tts produced empty/missing file: {output_path}")
-        return None
-    log.info(f"Audio saved: {output_path}")
-    return output_path
+        try:
+            retry(
+                lambda v=voice: asyncio.run(
+                    _edge_tts_async(text, v, output_path, rate=rate, pitch=pitch)
+                ),
+                attempts=2,
+                on=(asyncio.TimeoutError, ConnectionError, OSError, Exception),
+                desc=f"edge-tts[{voice}]",
+            )
+        except Exception as e:                       # noqa: BLE001
+            last_err = e
+            log.warning(f"edge-tts voice {voice!r} failed: {e}")
+            continue
+        # A voice can answer and still write nothing usable, so the size
+        # check is part of "did this voice work", not a separate verdict
+        # after the loop — otherwise an empty file from voice #1 would
+        # end the whole call with alternatives untried.
+        if not os.path.exists(output_path) or os.path.getsize(output_path) < 1024:
+            log.warning(f"edge-tts voice {voice!r} produced an empty/missing file")
+            continue
+        if idx:
+            log.warning(
+                f"edge-tts succeeded on fallback voice {voice!r} for channel "
+                f"{channel_type!r}. The configured primary is not usable — "
+                f"update modules/channels.py."
+            )
+        log.info(f"Audio saved: {output_path}")
+        return output_path
+
+    log.error(
+        f"edge-tts failed on all {len(chain)} candidate voice(s) for "
+        f"{channel_type!r}: {chain}. Last error: {last_err}"
+    )
+    return None
 
 
 # Once kokoro fails to import (broken torch install, missing model, etc.)
