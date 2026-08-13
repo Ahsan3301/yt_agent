@@ -29,7 +29,11 @@ def breaker_reason(
 ) -> Optional["tuple[bool, str]"]:
     """(False, reason) when the named circuit breaker is open, else None.
 
-    Three providers implement the identical pattern — a `_X_breaker_skip()`
+    Now used only by huggingface, whose breaker state still lives in
+    shotfinder. pollinations and horde own their state outright and
+    check it directly, which is the end state for all of them.
+
+    Three providers implemented the identical pattern — a `_X_breaker_skip()`
     predicate plus a `_X_OPEN_UNTIL` epoch — and each had its own copy of
     the same four lines in the readiness chain. One of those copies was
     additionally wrapped in `except NameError`, defending against its own
