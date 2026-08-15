@@ -149,10 +149,33 @@ export async function POST(req: NextRequest) {
       }
     } catch { /* soft-fail */ }
 
+    // HEAD-OF-LINE BLOCKING — why this is 60 and not 5.
+    //
+    // This window was 5. Every job in it that the calling worker cannot
+    // claim still consumed a slot, so five unclaimable jobs at the head
+    // of the queue hid the ENTIRE rest of the queue from every worker,
+    // permanently.
+    //
+    // That is not hypothetical. Measured: the five oldest queued jobs
+    // belonged to channels 'Horarry' and 'Money Mad Simple', whose
+    // allowed_workers is ['kaggle','colab'] — the always-on Oracle
+    // worker is not on those lists and never could take them. Kaggle
+    // and Colab were not running. Those five sat at the head for over a
+    // day while 15 more jobs queued behind them, including ones Oracle
+    // was perfectly able to run. Every one of those was invisible to
+    // the worker until the 24h sweep marked it "orphaned in queue with
+    // no backend claim" — a message that describes the symptom and
+    // points away from the cause.
+    //
+    // The window must therefore be comfortably larger than the number
+    // of unclaimable jobs that can accumulate. 60 covers a full day of
+    // scheduled renders for every channel; the loop below exits on the
+    // first claimable row, so the cost of a wider window is reading
+    // rows we skip, not work.
     const snap = await db.collection("jobs")
       .where("status", "==", "queued")
       .orderBy("queued_at", "asc")
-      .limit(5)
+      .limit(60)
       .get();
 
     if (snap.empty) {
@@ -265,8 +288,52 @@ export async function POST(req: NextRequest) {
       // Per-channel worker allowlist + STAGED priority handover
       if (allowedList.length > 0 && !SIDE_JOB_KINDS.has(kind)) {
         if (!workerLabel) continue;
-        if (!allowedList.includes(workerLabel)) continue;
 
+        // STRANDED-JOB RESCUE.
+        //
+        // A job whose allowlist names only workers that are not running
+        // can never be claimed. It waits out the 24h sweep and dies as
+        // "orphaned in queue with no backend claim", which reads like a
+        // dispatch fault and is actually a configuration one: channels
+        // set to ['kaggle','colab'] produce jobs the always-on Oracle
+        // worker is forbidden to touch, and Kaggle/Colab are not always
+        // up.
+        //
+        // After STRANDED_AFTER_SEC, if NONE of the allowed workers is
+        // alive, any live worker may take it. Running a GPU-preferred
+        // render on the Oracle CPU tier is already a supported path —
+        // SDXL is skipped gracefully there — so a late render beats no
+        // render.
+        //
+        // The grace period is what keeps this from defeating the
+        // allowlist: for the first hour the preferred workers have
+        // exclusive claim, and a Kaggle that boots inside that window
+        // still gets its jobs.
+        const STRANDED_AFTER_SEC = 3600;
+        const jobAge = now - Number(data.queued_at ?? now);
+        let stranded = false;
+        if (!allowedList.includes(workerLabel)) {
+          if (jobAge < STRANDED_AFTER_SEC) continue;
+          if (liveLabels === null) liveLabels = await _liveWorkerLabels(db);
+          const anyPreferredAlive = allowedList.some((l) => liveLabels!.has(l));
+          if (anyPreferredAlive) continue;
+          stranded = true;
+          console.warn(
+            "[claim] rescuing stranded job — no allowed worker alive",
+            JSON.stringify({
+              job_id: String(data.id || doc.id),
+              allowed: allowedList,
+              claiming_as: workerLabel,
+              queued_hours: Math.round(jobAge / 360) / 10,
+            }),
+          );
+        }
+
+        // A stranded rescue has already established that no preferred
+        // worker is alive, so there is no handover left to stage.
+        // Skipping explicitly rather than relying on indexOf returning
+        // -1 and the loops below happening to run zero times.
+        if (!stranded) {
         const myIndex = allowedList.indexOf(workerLabel);
         const queuedAt = Number(data.queued_at ?? now);
         const jobAgeSec = now - queuedAt;
@@ -299,6 +366,7 @@ export async function POST(req: NextRequest) {
           cumGraceForCheck += BOOT_GRACE_SEC[other] ?? 0;
         }
         if (higherPriorityEligible) continue;
+        }   // end !stranded
       }
 
       // Oracle password gate — only enforced when this worker is Oracle
