@@ -239,3 +239,14 @@
 # this keeps things healthy until then and after any proxy recreation.
 # (No '#' characters inside the command - see the gateway-heal note.)
 */5 * * * *  C=$(docker ps --format '{{.Names}}' | grep '^caddy-' | head -1); if [ -n "$C" ]; then for N in $(docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$C"); do docker network connect "$N" coolify-proxy 2>/dev/null && echo "proxy-net-guard: attached coolify-proxy to $N"; done; fi >> /proc/1/fd/1 2>&1
+
+# Public marketing stats — channel totals + the monthly cumulative
+# series the landing page charts. Twice a day is plenty: the numbers
+# move slowly and the sweep walks every upload on every connected
+# channel, so it is the most quota-hungry maintenance job we run
+# (~25 units of the 10,000/day, still cheap).
+#
+# The landing page reads the cached settings/public_stats document. It
+# must never fetch YouTube per visitor — that would spend the same
+# quota research depends on, on traffic.
+25 4,16 * * * curl -fsS -X POST -H "X-API-Key: $RENDER_TRIGGER_KEY" "$DASHBOARD_INTERNAL_URL/api/maintenance/public-stats" >> /proc/1/fd/1 2>&1
