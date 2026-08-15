@@ -111,9 +111,11 @@ type Stats = {
 async function _loadStats(): Promise<Stats> {
   const empty: Stats = { published: 0, views: 0, languages: 0, show: false, channels: 0, series: [] };
   try {
-    const doc = await adminDb().collection("platform_config").doc("public_stats").get();
+    const doc = await adminDb().collection("settings").doc("public_stats").get();
     if (doc.exists) {
-      const d = (doc.data() || {}) as Record<string, unknown>;
+      // settings rows wrap their payload in a JSON string `data` field.
+      const raw = (doc.data() as { data?: unknown } | undefined)?.data;
+      const d = (typeof raw === "string" ? JSON.parse(raw) : (raw || {})) as Record<string, unknown>;
       const views = Math.max(0, Number(d.managed_views || 0));
       const published = Math.max(0, Number(d.managed_videos || 0));
       const series = Array.isArray(d.series)

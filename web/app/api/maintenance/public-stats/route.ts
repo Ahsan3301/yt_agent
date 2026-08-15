@@ -180,7 +180,16 @@ async function _handler(req: NextRequest) {
     updated_at: new Date().toISOString(),
   };
 
-  await adminDb().collection("platform_config").doc("public_stats").set(doc);
+  // Stored in `settings`, NOT `platform_config`.
+  //
+  // platform_config is a key/value collection with a required `key`
+  // field — writing an arbitrary document there fails validation
+  // ("key: Cannot be blank"), which is what the first attempt did. The
+  // settings collection is the one that holds JSON blobs, and is where
+  // the API-key blob already lives.
+  await adminDb().collection("settings").doc("public_stats").set({
+    data: JSON.stringify(doc),
+  });
   return NextResponse.json({ ok: true, ...doc, series: undefined, series_points: series.length });
 }
 
