@@ -8,6 +8,7 @@ import { Tilt3D } from "@/components/Tilt3D";
 import { HeroBackdropMount } from "@/components/HeroBackdropMount";
 import { ProductShowcase } from "@/components/ProductShowcase";
 import { InboundForm } from "@/components/InboundForm";
+import GrowthChart from "@/components/GrowthChart";
 import { NICHES, NICHE_COUNT } from "@/lib/niches";
 import { ArrowRight, Sparkles, Zap, Layers, Waves, Check } from "lucide-react";
 
@@ -84,7 +85,52 @@ const DEFAULT_CONTENT = {
 };
 
 
-async function _loadStats(): Promise<{published:number;views:number;languages:number;show:boolean}> {
+type Stats = {
+  published: number; views: number; languages: number; show: boolean;
+  channels: number; series: { month: string; views: number }[];
+};
+
+/**
+ * Reads the cached figures written by /api/maintenance/public-stats.
+ *
+ * It reports MANAGED views — every video on every connected channel —
+ * and the copy says exactly that. The distinction is load-bearing: this
+ * agent's own uploads account for a small share of the total, because
+ * several connected channels existed before it and carry their own back
+ * catalogue. "Views across channels managed on Yven" is true of the big
+ * number; "views our AI earned" would not be, and that is the sentence
+ * this page must never print.
+ *
+ * Narrow the channel set with the PUBLIC_STATS_CHANNELS platform config
+ * when the claim should cover only channels the agent built.
+ *
+ * Falls back to counting runs_index directly if the cache has never
+ * been written, so a fresh install shows the smaller true number rather
+ * than nothing.
+ */
+async function _loadStats(): Promise<Stats> {
+  const empty: Stats = { published: 0, views: 0, languages: 0, show: false, channels: 0, series: [] };
+  try {
+    const doc = await adminDb().collection("platform_config").doc("public_stats").get();
+    if (doc.exists) {
+      const d = (doc.data() || {}) as Record<string, unknown>;
+      const views = Math.max(0, Number(d.managed_views || 0));
+      const published = Math.max(0, Number(d.managed_videos || 0));
+      const series = Array.isArray(d.series)
+        ? (d.series as { month: string; views: number }[])
+        : [];
+      if (views > 0 && published > 0) {
+        return {
+          published, views,
+          languages: Math.max(1, Number(d.languages || 1)),
+          channels: Math.max(0, Number(d.channels || 0)),
+          series,
+          show: published >= 20 && views >= 1000,
+        };
+      }
+    }
+  } catch { /* fall through to the direct count */ }
+
   try {
     const snap = await adminDb().collection("runs_index").limit(2000).get();
     let published = 0, views = 0;
@@ -97,10 +143,10 @@ async function _loadStats(): Promise<{published:number;views:number;languages:nu
       const l = String(r.language || "").trim();
       if (l) langs.add(l);
     });
-    return { published, views, languages: langs.size,
+    return { published, views, languages: langs.size, channels: 0, series: [],
              show: published >= 100 && views >= 1000 };
   } catch {
-    return { published: 0, views: 0, languages: 0, show: false };
+    return empty;
   }
 }
 
@@ -229,8 +275,14 @@ export default async function LandingPage() {
             <div className="relative mt-24 grid grid-cols-3 gap-8 md:gap-16 text-center max-w-2xl mx-auto">
               {[
                 [stats.published.toLocaleString(), "Videos published"],
-                [stats.views.toLocaleString(),     "Views earned"],
-                [String(stats.languages || 1),     stats.languages === 1 ? "Language" : "Languages"],
+                // "Views across managed channels", never "views earned".
+                // The agent's own uploads are a small share of this
+                // total; several connected channels predate it. The
+                // wider claim is true, the narrower one would not be.
+                [stats.views.toLocaleString(),     "Views across channels"],
+                [stats.channels ? String(stats.channels) : String(stats.languages || 1),
+                 stats.channels ? (stats.channels === 1 ? "Channel" : "Channels")
+                                : (stats.languages === 1 ? "Language" : "Languages")],
               ].map(([n, lab]) => (
                 <div key={lab as string}>
                   <div className="text-2xl md:text-3xl font-semibold tracking-tight text-white tabular-nums">{n}</div>
@@ -238,6 +290,10 @@ export default async function LandingPage() {
                 </div>
               ))}
             </div>
+            <GrowthChart
+              series={stats.series}
+              caption="Cumulative views of every video on the channels we run, by publish month. Current view counts against real publish dates — not a replay of the counter over time."
+            />
           </Reveal>
         )}
       </section>

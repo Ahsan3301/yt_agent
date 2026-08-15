@@ -37,6 +37,7 @@ export function MarketingNav({ ctaHref = "/signup", ctaText = "Get Early Access"
             longer published. Renaming it "Quote" would make people scan
             the nav twice looking for a Pricing link that isn't there. */}
         <li><Link href="/#quote"          className="text-neutral-400 hover:text-white transition">Pricing</Link></li>
+        <li><Link href="/referrals"       className="text-neutral-400 hover:text-white transition">Referrals</Link></li>
         <li><Link href="/roadmap"         className="text-neutral-400 hover:text-white transition">Roadmap</Link></li>
         <li><Link href="/contact"         className="text-neutral-400 hover:text-white transition">Contact</Link></li>
       </ul>
