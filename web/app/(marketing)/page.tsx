@@ -91,36 +91,7 @@ type Stats = {
   channels: number; series: { month: string; views: number }[];
   /** ISO timestamp of the last real API sync, for the "synced Xh ago" line. */
   updatedAt?: string;
-  /**
-   * Views per second, measured from the tail of the real series.
-   *
-   * The stat row drifts at this rate between cron refreshes so the
-   * counter behaves like an odometer rather than a screenshot. It is
-   * deliberately the TRUE rate: a counter ticking faster than the
-   * channels actually grow would be a fabricated view count presented
-   * as a measurement.
-   */
-  viewsPerSec: number;
 };
-
-/**
- * Views/second implied by the most recent months of the real series.
- *
- * Averaged over the last three months rather than the final pair,
- * because a single quiet or viral month otherwise sets the rate for
- * everyone. Returns 0 when there is too little history to say — and 0
- * disables drift entirely, which is the honest answer to "how fast is
- * this growing" when we do not yet know.
- */
-function _viewsPerSec(series: { month: string; views: number }[]): number {
-  if (!series || series.length < 3) return 0;
-  const tail = series.slice(-4);            // 4 points = 3 monthly deltas
-  const gained = tail[tail.length - 1].views - tail[0].views;
-  const months = tail.length - 1;
-  if (gained <= 0 || months <= 0) return 0;
-  const perMonth = gained / months;
-  return perMonth / (30 * 24 * 3600);
-}
 
 /**
  * Reads the cached figures written by /api/maintenance/public-stats.
@@ -142,7 +113,7 @@ function _viewsPerSec(series: { month: string; views: number }[]): number {
  */
 async function _loadStats(): Promise<Stats> {
   const empty: Stats = { published: 0, views: 0, languages: 0, show: false,
-                         channels: 0, series: [], viewsPerSec: 0 };
+                         channels: 0, series: [] };
   try {
     const doc = await adminDb().collection("settings").doc("public_stats").get();
     if (doc.exists) {
@@ -161,7 +132,6 @@ async function _loadStats(): Promise<Stats> {
           channels: Math.max(0, Number(d.channels || 0)),
           series,
           updatedAt: String(d.updated_at || "") || undefined,
-          viewsPerSec: _viewsPerSec(series),
           show: published >= 20 && views >= 1000,
         };
       }
@@ -181,7 +151,7 @@ async function _loadStats(): Promise<Stats> {
       if (l) langs.add(l);
     });
     return { published, views, languages: langs.size, channels: 0, series: [],
-             viewsPerSec: 0, show: published >= 100 && views >= 1000 };
+             show: published >= 100 && views >= 1000 };
   } catch {
     return empty;
   }
@@ -325,9 +295,6 @@ export default async function LandingPage() {
                   // it. The wider claim is true, the narrower is not.
                   value: stats.views,
                   label: "Views across those channels so far",
-                  // Drifts at the channels' MEASURED growth rate, not
-                  // at whatever looks lively. See LiveStats.
-                  ratePerSec: stats.viewsPerSec,
                 },
                 {
                   value: stats.published,

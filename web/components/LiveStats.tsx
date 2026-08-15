@@ -3,95 +3,98 @@
 import { useEffect, useRef, useState } from "react";
 
 /**
- * The landing-page stat row, animated so it reads as live rather than
- * as a screenshot.
+ * The landing-page stat row.
  *
- * WHAT IS ANIMATED, AND WHAT IS NOT INVENTED
- * ------------------------------------------
- * Two effects, and the difference between them is the whole point.
+ * MOTION IS DECORATION; THE VALUE IS REAL.
+ * ----------------------------------------
+ * The animation exists to stop the row reading as a screenshot. It is
+ * not connected to anything live at render time — the page reads a
+ * cached document written by the maintenance cron, and this component
+ * only animates its way to that number.
  *
- *   1. COUNT-UP on mount. Every visitor sees the number climb from zero
- *      to the real figure. This is pure presentation — the value it
- *      lands on is exactly what the YouTube API reported, so nothing is
- *      claimed that is not true.
+ * Three effects, none of which change what is claimed:
  *
- *   2. DRIFT afterwards, at the channels' MEASURED growth rate, derived
- *      from the real monthly series. Between two cron refreshes the
- *      counter estimates where the true number has got to, the way an
- *      odometer keeps moving between readings.
+ *   1. COUNT-UP on mount, 1.4s eased, staggered across the cells.
+ *   2. RE-COUNT every 11s, shorter and shallower — the number dips a
+ *      little and climbs back, so a visitor who stays on the page keeps
+ *      seeing movement. This is the effect that makes it feel live.
+ *   3. A pulsing dot and the real "synced Xh ago" timestamp.
  *
- * What this deliberately does NOT do is tick at whatever speed looks
- * lively. A counter climbing faster than the channels actually grow is
- * a fabricated view count presented as a measurement, and it is also
- * self-defeating: anyone who leaves the tab open for a minute and does
- * the arithmetic finds the number was invented, and then doubts the
- * rest of the page too.
+ * An earlier version drifted upward at the channels' measured growth
+ * rate. That is gone: the rate is genuinely about one view per fifty
+ * seconds, so it bought no visible motion, and any faster rate would
+ * have meant printing view counts that had not happened. Re-counting to
+ * the SAME figure gives far more movement and keeps the number true —
+ * which matters here because a prospective customer can open the
+ * channels and check it.
  *
- * The real rate is slow — a channel network gaining ~50k views a month
- * moves about one view every fifty seconds. So the drift is a whisper,
- * not a slot machine. The count-up is what carries the sense of life,
- * and it re-runs for every visitor on every load.
- *
- * `ratePerSec` is computed by the caller from the last two points of
- * the real series. Zero disables drift entirely, which is the correct
- * behaviour when there is not enough history to know the rate.
+ * If the figures should visibly change between visits, the lever is the
+ * cron cadence in coolify/cron/crontab, not this file.
  */
 
 type Stat = {
   value: number;
   label: string;
-  /** Views/second for this stat. 0 = no drift. */
-  ratePerSec?: number;
 };
 
-const DURATION_MS = 1400;
+const RISE_MS = 1400;      // first, full count-up
+const RECOUNT_MS = 900;    // subsequent, shorter
+const RECOUNT_EVERY_MS = 11_000;
+/** How far back the re-count dips. 4% reads as a refresh, not a glitch. */
+const DIP = 0.96;
 
-/** easeOutExpo — fast start, long settle. Reads as "arriving", not "spinning". */
+/** easeOutExpo — fast start, long settle. Reads as "arriving". */
 function _ease(t: number): number {
   return t >= 1 ? 1 : 1 - Math.pow(2, -10 * t);
 }
 
-function _useCountUp(target: number, ratePerSec: number, delayMs: number) {
+function _useAnimatedNumber(target: number, delayMs: number) {
   const [shown, setShown] = useState(0);
-  const startedAt = useRef<number | null>(null);
   const raf = useRef<number | null>(null);
+  const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
-    // Respect the OS setting. A count-up is motion, and someone who has
-    // asked for less of it should get the final number immediately.
+    // Someone who asked the OS for less motion gets the number, not the
+    // show.
     const reduce = typeof window !== "undefined"
       && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     if (reduce) { setShown(target); return; }
 
-    let mounted = true;
-    const tick = (now: number) => {
-      if (!mounted) return;
-      if (startedAt.current === null) startedAt.current = now + delayMs;
-      const elapsed = now - startedAt.current;
-      if (elapsed < 0) { raf.current = requestAnimationFrame(tick); return; }
+    let cancelled = false;
 
-      if (elapsed < DURATION_MS) {
-        setShown(Math.round(target * _ease(elapsed / DURATION_MS)));
-        raf.current = requestAnimationFrame(tick);
-        return;
-      }
-      // Settled. From here the number only moves at the measured rate.
-      const driftedFor = (elapsed - DURATION_MS) / 1000;
-      setShown(target + Math.floor(driftedFor * Math.max(0, ratePerSec)));
-      raf.current = requestAnimationFrame(tick);
+    const run = (from: number, to: number, ms: number, startDelay: number) => {
+      const begin = performance.now() + startDelay;
+      const step = (now: number) => {
+        if (cancelled) return;
+        const t = (now - begin) / ms;
+        if (t < 0) { raf.current = requestAnimationFrame(step); return; }
+        if (t >= 1) { setShown(to); return; }
+        setShown(Math.round(from + (to - from) * _ease(t)));
+        raf.current = requestAnimationFrame(step);
+      };
+      raf.current = requestAnimationFrame(step);
     };
-    raf.current = requestAnimationFrame(tick);
+
+    run(0, target, RISE_MS, delayMs);
+
+    // Keep it moving for anyone who stays on the page.
+    timer.current = setInterval(() => {
+      if (cancelled) return;
+      run(Math.round(target * DIP), target, RECOUNT_MS, 0);
+    }, RECOUNT_EVERY_MS + delayMs);
+
     return () => {
-      mounted = false;
+      cancelled = true;
       if (raf.current) cancelAnimationFrame(raf.current);
+      if (timer.current) clearInterval(timer.current);
     };
-  }, [target, ratePerSec, delayMs]);
+  }, [target, delayMs]);
 
   return shown;
 }
 
 function StatCell({ stat, index }: { stat: Stat; index: number }) {
-  const shown = _useCountUp(stat.value, stat.ratePerSec || 0, index * 140);
+  const shown = _useAnimatedNumber(stat.value, index * 140);
   return (
     <div>
       <div className="text-2xl md:text-3xl font-semibold tracking-tight text-white tabular-nums">
@@ -140,7 +143,7 @@ export default function LiveStats({
           <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-70 animate-ping" />
           <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-400" />
         </span>
-        <span>Live from the YouTube API{ago ? ` · synced ${ago}` : ""}</span>
+        <span>From the YouTube API{ago ? ` · synced ${ago}` : ""}</span>
       </div>
     </div>
   );
