@@ -84,6 +84,13 @@ export async function middleware(req: NextRequest) {
       pathname === "/demo" ||
       pathname === "/contact" ||
       pathname === "/niches" ||
+      // The referral PROGRAM explainer is public — it is what convinces
+      // someone to sign up, so gating it behind sign-in inverts its
+      // purpose. The personal link stays private at /app/referrals.
+      // Adding the page under (marketing) is not enough on its own:
+      // this middleware denies by default, so an unlisted marketing
+      // route 307s to /login and looks broken.
+      pathname === "/referrals" ||
       pathname.startsWith("/tools/") ||
       // Referral short-links must be reachable when signed out.
       pathname.startsWith("/r/");
