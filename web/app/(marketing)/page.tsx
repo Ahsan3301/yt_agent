@@ -287,6 +287,10 @@ export default async function LandingPage() {
                 {
                   value: stats.channels || stats.languages || 1,
                   label: "Channels connected so far",
+                  // Never ticks. A channel count of 9 climbing to 12
+                  // while you watch is the one number a visitor would
+                  // immediately read as fake.
+                  tick: false,
                 },
                 {
                   // "Views across the channels we run", never "views
