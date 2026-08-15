@@ -9,6 +9,7 @@ import { HeroBackdropMount } from "@/components/HeroBackdropMount";
 import { ProductShowcase } from "@/components/ProductShowcase";
 import { InboundForm } from "@/components/InboundForm";
 import GrowthChart from "@/components/GrowthChart";
+import LiveStats from "@/components/LiveStats";
 import { NICHES, NICHE_COUNT } from "@/lib/niches";
 import { ArrowRight, Sparkles, Zap, Layers, Waves, Check } from "lucide-react";
 
@@ -88,7 +89,38 @@ const DEFAULT_CONTENT = {
 type Stats = {
   published: number; views: number; languages: number; show: boolean;
   channels: number; series: { month: string; views: number }[];
+  /** ISO timestamp of the last real API sync, for the "synced Xh ago" line. */
+  updatedAt?: string;
+  /**
+   * Views per second, measured from the tail of the real series.
+   *
+   * The stat row drifts at this rate between cron refreshes so the
+   * counter behaves like an odometer rather than a screenshot. It is
+   * deliberately the TRUE rate: a counter ticking faster than the
+   * channels actually grow would be a fabricated view count presented
+   * as a measurement.
+   */
+  viewsPerSec: number;
 };
+
+/**
+ * Views/second implied by the most recent months of the real series.
+ *
+ * Averaged over the last three months rather than the final pair,
+ * because a single quiet or viral month otherwise sets the rate for
+ * everyone. Returns 0 when there is too little history to say — and 0
+ * disables drift entirely, which is the honest answer to "how fast is
+ * this growing" when we do not yet know.
+ */
+function _viewsPerSec(series: { month: string; views: number }[]): number {
+  if (!series || series.length < 3) return 0;
+  const tail = series.slice(-4);            // 4 points = 3 monthly deltas
+  const gained = tail[tail.length - 1].views - tail[0].views;
+  const months = tail.length - 1;
+  if (gained <= 0 || months <= 0) return 0;
+  const perMonth = gained / months;
+  return perMonth / (30 * 24 * 3600);
+}
 
 /**
  * Reads the cached figures written by /api/maintenance/public-stats.
@@ -109,7 +141,8 @@ type Stats = {
  * than nothing.
  */
 async function _loadStats(): Promise<Stats> {
-  const empty: Stats = { published: 0, views: 0, languages: 0, show: false, channels: 0, series: [] };
+  const empty: Stats = { published: 0, views: 0, languages: 0, show: false,
+                         channels: 0, series: [], viewsPerSec: 0 };
   try {
     const doc = await adminDb().collection("settings").doc("public_stats").get();
     if (doc.exists) {
@@ -127,6 +160,8 @@ async function _loadStats(): Promise<Stats> {
           languages: Math.max(1, Number(d.languages || 1)),
           channels: Math.max(0, Number(d.channels || 0)),
           series,
+          updatedAt: String(d.updated_at || "") || undefined,
+          viewsPerSec: _viewsPerSec(series),
           show: published >= 20 && views >= 1000,
         };
       }
@@ -146,7 +181,7 @@ async function _loadStats(): Promise<Stats> {
       if (l) langs.add(l);
     });
     return { published, views, languages: langs.size, channels: 0, series: [],
-             show: published >= 100 && views >= 1000 };
+             viewsPerSec: 0, show: published >= 100 && views >= 1000 };
   } catch {
     return empty;
   }
@@ -274,24 +309,32 @@ export default async function LandingPage() {
             served by silence than by numbers it has to invent. */}
         {stats.show && (
           <Reveal delay={750}>
-            <div className="relative mt-24 grid grid-cols-3 gap-8 md:gap-16 text-center max-w-2xl mx-auto">
-              {[
-                [stats.published.toLocaleString(), "Videos published"],
-                // "Views across managed channels", never "views earned".
-                // The agent's own uploads are a small share of this
-                // total; several connected channels predate it. The
-                // wider claim is true, the narrower one would not be.
-                [stats.views.toLocaleString(),     "Views across channels"],
-                [stats.channels ? String(stats.channels) : String(stats.languages || 1),
-                 stats.channels ? (stats.channels === 1 ? "Channel" : "Channels")
-                                : (stats.languages === 1 ? "Language" : "Languages")],
-              ].map(([n, lab]) => (
-                <div key={lab as string}>
-                  <div className="text-2xl md:text-3xl font-semibold tracking-tight text-white tabular-nums">{n}</div>
-                  <div className="text-[11px] uppercase tracking-[0.14em] text-neutral-500 mt-1.5">{lab}</div>
-                </div>
-              ))}
-            </div>
+            {/* LiveStats owns its own grid and spacing — the wrapper
+                that used to be here laid out the three cells directly. */}
+          <LiveStats
+              updatedAt={stats.updatedAt}
+              stats={[
+                {
+                  value: stats.channels || stats.languages || 1,
+                  label: "Channels connected so far",
+                },
+                {
+                  // "Views across the channels we run", never "views
+                  // earned". The agent's own uploads are a small share
+                  // of this total; several connected channels predate
+                  // it. The wider claim is true, the narrower is not.
+                  value: stats.views,
+                  label: "Views across those channels so far",
+                  // Drifts at the channels' MEASURED growth rate, not
+                  // at whatever looks lively. See LiveStats.
+                  ratePerSec: stats.viewsPerSec,
+                },
+                {
+                  value: stats.published,
+                  label: "Videos live on them so far",
+                },
+              ]}
+            />
             <GrowthChart
               series={stats.series}
               caption="Cumulative views of every video on the channels we run, by publish month. Current view counts against real publish dates — not a replay of the counter over time."
