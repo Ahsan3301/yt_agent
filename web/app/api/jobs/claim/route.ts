@@ -281,53 +281,59 @@ export async function POST(req: NextRequest) {
           ? chanCfg.allowed_workers
           : snapshotList;
       const oracleAllowedForRender = allowedList.includes("oracle");
-      if (workerTier === "dashboard" && !SIDE_JOB_KINDS.has(kind) && !oracleAllowedForRender) {
+
+      // STRANDED-JOB RESCUE — computed here, ahead of every allowlist
+      // gate, because the dashboard-tier check below rejects exactly
+      // the jobs this is meant to save and would `continue` first.
+      //
+      // A job whose allowlist names only workers that are not running
+      // can never be claimed. It waits out the 24h sweep and dies as
+      // "orphaned in queue with no backend claim" — which reads like a
+      // dispatch fault and is really a configuration one: channels set
+      // to ['kaggle','colab'] produce jobs the always-on Oracle worker
+      // is forbidden to touch, and Kaggle/Colab are not always up.
+      //
+      // After the grace period, if NONE of the allowed workers is
+      // alive, any live worker may take it. A GPU-preferred render on
+      // the Oracle CPU tier is already supported (SDXL is skipped
+      // gracefully), so a late render beats no render. The grace is
+      // what preserves the allowlist: preferred workers keep exclusive
+      // claim, and a Kaggle booting inside that window still gets its
+      // jobs.
+      const STRANDED_AFTER_SEC = 3600;
+      let stranded = false;
+      if (
+        allowedList.length > 0 &&
+        !SIDE_JOB_KINDS.has(kind) &&
+        workerLabel &&
+        !allowedList.includes(workerLabel) &&
+        (now - Number(data.queued_at ?? now)) >= STRANDED_AFTER_SEC
+      ) {
+        if (liveLabels === null) liveLabels = await _liveWorkerLabels(db);
+        if (!allowedList.some((l) => liveLabels!.has(l))) {
+          stranded = true;
+          console.warn(
+            "[claim] rescuing stranded job - no allowed worker alive",
+            JSON.stringify({
+              job_id: String(data.id || doc.id),
+              allowed: allowedList,
+              claiming_as: workerLabel,
+              queued_hours: Math.round((now - Number(data.queued_at ?? now)) / 360) / 10,
+            }),
+          );
+        }
+      }
+
+      if (workerTier === "dashboard" && !SIDE_JOB_KINDS.has(kind)
+          && !oracleAllowedForRender && !stranded) {
         continue;
       }
 
       // Per-channel worker allowlist + STAGED priority handover
       if (allowedList.length > 0 && !SIDE_JOB_KINDS.has(kind)) {
         if (!workerLabel) continue;
-
-        // STRANDED-JOB RESCUE.
-        //
-        // A job whose allowlist names only workers that are not running
-        // can never be claimed. It waits out the 24h sweep and dies as
-        // "orphaned in queue with no backend claim", which reads like a
-        // dispatch fault and is actually a configuration one: channels
-        // set to ['kaggle','colab'] produce jobs the always-on Oracle
-        // worker is forbidden to touch, and Kaggle/Colab are not always
-        // up.
-        //
-        // After STRANDED_AFTER_SEC, if NONE of the allowed workers is
-        // alive, any live worker may take it. Running a GPU-preferred
-        // render on the Oracle CPU tier is already a supported path —
-        // SDXL is skipped gracefully there — so a late render beats no
-        // render.
-        //
-        // The grace period is what keeps this from defeating the
-        // allowlist: for the first hour the preferred workers have
-        // exclusive claim, and a Kaggle that boots inside that window
-        // still gets its jobs.
-        const STRANDED_AFTER_SEC = 3600;
-        const jobAge = now - Number(data.queued_at ?? now);
-        let stranded = false;
-        if (!allowedList.includes(workerLabel)) {
-          if (jobAge < STRANDED_AFTER_SEC) continue;
-          if (liveLabels === null) liveLabels = await _liveWorkerLabels(db);
-          const anyPreferredAlive = allowedList.some((l) => liveLabels!.has(l));
-          if (anyPreferredAlive) continue;
-          stranded = true;
-          console.warn(
-            "[claim] rescuing stranded job — no allowed worker alive",
-            JSON.stringify({
-              job_id: String(data.id || doc.id),
-              allowed: allowedList,
-              claiming_as: workerLabel,
-              queued_hours: Math.round(jobAge / 360) / 10,
-            }),
-          );
-        }
+        // Not on the list and not rescued above -> not ours.
+        if (!allowedList.includes(workerLabel) && !stranded) continue;
 
         // A stranded rescue has already established that no preferred
         // worker is alive, so there is no handover left to stage.
