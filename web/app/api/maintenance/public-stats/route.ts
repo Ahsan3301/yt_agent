@@ -3,6 +3,7 @@ import { adminDb } from "@/lib/firebase-admin";
 import { requireMaintenanceKey } from "@/app/api/_lib/auth";
 import { newRequestId, logRoute } from "@/app/api/_lib/orchestrator";
 import { getConfig } from "@/lib/platform-config";
+import { youtubeApiKey } from "@/lib/youtube-stats";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -61,8 +62,11 @@ async function _yt(path: string, params: Record<string, string>, key: string) {
 }
 
 async function _handler(req: NextRequest) {
-  const key = String(await getConfig("YOUTUBE_API_KEY", "")).trim()
-    || String(process.env.YOUTUBE_API_KEY || "").trim();
+  // Canonical resolver, not a private lookup. The key lives in
+  // settings/platform_pool__api_keys, NOT platform_config — reading it
+  // the "obvious" way returned empty and this route reported the key as
+  // unconfigured while every other YouTube caller had it.
+  const key = (await youtubeApiKey()).trim();
   if (!key) {
     return NextResponse.json({ error: "YOUTUBE_API_KEY not configured" }, { status: 400 });
   }
