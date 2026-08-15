@@ -6,12 +6,25 @@ import { RoadmapTabs } from "@/components/RoadmapTabs";
 /**
  * Public roadmap.
  *
- * Server-fetches roadmap_items from PB with a 60s revalidate. If PB
- * is empty (fresh install / migration just landed) or unreachable,
- * falls back to a hardcoded default set that matches the design.
- * Editable at /superadmin/roadmap.
+ * Server-fetches roadmap_items from PB. If PB is empty (fresh install /
+ * migration just landed) or unreachable, falls back to a hardcoded
+ * default set that matches the design. Editable at /superadmin/roadmap.
+ *
+ * DYNAMIC, not ISR. `revalidate = 60` was declared here but never took
+ * effect: the PocketBase client fetches with no-store, so Next.js hit
+ *
+ *   Error: Page changed from static to dynamic at runtime /roadmap,
+ *   reason: revalidate: 0 fetch .../roadmap_items/records
+ *
+ * on every request. The page still rendered — it fell back to dynamic —
+ * so the only visible symptom was an error logged on each visit, which
+ * is exactly the kind of thing that gets scrolled past for months.
+ *
+ * Declaring the truth removes the error. Restoring real caching means
+ * making the PB client cacheable, which is a data-layer change and
+ * affects every consumer, not just this page.
  */
-export const revalidate = 60;
+export const dynamic = "force-dynamic";
 
 export type Status = "live" | "next" | "planned" | "changelog";
 export type Item = { status: Status; title: string; body: string; tag?: string; section?: string; sort_order?: number };
