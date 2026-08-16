@@ -249,4 +249,4 @@
 # The landing page reads the cached settings/public_stats document. It
 # must never fetch YouTube per visitor — that would spend the same
 # quota research depends on, on traffic.
-25 4,16 * * * curl -fsS -X POST -H "X-API-Key: $RENDER_TRIGGER_KEY" "$DASHBOARD_INTERNAL_URL/api/maintenance/public-stats" >> /proc/1/fd/1 2>&1
+25 * * * * curl -fsS -X POST -H "X-API-Key: $RENDER_TRIGGER_KEY" "$DASHBOARD_INTERNAL_URL/api/maintenance/public-stats" >> /proc/1/fd/1 2>&1

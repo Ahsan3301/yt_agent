@@ -3,135 +3,106 @@
 import { useEffect, useRef, useState } from "react";
 
 /**
- * The landing-page stat row: a live-looking counter.
+ * The landing-page stat row.
  *
- * HOW IT BEHAVES
- * --------------
- *   1. Counts up from zero on mount, 1.4s eased, staggered per cell.
- *   2. Then TICKS — small irregular increments every ~1.2-2.4s, so the
- *      digits are visibly moving whenever anyone is looking at them.
- *   3. Every ~40s it RE-SYNCS: rolls back to the true figure and
- *      resumes. Reads as a refresh landing.
+ * ANCHORED TO WALL CLOCK, NOT TO PAGE LOAD.
+ * -----------------------------------------
+ * The previous version ticked upward from the cached figure and re-synced
+ * back to it every 40s. Two problems, both of which read as fake:
+ * refreshing the page reset the number to where it started, and the value
+ * a visitor saw depended on how long their tab had been open.
  *
- * WHY IT RE-SYNCS INSTEAD OF CLIMBING FOREVER
- * -------------------------------------------
- * A counter that only ever increments looks identical to this one for
- * the first minute and is a different thing by next week: leave it a
- * month at a visible tick rate and it reads several hundred thousand
- * views above reality. That number is on a public page, next to a chart
- * built from the real catalogue, for visitors who can open the channels
- * and count. When those disagree it is the whole page that stops being
- * believed, not just the counter.
+ * Now the displayed value is a pure function of the current time:
  *
- * So the tick is bounded. DRIFT_CAP_FRACTION keeps the displayed value
- * within a hair of the real one — at 1.1M views that is a ceiling of
- * about 350 — and the re-sync pulls it back. The motion is
- * indistinguishable from an unbounded ticker at a glance, which is the
- * entire point of the effect, and the figure stays one a customer can
- * verify.
+ *     shown(t) = baseline + (t - anchor) * ratePerSec
  *
- * The base numbers come from the cached document the maintenance cron
- * writes. Nothing here calls an API.
+ * Everything follows from that. The number never goes backwards on
+ * refresh, because two loads a second apart compute two values a second
+ * apart. It keeps climbing for as long as the page is open AND between
+ * visits, so someone returning tomorrow sees a meaningfully larger
+ * figure. And every visitor looking at the same moment sees the same
+ * number, which a per-tab ticker could never manage.
+ *
+ * `ratePerSec` is the channels' MEASURED growth, derived from the real
+ * monthly series. Between cron syncs this is an estimate of where the
+ * true counter has reached — the way an odometer keeps moving between
+ * readings — and each sync re-anchors it to a fresh measurement. A
+ * faster rate would drift away from reality and, on a page that also
+ * charts the real catalogue, would eventually contradict its own graph.
  */
 
 type Stat = {
   value: number;
   label: string;
-  /** Set false for counts that would look absurd ticking (e.g. channels). */
-  tick?: boolean;
+  /** Per-second growth. 0 = static (channel counts must not tick). */
+  ratePerSec?: number;
 };
 
 const RISE_MS = 1400;
-const RESYNC_MS = 900;
-const RESYNC_EVERY_MS = 40_000;
 
-/** Ceiling on how far a ticking value may sit above the truth. */
-const DRIFT_CAP_FRACTION = 0.0003;   // 0.03% — ~350 on 1.1M
-/** Gap between ticks, randomised so the rhythm is not machine-regular. */
-const TICK_MIN_MS = 1200;
-const TICK_MAX_MS = 2400;
-
+/** easeOutExpo — fast start, long settle. Reads as "arriving". */
 function _ease(t: number): number {
   return t >= 1 ? 1 : 1 - Math.pow(2, -10 * t);
 }
 
-function _useTickingNumber(target: number, enabled: boolean, delayMs: number) {
-  const [shown, setShown] = useState(0);
+/**
+ * Value implied by the clock right now.
+ *
+ * Pure: same inputs and same instant always give the same answer, which
+ * is what makes a refresh continuous rather than a reset.
+ */
+function _projected(base: number, anchorSec: number, rate: number): number {
+  if (!rate || !anchorSec) return base;
+  const elapsed = Math.max(0, Date.now() / 1000 - anchorSec);
+  return base + Math.floor(elapsed * rate);
+}
+
+function StatCell({
+  stat, index, anchorSec,
+}: { stat: Stat; index: number; anchorSec: number }) {
+  const target = _projected(stat.value, anchorSec, stat.ratePerSec || 0);
+  const [shown, setShown] = useState(target);
   const raf = useRef<number | null>(null);
-  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
-  const drift = useRef(0);
+  const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     const reduce = typeof window !== "undefined"
       && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    if (reduce) { setShown(target); return; }
 
-    let cancelled = false;
-    const clearTimers = () => { timers.current.forEach(clearTimeout); timers.current = []; };
+    // Recompute from the clock forever. This is what keeps the number
+    // moving while the tab is open, and it can only ever go up.
+    const followClock = () => {
+      timer.current = setInterval(() => {
+        setShown(_projected(stat.value, anchorSec, stat.ratePerSec || 0));
+      }, 1000);
+    };
 
-    const animate = (from: number, to: number, ms: number, startDelay: number,
-                     done?: () => void) => {
-      const begin = performance.now() + startDelay;
-      const step = (now: number) => {
-        if (cancelled) return;
-        const t = (now - begin) / ms;
-        if (t < 0) { raf.current = requestAnimationFrame(step); return; }
-        if (t >= 1) { setShown(to); done?.(); return; }
-        setShown(Math.round(from + (to - from) * _ease(t)));
-        raf.current = requestAnimationFrame(step);
-      };
+    if (reduce) {
+      setShown(_projected(stat.value, anchorSec, stat.ratePerSec || 0));
+      followClock();
+      return () => { if (timer.current) clearInterval(timer.current); };
+    }
+
+    // Count up on arrival, to the CLOCK-DERIVED value rather than the
+    // raw cached one — otherwise the animation would land on a number
+    // slightly behind where the page says it should be.
+    const begin = performance.now() + index * 140;
+    const to = _projected(stat.value, anchorSec, stat.ratePerSec || 0);
+    const step = (now: number) => {
+      const t = (now - begin) / RISE_MS;
+      if (t < 0) { raf.current = requestAnimationFrame(step); return; }
+      if (t >= 1) { setShown(to); followClock(); return; }
+      setShown(Math.round(to * _ease(t)));
       raf.current = requestAnimationFrame(step);
     };
-
-    // A tick is 1-3 on small numbers, proportionally more on large ones,
-    // so a 1.1M counter does not creep by single digits.
-    const tickSize = () => {
-      const scale = Math.max(1, Math.round(target / 400_000));
-      return (1 + Math.floor(Math.random() * 3)) * scale;
-    };
-
-    const scheduleTick = () => {
-      if (cancelled || !enabled) return;
-      const wait = TICK_MIN_MS + Math.random() * (TICK_MAX_MS - TICK_MIN_MS);
-      timers.current.push(setTimeout(() => {
-        if (cancelled) return;
-        const cap = Math.max(1, Math.round(target * DRIFT_CAP_FRACTION));
-        // At the ceiling, hold rather than drift further from the truth.
-        if (drift.current < cap) {
-          drift.current = Math.min(cap, drift.current + tickSize());
-          setShown(target + drift.current);
-        }
-        scheduleTick();
-      }, wait));
-    };
-
-    const scheduleResync = () => {
-      if (cancelled || !enabled) return;
-      timers.current.push(setTimeout(() => {
-        if (cancelled) return;
-        const from = target + drift.current;
-        drift.current = 0;
-        animate(from, target, RESYNC_MS, 0, scheduleResync);
-      }, RESYNC_EVERY_MS));
-    };
-
-    animate(0, target, RISE_MS, delayMs, () => {
-      scheduleTick();
-      scheduleResync();
-    });
+    raf.current = requestAnimationFrame(step);
 
     return () => {
-      cancelled = true;
       if (raf.current) cancelAnimationFrame(raf.current);
-      clearTimers();
+      if (timer.current) clearInterval(timer.current);
     };
-  }, [target, enabled, delayMs]);
+  }, [stat.value, stat.ratePerSec, anchorSec, index]);
 
-  return shown;
-}
-
-function StatCell({ stat, index }: { stat: Stat; index: number }) {
-  const shown = _useTickingNumber(stat.value, stat.tick !== false, index * 140);
   return (
     <div>
       <div className="text-2xl md:text-3xl font-semibold tracking-tight text-white tabular-nums">
@@ -151,6 +122,7 @@ export default function LiveStats({
   stats: Stat[];
   updatedAt?: string;
 }) {
+  const anchorSec = updatedAt ? Date.parse(updatedAt) / 1000 : 0;
   const [ago, setAgo] = useState<string>("");
 
   useEffect(() => {
@@ -171,7 +143,7 @@ export default function LiveStats({
     <div className="relative mt-24 max-w-2xl mx-auto">
       <div className="grid grid-cols-3 gap-8 md:gap-16 text-center">
         {stats.map((s, i) => (
-          <StatCell key={s.label} stat={s} index={i} />
+          <StatCell key={s.label} stat={s} index={i} anchorSec={anchorSec} />
         ))}
       </div>
 

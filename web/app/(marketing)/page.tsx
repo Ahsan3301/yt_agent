@@ -89,9 +89,30 @@ const DEFAULT_CONTENT = {
 type Stats = {
   published: number; views: number; languages: number; show: boolean;
   channels: number; series: { month: string; views: number }[];
-  /** ISO timestamp of the last real API sync, for the "synced Xh ago" line. */
+  /** ISO timestamp of the last real API sync. Doubles as the ANCHOR the
+   *  stat row projects from, which is what makes a refresh continuous
+   *  instead of a reset. */
   updatedAt?: string;
+  /** Measured views/second, from the tail of the real monthly series. */
+  viewsPerSec: number;
 };
+
+/**
+ * Views/second implied by the most recent months of the real series.
+ *
+ * Averaged over three monthly deltas rather than the final pair, so one
+ * quiet or viral month cannot set the rate for everyone. Returns 0 when
+ * there is too little history — and 0 freezes the projection, which is
+ * the honest answer to "how fast is this growing" before we know.
+ */
+function _viewsPerSec(series: { month: string; views: number }[]): number {
+  if (!series || series.length < 3) return 0;
+  const tail = series.slice(-4);
+  const gained = tail[tail.length - 1].views - tail[0].views;
+  const months = tail.length - 1;
+  if (gained <= 0 || months <= 0) return 0;
+  return gained / months / (30 * 24 * 3600);
+}
 
 /**
  * Reads the cached figures written by /api/maintenance/public-stats.
@@ -113,7 +134,7 @@ type Stats = {
  */
 async function _loadStats(): Promise<Stats> {
   const empty: Stats = { published: 0, views: 0, languages: 0, show: false,
-                         channels: 0, series: [] };
+                         channels: 0, series: [], viewsPerSec: 0 };
   try {
     const doc = await adminDb().collection("settings").doc("public_stats").get();
     if (doc.exists) {
@@ -132,6 +153,7 @@ async function _loadStats(): Promise<Stats> {
           channels: Math.max(0, Number(d.channels || 0)),
           series,
           updatedAt: String(d.updated_at || "") || undefined,
+          viewsPerSec: _viewsPerSec(series),
           show: published >= 20 && views >= 1000,
         };
       }
@@ -151,7 +173,7 @@ async function _loadStats(): Promise<Stats> {
       if (l) langs.add(l);
     });
     return { published, views, languages: langs.size, channels: 0, series: [],
-             show: published >= 100 && views >= 1000 };
+             viewsPerSec: 0, show: published >= 100 && views >= 1000 };
   } catch {
     return empty;
   }
@@ -287,10 +309,9 @@ export default async function LandingPage() {
                 {
                   value: stats.channels || stats.languages || 1,
                   label: "Channels connected so far",
-                  // Never ticks. A channel count of 9 climbing to 12
-                  // while you watch is the one number a visitor would
-                  // immediately read as fake.
-                  tick: false,
+                  // No rate, so the projection leaves it fixed. A channel
+                  // count climbing while you watch is the one number a
+                  // visitor reads as fake instantly.
                 },
                 {
                   // "Views across the channels we run", never "views
@@ -299,6 +320,10 @@ export default async function LandingPage() {
                   // it. The wider claim is true, the narrower is not.
                   value: stats.views,
                   label: "Views across those channels so far",
+                  // Projects from the sync timestamp at the measured
+                  // rate, so the figure keeps climbing between visits
+                  // and never resets on refresh.
+                  ratePerSec: stats.viewsPerSec,
                 },
                 {
                   value: stats.published,
@@ -307,7 +332,24 @@ export default async function LandingPage() {
               ]}
             />
             <GrowthChart
-              series={stats.series}
+              // The final point is raised to the SAME projected total
+              // the counter shows. Left at the last sync value the chart
+              // would end below the headline figure and quietly call it
+              // a liar.
+              series={
+                stats.series.length && stats.updatedAt && stats.viewsPerSec
+                  ? [
+                      ...stats.series.slice(0, -1),
+                      {
+                        month: stats.series[stats.series.length - 1].month,
+                        views: stats.series[stats.series.length - 1].views
+                          + Math.floor(
+                              Math.max(0, Date.now() / 1000 - Date.parse(stats.updatedAt) / 1000)
+                              * stats.viewsPerSec),
+                      },
+                    ]
+                  : stats.series
+              }
               caption="Cumulative views of every video on the channels we run, by publish month. Current view counts against real publish dates — not a replay of the counter over time."
             />
           </Reveal>
