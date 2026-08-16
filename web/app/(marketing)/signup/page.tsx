@@ -15,8 +15,6 @@ export default function SignupPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
-  const [kaggleUser, setKaggleUser] = useState("");
-  const [kaggleKey, setKaggleKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
@@ -33,8 +31,6 @@ export default function SignupPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           email, password,
-          kaggle_username: kaggleUser.trim(),
-          kaggle_key: kaggleKey.trim(),
         }),
       });
       const j = await r.json().catch(() => ({}));
@@ -160,24 +156,6 @@ export default function SignupPage() {
                      value={confirm} onChange={(e) => setConfirm(e.target.value)} />
             </div>
 
-            <details className="group">
-              <summary className="cursor-pointer text-xs text-neutral-400 hover:text-neutral-200 flex items-center gap-1 select-none">
-                <span className="inline-block w-3 h-3 text-center leading-3 transition-transform group-open:rotate-90">›</span>
-                Optional — bring your own Kaggle worker
-              </summary>
-              <div className="mt-3 space-y-3 pl-4 border-l border-line">
-                <div>
-                  <label className="label">Kaggle username</label>
-                  <input type="text" className="input h-10" placeholder="yourname"
-                         value={kaggleUser} onChange={(e) => setKaggleUser(e.target.value)} />
-                </div>
-                <div>
-                  <label className="label">Kaggle API key</label>
-                  <input type="password" className="input h-10 font-mono" placeholder="from kaggle.com/account"
-                         value={kaggleKey} onChange={(e) => setKaggleKey(e.target.value)} />
-                </div>
-              </div>
-            </details>
 
             {error && (
               <div className="text-sm text-red-300 border border-red-500/30 bg-red-500/[0.06] rounded-lg px-3.5 py-2.5 animate-[fadeIn_0.2s_ease-out]">
