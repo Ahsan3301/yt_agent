@@ -78,6 +78,42 @@ def _sample_stats() -> dict:
     return out
 
 
+# Consecutive failed registrations. A worker that cannot register is
+# INVISIBLE — it runs, burns quota, claims nothing, and appears nowhere
+# in the dashboard.
+_REGISTER_FAILS = [0]
+
+
+def _register_failed(detail: str) -> None:
+    """Report a failed heartbeat loudly.
+
+    This was `log.debug(f"register failed: {e}")`. Debug is off in
+    production, so the single most important failure this worker can
+    have was the quietest line in the file.
+
+    It cost real money. After the domain moved to yven.io the Kaggle
+    worker kept the old COOLIFY_BASE_URL in its Secrets, every
+    registration got a 503, and the kernel ran happily for hours on
+    every boot — invisible in the dashboard, claiming nothing, burning
+    GPU quota. Twenty-plus hours went before anyone looked at the
+    config, because nothing ever said it was failing.
+
+    Now: ERROR on the first failure and every tenth after, always
+    naming the URL, because "which host is it even talking to" was the
+    question that took longest to answer. The interval keeps a long
+    outage from drowning the log while still proving it is ongoing.
+    """
+    _REGISTER_FAILS[0] += 1
+    n = _REGISTER_FAILS[0]
+    if n == 1 or n % 10 == 0:
+        log.error(
+            f"register FAILED ({n} consecutive) -> "
+            f"{INTERNAL_URL}/api/workers/register :: {detail}. "
+            f"This worker is INVISIBLE to the dashboard and will claim "
+            f"no jobs until this succeeds. Check COOLIFY_BASE_URL."
+        )
+
+
 def register(active_job_id: str = "") -> None:
     """Heartbeat to /api/workers/register — puts us on the Monitor page."""
     import requests
@@ -101,13 +137,16 @@ def register(active_job_id: str = "") -> None:
         )
         if r.ok:
             d = r.json() or {}
+            if _REGISTER_FAILS[0]:
+                log.info(f"register: recovered after {_REGISTER_FAILS[0]} failed attempt(s)")
+                _REGISTER_FAILS[0] = 0
             if d.get("shutdown"):
                 log.warning("dashboard requested shutdown; exiting.")
                 sys.exit(0)
         else:
-            log.warning(f"register HTTP {r.status_code}: {r.text[:200]}")
+            _register_failed(f"HTTP {r.status_code}: {r.text[:200]}")
     except Exception as e:
-        log.debug(f"register failed: {e}")
+        _register_failed(f"{type(e).__name__}: {e}")
 
 
 def claim() -> dict | None:
