@@ -15,6 +15,7 @@ import {
 import VideoPlayer from "@/components/VideoPlayer";
 import LogsPanel from "@/components/LogsPanel";
 import { PageHeader } from "@/components/PageHeader";
+import QuotaPanel from "@/components/QuotaPanel";
 import { SetupChecklist, SetupChecklistSkeleton } from "@/components/SetupChecklist";
 
 /**
@@ -146,6 +147,11 @@ export default function Dashboard() {
           </>
         }
       />
+
+      {/* Where this account stands: trial time, today's usage, and the
+          way to ask for more. Above the fold on purpose — a user who
+          hits a limit mid-render should already know why. */}
+      <QuotaPanel />
 
       {/* Preflight — only appears when something's wrong */}
       {isAdmin && preflight && !preflight.ok && (

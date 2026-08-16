@@ -262,3 +262,65 @@ export function bustQuotaCache(userId: string, kind?: QuotaKind): void {
     _cache.delete(`${userId}|${kind}`);
   }
 }
+
+export type QuotaStatus = {
+  channels: { used: number; limit: number | null };
+  videosToday: { used: number; limit: number | null };
+  trial: { active: boolean; expiresAt: number; daysLeft: number; daysGranted: number };
+  enforced: boolean;
+};
+
+/**
+ * Everything the dashboard needs to show a user where they stand.
+ *
+ * `limit: null` means uncapped — either the plan is unlimited or
+ * enforcement is off. The UI must render that as "unlimited" rather
+ * than as 0, which would read as "you may do nothing".
+ *
+ * Reports the limit that would ACTUALLY apply, override included, so
+ * the number here matches the number the guard enforces. Two different
+ * resolutions for the same question is how a dashboard ends up
+ * confidently contradicting the error message a user just saw.
+ */
+export async function quotaStatus(userId: string): Promise<QuotaStatus> {
+  const enforced = await getFlag("quotas_enforced");
+
+  const [chOverride, vdOverride] = await Promise.all([
+    _userOverride(userId, "channels"),
+    _userOverride(userId, "renders_day"),
+  ]);
+  const plan = await _resolvePlan(userId);
+
+  const chPlan = _isUnlimited(plan, "channels")
+    ? null : Number(plan!.max_channels as number);
+  const vdPlan = _isUnlimited(plan, "renders_day")
+    ? null : Number(plan!.max_renders_day as number);
+
+  const [chUsed, vdUsed] = await Promise.all([
+    _countChannels(userId),
+    _countRendersToday(userId),
+  ]);
+
+  let trialExpiresAt = 0, trialDaysGranted = 0;
+  try {
+    const u = await adminDb().collection("app_users").doc(userId).get();
+    if (u.exists) {
+      const d = (u.data() || {}) as Record<string, unknown>;
+      trialExpiresAt = Number(d.trial_expires_at || 0) || 0;
+      trialDaysGranted = Number(d.trial_days_granted || 0) || 0;
+    }
+  } catch { /* status still useful without it */ }
+
+  const now = Math.floor(Date.now() / 1000);
+  return {
+    channels: { used: chUsed, limit: chOverride ?? chPlan },
+    videosToday: { used: vdUsed, limit: vdOverride ?? vdPlan },
+    trial: {
+      active: trialExpiresAt > now,
+      expiresAt: trialExpiresAt,
+      daysLeft: trialExpiresAt > now ? Math.ceil((trialExpiresAt - now) / 86400) : 0,
+      daysGranted: trialDaysGranted,
+    },
+    enforced,
+  };
+}
