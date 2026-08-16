@@ -3,7 +3,7 @@ import { adminDb } from "@/lib/firebase-admin";
 import { requireTenant } from "@/lib/tenant";
 import { audit } from "@/lib/audit";
 import { markJoinedAndCheckUnlock, getOrCreateReferral } from "@/lib/referrals";
-import { grantEarnedRewards } from "@/lib/referral-rewards";
+import { grantEarnedRewards, grantTrialFromReferrals } from "@/lib/referral-rewards";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -43,6 +43,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     // can invite others. Idempotent — safe if a code already exists.
     let referralUnlocked: null | { referrerUserId: string; joinedCount: number; newlyUnlocked: boolean } = null;
     let referralReward: Awaited<ReturnType<typeof grantEarnedRewards>> | null = null;
+    let trialGrant: Awaited<ReturnType<typeof grantTrialFromReferrals>> = null;
     try {
       await getOrCreateReferral(id);
       // If this user was themselves referred, flip that signup to
@@ -62,6 +63,15 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
           referralUnlocked.referrerUserId,
           referralUnlocked.joinedCount,
         );
+        // Trial time and quotas, which the tier table does not cover.
+        // Open-ended by design: 5 approved referrals unlock 7 days and
+        // every further 4 add 7 more, so it is computed rather than
+        // looked up. Idempotent against trial_days_granted, so a
+        // re-approval owes nothing.
+        trialGrant = await grantTrialFromReferrals(
+          referralUnlocked.referrerUserId,
+          referralUnlocked.joinedCount,
+        );
       }
     } catch (e) {
       // Referral tracking is best-effort — never blocks user approval.
@@ -77,6 +87,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         previous_status: d.status || "pending",
         referral: referralUnlocked || undefined,
         referral_reward: referralReward?.granted?.length ? referralReward : undefined,
+      trial_grant: trialGrant || undefined,
       },
     }, req);
 
@@ -84,6 +95,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       ok: true, id, status: "active",
       referral: referralUnlocked || undefined,
       referral_reward: referralReward?.granted?.length ? referralReward : undefined,
+      trial_grant: trialGrant || undefined,
     });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });

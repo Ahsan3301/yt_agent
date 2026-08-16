@@ -174,3 +174,75 @@ export async function getRewardHistory(userId: string): Promise<Array<{
 export function nextTier(joinedCount: number): { at: number; days: number; label: string } | null {
   return REWARD_TIERS.find((t) => joinedCount < t.at) || null;
 }
+
+/**
+ * Grant (or extend) the referral TRIAL for a user.
+ *
+ * Separate from grantEarnedRewards, which hands out plan days on a
+ * fixed tier table. The trial is open-ended — 5 approved referrals
+ * unlock it, and every further 4 extend it — so it is computed from a
+ * formula rather than a table, and it carries QUOTAS as well as time.
+ *
+ * IDEMPOTENT BY HIGH-WATER MARK. What is owed is
+ * `daysForReferrals(approved) - trial_days_granted`. A recount, a
+ * re-approval or a replayed webhook computes the same total and owes
+ * zero. Without that, every recount would re-grant — the hole
+ * migration 0033 closed for rewards, which would otherwise reappear
+ * here. This is why 0034 declared trial_days_granted at all.
+ *
+ * Extends from max(now, current expiry) so a user who still has time
+ * left keeps it and a lapsed one starts fresh today, rather than
+ * having days added to a date already in the past.
+ *
+ * Quotas are only ever RAISED to the trial floor, never lowered: an
+ * operator who granted someone 3 channels must not have that undone by
+ * a later referral approval.
+ */
+export async function grantTrialFromReferrals(
+  userId: string,
+  approvedCount: number,
+): Promise<{ added_days: number; expires_at: number; total_days: number } | null> {
+  if (!userId || approvedCount <= 0) return null;
+
+  const { daysForReferrals, pendingTrialDays, TRIAL_CHANNELS, TRIAL_VIDEOS_PER_DAY } =
+    await import("@/lib/quota");
+
+  let u: Record<string, unknown>;
+  try {
+    const doc = await adminDb().collection("app_users").doc(userId).get();
+    if (!doc.exists) return null;
+    u = (doc.data() || {}) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+
+  const alreadyGranted = Number(u.trial_days_granted || 0) || 0;
+  const owed = pendingTrialDays(approvedCount, alreadyGranted);
+  if (owed <= 0) return null;
+
+  const now = Math.floor(Date.now() / 1000);
+  const currentExpiry = Number(u.trial_expires_at || 0) || 0;
+  const base = Math.max(now, currentExpiry);
+  const expiresAt = base + owed * 86400;
+  const totalDays = daysForReferrals(approvedCount);
+
+  const patch: Record<string, unknown> = {
+    trial_expires_at: expiresAt,
+    trial_days_granted: totalDays,
+    trial_referrals_at_grant: approvedCount,
+  };
+  // Raise to the trial floor only — never lower an operator's grant.
+  if ((Number(u.quota_channels || 0) || 0) < TRIAL_CHANNELS) {
+    patch.quota_channels = TRIAL_CHANNELS;
+  }
+  if ((Number(u.quota_videos_per_day || 0) || 0) < TRIAL_VIDEOS_PER_DAY) {
+    patch.quota_videos_per_day = TRIAL_VIDEOS_PER_DAY;
+  }
+
+  try {
+    await adminDb().collection("app_users").doc(userId).set(patch, { merge: true });
+  } catch {
+    return null;
+  }
+  return { added_days: owed, expires_at: expiresAt, total_days: totalDays };
+}
