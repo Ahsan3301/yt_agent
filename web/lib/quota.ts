@@ -24,7 +24,40 @@ import { adminDb } from "@/lib/firebase-admin";
 import { getFlag } from "@/lib/flags";
 import type { Tenant } from "@/lib/tenant";
 
-export type QuotaKind = "channels" | "renders_month";
+export type QuotaKind = "channels" | "renders_month" | "renders_day";
+
+// ── Trial terms (migration 0034) ────────────────────────────────
+// Constants describe FUTURE grants; what a user actually holds is on
+// their row, so an operator can move one account without a deploy.
+export const TRIAL_UNLOCK_REFERRALS = 5;
+export const TRIAL_UNLOCK_DAYS = 7;
+export const TRIAL_EXTEND_EVERY = 4;
+export const TRIAL_EXTEND_DAYS = 7;
+export const TRIAL_CHANNELS = 1;
+export const TRIAL_VIDEOS_PER_DAY = 1;
+
+/**
+ * Days a referral count is worth. Pure and total, so it is checkable
+ * without a database.
+ */
+export function daysForReferrals(approved: number): number {
+  if (approved < TRIAL_UNLOCK_REFERRALS) return 0;
+  const extra = Math.floor((approved - TRIAL_UNLOCK_REFERRALS) / TRIAL_EXTEND_EVERY);
+  return TRIAL_UNLOCK_DAYS + extra * TRIAL_EXTEND_DAYS;
+}
+
+/**
+ * Days still owed, given what was already granted.
+ *
+ * The already-granted high-water mark is what makes extension
+ * idempotent: a recount, re-approval or replayed webhook computes the
+ * same total and owes zero. Without it every recount re-grants — the
+ * hole migration 0033 closed for rewards, which would otherwise
+ * reappear for extensions.
+ */
+export function pendingTrialDays(approved: number, alreadyGranted: number): number {
+  return Math.max(0, daysForReferrals(approved) - Math.max(0, alreadyGranted));
+}
 
 const CACHE_TTL_MS = 60_000;
 type CacheEntry = { at: number; used: number };
@@ -96,10 +129,63 @@ async function _countRendersThisMonth(userId: string): Promise<number> {
   }
 }
 
+/** Count non-cancelled render jobs the user submitted today (UTC).
+ *
+ *  UTC, not local: scheduled renders dispatch on UTC hours, and a
+ *  local-midnight window would hand someone near the date line two
+ *  days of allowance in one. */
+async function _countRendersToday(userId: string): Promise<number> {
+  try {
+    const startOfDay = Math.floor(
+      Date.parse(new Date().toISOString().slice(0, 10) + "T00:00:00Z") / 1000);
+    const snap = await adminDb().collection("jobs")
+      .where("user_id", "==", userId).limit(2000).get();
+    let n = 0;
+    snap.forEach((doc) => {
+      const d = doc.data() as { queued_at?: number; status?: string; kind?: string };
+      if (Number(d.queued_at || 0) < startOfDay) return;
+      if (d.status === "cancelled") return;
+      if (d.kind && d.kind !== "render") return;
+      n += 1;
+    });
+    return n;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Operator override for this user, from migration 0034.
+ *
+ * Returns null when unset. `<= 0` is UNSET, not zero-allowance: on a
+ * numeric column an explicit 0 cannot be told apart from an absent
+ * value, so it falls through to the plan. Stopping a user is a
+ * suspension, which tells them why instead of looking like a bug.
+ *
+ * An override BEATS the plan, including an unlimited one — that is the
+ * point of granting a trial user exactly one channel while their plan
+ * row still says free.
+ */
+async function _userOverride(userId: string, kind: QuotaKind): Promise<number | null> {
+  if (kind === "renders_month") return null;   // trial terms are per-day
+  try {
+    const doc = await adminDb().collection("app_users").doc(userId).get();
+    if (!doc.exists) return null;
+    const d = (doc.data() || {}) as Record<string, unknown>;
+    const raw = kind === "channels" ? d.quota_channels : d.quota_videos_per_day;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
 /** True when the plan's cap for `kind` is unlimited (null / 0). */
 function _isUnlimited(plan: Record<string, unknown> | null, kind: QuotaKind): boolean {
   if (!plan) return true;
-  const key = kind === "channels" ? "max_channels" : "max_renders_month";
+  const key = kind === "channels" ? "max_channels"
+            : kind === "renders_day" ? "max_renders_day"
+            : "max_renders_month";
   const v = plan[key];
   if (v == null) return true;
   const n = Number(v);
@@ -124,10 +210,19 @@ export async function requirePlanQuota(
   const on = await getFlag("quotas_enforced");
   if (!on) return null;
 
-  const plan = await _resolvePlan(tenant.userId);
-  if (_isUnlimited(plan, kind)) return null;
+  // Operator override first — it beats the plan, including an
+  // unlimited one. Without this precedence a trial user on the free
+  // plan (max_channels = 0 = unlimited) would be capped by nothing,
+  // which is exactly backwards for a trial.
+  const override = await _userOverride(tenant.userId, kind);
 
-  const cap = Number(plan![kind === "channels" ? "max_channels" : "max_renders_month"] as number);
+  const plan = await _resolvePlan(tenant.userId);
+  if (override == null && _isUnlimited(plan, kind)) return null;
+
+  const cap = override ?? Number(
+    plan![kind === "channels" ? "max_channels"
+        : kind === "renders_day" ? "max_renders_day"
+        : "max_renders_month"] as number);
   const cacheKey = `${tenant.userId}|${kind}`;
   const cached = _cache.get(cacheKey);
   let used: number;
@@ -136,14 +231,21 @@ export async function requirePlanQuota(
   } else {
     used = kind === "channels"
       ? await _countChannels(tenant.userId)
+      : kind === "renders_day"
+      ? await _countRendersToday(tenant.userId)
       : await _countRendersThisMonth(tenant.userId);
     _cache.set(cacheKey, { at: Date.now(), used });
   }
 
   if (used >= cap) {
     return NextResponse.json({
+      // Say "trial" when the cap came from an override, not "plan" —
+      // telling a trial user their PLAN allows 1 video/day sends them
+      // to a billing page that will not explain it.
       error: kind === "channels"
-        ? `channel limit reached — your plan allows ${cap} channel(s), you have ${used}`
+        ? `channel limit reached — your ${override ? "trial" : "plan"} allows ${cap} channel(s), you have ${used}`
+        : kind === "renders_day"
+        ? `daily video limit reached — your ${override ? "trial" : "plan"} allows ${cap} video(s)/day. Request more from your dashboard.`
         : `monthly render limit reached — your plan allows ${cap} render(s)/month, you have ${used}`,
       quota_kind: kind, cap, used,
     }, { status: 429 });

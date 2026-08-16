@@ -53,6 +53,12 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     // they blow past the cap partway through a batch of N, later
     // jobs land as "queued" but the claim/registry path will fail
     // them cleanly. Refining to check the full batch is a Phase 5b.
+    // Daily cap as well as monthly. A trial is limited per DAY and a
+    // paid plan per MONTH; a user can be subject to both, so the
+    // stricter one has to be able to fire. Checked first because it
+    // is the one a trial user will actually hit.
+    const qd = await requirePlanQuota(tenant, "renders_day");
+    if (qd) return qd;
     const q = await requirePlanQuota(tenant, "renders_month");
     if (q) return q;
     const niche = String(c.niche || "").trim();
