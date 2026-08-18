@@ -211,7 +211,15 @@ CHANNEL_PRESETS: dict[str, dict] = {
         # for not being a photograph. Worth 1/10 -> 10/10 on a measured
         # real frame; see shotfinder._qc_medium.
         "medium_hint":    "3D animated film still",
+        # Now actually reaches the provider — _agnes_generate accepted a
+        # negative_prompt and never sent it, so this was decoration.
+        # The anthropomorphic terms are first because that is the drift
+        # this niche actually suffers: an eight-shot render produced a
+        # cat in a hood, a cat standing upright, and a cat in the wrong
+        # colour, all from the same reference portrait.
         "negative_style": (
+            "animal standing on two legs, anthropomorphic animal, animal wearing "
+            "human clothing, hat, coat, jacket, hood, "
             "photorealistic human, live action, uncanny valley, deformed hands, extra fingers, "
             "extra limbs, melted face, warped anatomy, text, watermark, signature, subtitles, "
             "lens flare artefacts, low resolution, blurry, jpeg artefacts, oversaturated"

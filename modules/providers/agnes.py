@@ -209,7 +209,12 @@ def _agnes_video_generate(prompt: str, output_dir: str, idx: int, seconds: float
                 "blurry, low quality, distorted, deformed, warped face, "
                 "extra limbs, extra fingers, melting features, flickering, "
                 "morphing, jitter, ghosting, duplicated subject, "
-                "watermark, text, subtitles, letterboxing, static, still image"
+                "watermark, text, subtitles, letterboxing, static, still image, "
+                # The clip drifts the same way the stills did: a
+                # four-legged animal stands up on two legs partway
+                # through, or acquires a coat it never had.
+                "animal standing on two legs, anthropomorphic animal, "
+                "animal wearing human clothing, character changing appearance"
             ),
         }
         # Image-to-video when we already have a still for this shot.
@@ -344,6 +349,22 @@ def _agnes_generate(prompt, output_dir, trial, negative_prompt="", ref_image_pat
         "ratio": "9:16",
         "extra_body": {"response_format": "url"},
     }
+    # NEGATIVES WERE ACCEPTED AND NEVER SENT. This function has taken a
+    # `negative_prompt` argument since it was written and dropped it on
+    # the floor — the body above never carried one. Every global
+    # negative and every per-niche negative_style was dead config for
+    # the primary image provider.
+    #
+    # Sent as a field AND folded into the prompt text, deliberately.
+    # The field returns 200, but a 200 only proves it was accepted, not
+    # honoured — this is a Gemini-class model and those generally have
+    # no true negative conditioning. The prompt text definitely reaches
+    # the model, so the constraint travels both ways and costs one
+    # clause either way.
+    if negative_prompt:
+        body["negative_prompt"] = negative_prompt[:400]
+        final_prompt = f"{final_prompt}. Avoid: {negative_prompt[:260]}"
+        body["prompt"] = final_prompt
     # Character reference. The cast description alone keeps a face
     # roughly on-model for a video clip but visibly drifts between
     # separate stills, because two different prompts produce two
@@ -377,12 +398,20 @@ def _agnes_generate(prompt, output_dir, trial, negative_prompt="", ref_image_pat
             # quadruped becoming a biped — and the explicit ban on
             # adding garments stops the model dressing a character the
             # reference shows undressed.
+            # Stated POSITIVELY. "Do not add clothing" still puts
+            # clothing in the model's head; "wearing exactly what the
+            # reference shows and nothing else" describes the target
+            # image instead. Measured need for this: with the earlier
+            # negative phrasing, an eight-shot render still produced one
+            # cat in a hood, one standing upright on two legs, and one
+            # in the wrong colour.
             body["prompt"] = (
-                f"{final_prompt}. The character must match the reference image "
-                f"EXACTLY: same species, same body plan and number of limbs, same "
-                f"posture type, same face, same markings and colours, same clothing. "
-                f"Do not add any garment or accessory that is not in the reference. "
-                f"Change only the scene, the pose and the camera angle."
+                f"{final_prompt}. This is the SAME character as the reference "
+                f"image: identical species, identical fur colour and markings, "
+                f"identical face. It moves the way the reference shows it moving "
+                f"— an animal on all fours stays on all fours, on the ground. It "
+                f"is wearing exactly what the reference shows and nothing else. "
+                f"Only the scene, the pose and the camera angle differ."
             )[:900]
             log.info("agnes: generating with a character reference")
         except Exception as _e:
