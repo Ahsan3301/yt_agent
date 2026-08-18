@@ -1095,8 +1095,23 @@ def run_pipeline(
             # Music separately — same provider chain as before, just no images.
             from modules.footage import get_music, MUSIC_KEYWORDS
             from modules.config import load_settings as _ls
-            music_q = (_ls().get("music_keywords") or {}).get(channel_type) \
-                       or MUSIC_KEYWORDS.get(channel_type, "background music")
+            # Resolution order: operator override, then the NICHE
+            # PRESET, then the legacy table, then a generic default.
+            #
+            # The preset step was missing. footage.MUSIC_KEYWORDS only
+            # ever had entries for horror and wisdom, so every other
+            # niche -- nine of them -- searched the literal string
+            # "background music" while its own preset carried a
+            # considered phrase ("synthwave gaming epic", "upbeat
+            # acoustic kitchen") that nothing ever read. The same
+            # shape of dead configuration as footage_mode was.
+            #
+            # It matters most for a wordless short, where the score is
+            # the entire soundtrack.
+            music_q = ((_ls().get("music_keywords") or {}).get(channel_type)
+                       or (channel_cfg.get("music_keywords") or "").strip()
+                       or MUSIC_KEYWORDS.get(channel_type, "background music"))
+            log.info(f"music query: {music_q!r}")
             music = get_music(music_q, clips_dir)
             footage = {"sources": sources, "music": music}
         else:
@@ -1170,8 +1185,23 @@ def run_pipeline(
                 log.warning(f"footage credits collection failed: {_cr_e!r}")
             from modules.footage import get_music, MUSIC_KEYWORDS
             from modules.config import load_settings as _ls
-            music_q = (_ls().get("music_keywords") or {}).get(channel_type) \
-                       or MUSIC_KEYWORDS.get(channel_type, "background music")
+            # Resolution order: operator override, then the NICHE
+            # PRESET, then the legacy table, then a generic default.
+            #
+            # The preset step was missing. footage.MUSIC_KEYWORDS only
+            # ever had entries for horror and wisdom, so every other
+            # niche -- nine of them -- searched the literal string
+            # "background music" while its own preset carried a
+            # considered phrase ("synthwave gaming epic", "upbeat
+            # acoustic kitchen") that nothing ever read. The same
+            # shape of dead configuration as footage_mode was.
+            #
+            # It matters most for a wordless short, where the score is
+            # the entire soundtrack.
+            music_q = ((_ls().get("music_keywords") or {}).get(channel_type)
+                       or (channel_cfg.get("music_keywords") or "").strip()
+                       or MUSIC_KEYWORDS.get(channel_type, "background music"))
+            log.info(f"music query: {music_q!r}")
             music = get_music(music_q, clips_dir)
             footage = {"sources": sources, "music": music}
 
