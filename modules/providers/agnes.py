@@ -363,9 +363,26 @@ def _agnes_generate(prompt, output_dir, trial, negative_prompt="", ref_image_pat
             with open(ref_image_path, "rb") as _f:
                 _enc = _b64.b64encode(_f.read()).decode("ascii")
             body["extra_body"]["image"] = [f"data:image/jpeg;base64,{_enc}"]
+            # SPECIES-NEUTRAL. This said "keep the PERSON'S face, hair
+            # and clothing identical" — which, handed a reference of a
+            # four-legged dog, reads as an instruction to make it a
+            # person. Observed live on the animation niche: the cast
+            # sheet was a terrier standing on all fours in a scarf, and
+            # the shots came back with the same dog upright on two legs
+            # in a flat cap and a grey overcoat. The reference was
+            # attached and working; the sentence describing it was
+            # asking for the drift.
+            #
+            # "Body plan" is doing real work here — it is what stops a
+            # quadruped becoming a biped — and the explicit ban on
+            # adding garments stops the model dressing a character the
+            # reference shows undressed.
             body["prompt"] = (
-                f"{final_prompt}. Keep the person's face, hair and clothing "
-                f"identical to the reference image; change only the scene."
+                f"{final_prompt}. The character must match the reference image "
+                f"EXACTLY: same species, same body plan and number of limbs, same "
+                f"posture type, same face, same markings and colours, same clothing. "
+                f"Do not add any garment or accessory that is not in the reference. "
+                f"Change only the scene, the pose and the camera angle."
             )[:900]
             log.info("agnes: generating with a character reference")
         except Exception as _e:

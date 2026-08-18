@@ -76,6 +76,8 @@ STRUCTURE (three acts, compressed):
 
 CHARACTER CONSISTENCY IS CRITICAL. Every beat is rendered by a separate image model, so the character is re-drawn from scratch each time and will drift unless it is pinned down. In `cast[].look`, give an exhaustive PHYSICAL description: age, body shape, face shape, skin tone, hair colour AND cut, eye colour, and every garment with its exact colour and material. At least 25 words. Never "a little girl" or "an old man" — those re-draw as a different person every time.
 
+STATE THE BODY PLAN EXPLICITLY, as the FIRST thing in `look`. For an animal say whether it moves on four legs like a real animal, or walks upright like a person — the model will otherwise invent one, and it will not pick the same one twice. Then state exactly what the character wears, and say "wears nothing else" when that is the whole wardrobe. A terrier described only as "a scruffy terrier in a red scarf" came back on four legs in one shot and upright in a flat cap and overcoat in the next.
+
 Return ONLY this JSON, no prose, no markdown fences:
 {{
   "title": "short evocative title, max 8 words, no colon",

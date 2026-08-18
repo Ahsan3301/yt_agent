@@ -237,11 +237,28 @@ def motion_verdict(frames: list[str]) -> tuple[str, float]:
 
 
 def vision_verdict(frames: list[str], fit_description: str, premise: str = "") -> int:
-    """Worst vision score across the sampled frames, or -1 if unknown.
+    """Median vision score across the sampled frames, or -1 if unknown.
 
-    WORST, not mean: one melted frame in the middle of a five-second
-    clip is visible to a viewer and is the whole reason this gate
-    exists. Averaging would let three good frames hide it.
+    This took the WORST score, on the reasoning that one melted frame is
+    visible to a viewer and averaging would hide it. That reasoning is
+    sound and the implementation was still wrong, because it assumes the
+    judge is reliable per-frame.
+
+    It is not. Measured on a real render: two clips of a terrier
+    trotting down a wet cobbled street — verified good by eye, correct
+    character, correct style, no artefacts — were scored 1/10 and
+    rejected. With `min` over four frames, ONE noisy score from the
+    judge rejects the clip, and a regeneration costs ~90s plus a slot
+    in the provider's queue.
+
+    The median needs the judge to dislike MOST of the clip before it
+    rejects, which is the claim we actually want to act on. A genuinely
+    broken clip is broken in most of its frames; a single outlier is
+    usually the judge, not the video.
+
+    All per-frame scores are logged, so a systematically harsh judge is
+    visible in the render log rather than showing up as a mysteriously
+    degraded run.
     """
     try:
         from modules import nim
@@ -264,7 +281,12 @@ def vision_verdict(frames: list[str], fit_description: str, premise: str = "") -
                 scores.append(sc)
         except Exception as e:
             log.debug(f"clip_qc: vision score failed on {os.path.basename(f)}: {e}")
-    return min(scores) if scores else -1
+    if not scores:
+        return -1
+    scores.sort()
+    median = scores[len(scores) // 2]
+    log.info("clip_qc: vision scores %s -> median %d", scores, median)
+    return median
 
 
 def check(path: str, fit_description: str = "", premise: str = "",
