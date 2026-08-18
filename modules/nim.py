@@ -265,14 +265,30 @@ GROQ_PRIMARY_FIRST = os.getenv("NIM_GROQ_PRIMARY", "true").lower() != "false"
 # NIM is kept last rather than removed: it is a different vendor, so
 # it still has value as the final fallback when the others are
 # rate-limited, which Groq and Agnes both are.
-# Agnes moved to LAST 2026-08-18. It is not a quality judgement — it
-# measured fastest and best. It is a resource one: the same Agnes
-# account now serves image AND video generation for the wordless
-# animation niche, where clips are the critical path and the video
-# endpoint queues. Spending that account's capacity on text, which
-# Groq and OpenRouter do perfectly well, competes with the thing only
-# Agnes can do here.
-_DEFAULT_LLM_PRIORITY = "groq,openrouter,nim,agnes"
+# Order set from a live measurement of what actually answers
+# (2026-08-18), not from preference:
+#
+#   nim         WORKS. Served a beat sheet in ~18-20s.
+#   openrouter  429 on its configured free model. Kept as #2 because a
+#               rate limit is temporary and it costs ~1.3s to find out.
+#   agnes       WORKS, and is deliberately LAST. Not a quality
+#               judgement — it measured fastest and best. A resource
+#               one: the same Agnes account serves image AND video
+#               generation for the wordless animation niche, where
+#               clips are the critical path and the video endpoint
+#               already queues. Spending it on text competes with the
+#               only job nothing else can do.
+#
+# GROQ IS REMOVED, not reordered. Its configured model
+# llama-3.3-70b-versatile has been DECOMMISSIONED — the API 404s on
+# every call, which the chain silently absorbed by falling through. No
+# remaining Groq model satisfies this codebase's contract either:
+# openai/gpt-oss-120b returns empty content and rejects
+# response_format=json_object, qwen/qwen3.6-27b emits <think> blocks and
+# rejects it too, and groq/compound answers small JSON requests but
+# returns 413 on a realistic 2048-token script prompt. Leaving it in the
+# chain bought nothing but a guaranteed failed round-trip per call.
+_DEFAULT_LLM_PRIORITY = "nim,openrouter,agnes"
 
 
 def _llm_priority() -> list[str]:
@@ -892,7 +908,13 @@ def _groq_chat_fallback(messages, max_tokens=2048, temperature=0.7,
         raise RuntimeError("no Groq key configured (set GROQ_API_KEY or GROQ_API_KEYS_JSON)")
 
     payload = {
-        "model": os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+        # llama-3.3-70b-versatile was decommissioned by Groq and 404s.
+        # groq/compound is the only remaining model that honours
+        # response_format=json_object, but it returns 413 on realistic
+        # script-sized prompts — so Groq is out of LLM_PRIORITY entirely
+        # and this default exists only so a deliberate re-enable starts
+        # from a model that at least resolves.
+        "model": os.getenv("GROQ_MODEL", "groq/compound"),
         "messages": messages,
         "max_tokens": max_tokens,
         "temperature": temperature,
