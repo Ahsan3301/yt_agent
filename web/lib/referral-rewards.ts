@@ -32,8 +32,8 @@ import { adminDb } from "@/lib/firebase-admin";
 export { TRIAL_TIERS as REWARD_TIERS } from "@/lib/quota";
 import { TRIAL_TIERS } from "@/lib/quota";
 
-/** Plan a referral reward grants. Must exist in the `plans` collection. */
-export const REWARD_PLAN_ID = "pro";
+/** Plan a referral reward grants. Must exist in `plans`. */
+export const REWARD_PLAN_ID = "creator";
 
 export type GrantResult = {
   granted: Array<{ tier: number; days: number; expires_after: number }>;
@@ -209,11 +209,10 @@ export function nextTier(joinedCount: number): { at: number; days: number; label
 export async function grantTrialFromReferrals(
   userId: string,
   approvedCount: number,
-): Promise<{ added_days: number; expires_at: number; total_days: number } | null> {
+): Promise<{ added_days: number; expires_at: number; total_days: number; plan: string } | null> {
   if (!userId || approvedCount <= 0) return null;
 
-  const { daysForReferrals, pendingTrialDays, TRIAL_CHANNELS, TRIAL_VIDEOS_PER_DAY } =
-    await import("@/lib/quota");
+  const { daysForReferrals, pendingTrialDays } = await import("@/lib/quota");
 
   let u: Record<string, unknown>;
   try {
@@ -229,28 +228,48 @@ export async function grantTrialFromReferrals(
   if (owed <= 0) return null;
 
   const now = Math.floor(Date.now() / 1000);
-  const currentExpiry = Number(u.trial_expires_at || 0) || 0;
-  const base = Math.max(now, currentExpiry);
-  const expiresAt = base + owed * 86400;
+  // Extend from whichever is later. A user with paid time left keeps it;
+  // a lapsed one starts today rather than having days added to a date
+  // already in the past.
+  const currentExpiry = Math.max(
+    Number(u.plan_expires_at || 0) || 0,
+    Number(u.trial_expires_at || 0) || 0,
+  );
+  const expiresAt = Math.max(now, currentExpiry) + owed * 86400;
   const totalDays = daysForReferrals(approvedCount);
 
+  // NEVER downgrade. Someone already on Pro who refers three friends
+  // gets DAYS added, not a demotion to Creator. Only lift a lower plan.
+  const RANK: Record<string, number> = {
+    free: 0, starter: 1, creator: 2, pro: 3, business: 4, enterprise: 5, founder: 99,
+  };
+  const current = String(u.plan_id || "free").trim() || "free";
+  const target = (RANK[current] ?? 0) > RANK[REWARD_PLAN_ID] ? current : REWARD_PLAN_ID;
+
   const patch: Record<string, unknown> = {
+    plan_id: target,
+    plan_expires_at: expiresAt,
+    plan_assigned_at: now,
+    plan_assigned_by: "referral-reward",
+    plan_note: `Referral reward: ${owed}d of ${target} (${approvedCount} approved referrals)`,
+    // Mirrored for the dashboard's trial banner and for idempotency.
     trial_expires_at: expiresAt,
     trial_days_granted: totalDays,
     trial_referrals_at_grant: approvedCount,
   };
-  // Raise to the trial floor only — never lower an operator's grant.
-  if ((Number(u.quota_channels || 0) || 0) < TRIAL_CHANNELS) {
-    patch.quota_channels = TRIAL_CHANNELS;
-  }
-  if ((Number(u.quota_videos_per_day || 0) || 0) < TRIAL_VIDEOS_PER_DAY) {
-    patch.quota_videos_per_day = TRIAL_VIDEOS_PER_DAY;
-  }
+
+  // Clear the old trial CAPS if they are still set. They were written by
+  // the previous scheme (1 channel, 1 video/day) and an override BEATS
+  // the plan — leaving them would grant Creator and then hold the user
+  // at one video a day, which is the reward failing silently in the
+  // direction nobody checks.
+  if ((Number(u.quota_channels || 0) || 0) === 1) patch.quota_channels = 0;
+  if ((Number(u.quota_videos_per_day || 0) || 0) === 1) patch.quota_videos_per_day = 0;
 
   try {
     await adminDb().collection("app_users").doc(userId).set(patch, { merge: true });
   } catch {
     return null;
   }
-  return { added_days: owed, expires_at: expiresAt, total_days: totalDays };
+  return { added_days: owed, expires_at: expiresAt, total_days: totalDays, plan: target };
 }
