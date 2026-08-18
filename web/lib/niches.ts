@@ -32,6 +32,11 @@ export type NicheCopy = {
 };
 
 const COPY: Record<string, NicheCopy> = {
+  pixar: {
+    blurb: "Wordless 3D animated shorts — a complete story told in action alone, no narration, no dialogue.",
+    example: "“A scruffy terrier guards his owner’s umbrella through a downpour.”",
+    research: "original",
+  },
   horror: {
     blurb: "Original short horror — dread built from one wrong detail, never a jump scare.",
     example: "“Dryer 12 has been running for eleven years.”",

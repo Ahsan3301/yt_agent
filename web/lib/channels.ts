@@ -34,6 +34,11 @@ export const PRESET_CHANNELS: ChannelPreset[] = [
   { name: "food",     label: "Food + cooking",         webDefault: false },
   { name: "travel",   label: "Travel + culture",       webDefault: false },
   { name: "gaming",   label: "Gaming + lore",          webDefault: false },
+  // Wordless animated shorts. No narration, no subtitles, every frame a
+  // generated motion clip — see modules/silent_story.py. webDefault is
+  // false because there is nothing to research: the story is invented,
+  // not reported.
+  { name: "pixar",    label: "Animated shorts (wordless)", webDefault: false },
 ];
 
 const _STORAGE_KEY = "yt_agent_custom_channels_v1";

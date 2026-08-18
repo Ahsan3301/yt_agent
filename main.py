@@ -353,6 +353,22 @@ def run_pipeline(
         (language or channel_cfg.get("language") or "en") or "en"
     ).lower()[:2]
     channel_cfg["language"] = _pipeline_lang
+    # Footage mode: the NICHE PRESET wins when it pins one.
+    #
+    # Everywhere else in this file a job value overrides the preset, and
+    # that is right for tone or language — they are preferences. This
+    # one is not. A niche whose entire premise is "every frame is a
+    # generated motion clip" is broken, not merely differently
+    # configured, if a stale channel row leaves footage_mode unset and
+    # it silently renders a slideshow of stills. Without this the pin in
+    # CHANNEL_PRESETS is decoration: fetch_shots only ever saw the job's
+    # value.
+    _preset_fm = str(channel_cfg.get("footage_mode") or "").strip()
+    if _preset_fm and _preset_fm != (footage_mode or ""):
+        log.info("footage mode pinned to %r by the %s preset (job said %r)",
+                 _preset_fm, channel_cfg.get("name") or channel_type,
+                 footage_mode or "unset")
+        footage_mode = _preset_fm
     # Per-channel tone override — if the dashboard channels doc supplied
     # one, it wins over the niche preset's default so a horror channel's
     # "chilling" doesn't bleed into a science channel that reuses the
