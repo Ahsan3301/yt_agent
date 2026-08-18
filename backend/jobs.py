@@ -603,6 +603,8 @@ def _run_one(job: dict[str, Any]):
                     job["run_id"],
                     summary=summary,
                     index_entry={
+                        # Ownership — see runs_db.write_run.
+                        "user_id":       str(job.get("user_id") or job.get("owner_user_id") or ""),
                         "channel":       summary.get("channel"),
                         "dry_run":       summary.get("dry_run", False),
                         "ok":            True,
@@ -705,6 +707,7 @@ def _run_one(job: dict[str, Any]):
                         "finished_at": time.time(),
                     },
                     index_entry={
+                        "user_id":     str(job.get("user_id") or job.get("owner_user_id") or ""),
                         "channel":     job.get("channel"),
                         "ok":          False,
                         "error":       job["error"][:400],

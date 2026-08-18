@@ -505,6 +505,7 @@ def handle(job: dict) -> None:
                             _summary["video_url"] = public_url or _summary.get("video_url") or ""
                             _summary["finished_at"] = time.time()
                             _summary["channel"] = job.get("channel")
+                            _summary["user_id"] = str(job.get("user_id") or job.get("owner_user_id") or "")
                             _summary["dry_run"] = job.get("dry_run", False)
                             _summary["ok"] = True
                             _summary["upload_error"] = upload_err
@@ -513,6 +514,11 @@ def handle(job: dict) -> None:
                                 _rid,
                                 summary=_summary,
                                 index_entry={
+                                    # Ownership, from the job that produced
+                                    # this run. Without it the row is
+                                    # unattributable and every per-user view
+                                    # of renders comes back empty.
+                                    "user_id":       str(job.get("user_id") or job.get("owner_user_id") or ""),
                                     "channel":       _summary.get("channel"),
                                     "dry_run":       _summary.get("dry_run", False),
                                     "ok":            True,

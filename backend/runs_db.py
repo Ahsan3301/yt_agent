@@ -54,6 +54,25 @@ def write_run(run_id: str, summary: dict, index_entry: dict) -> bool:
 
         idx_ref = c.collection("runs_index").document(run_id)
         entry = dict(index_entry)
+        # Stamp OWNERSHIP into the row.
+        #
+        # Same shape of bug as run_id above, and found the same way: all
+        # 143 published rows carried user_id="" because no caller passed
+        # it. Nothing errored — PocketBase happily stores an empty
+        # string — so every per-user view of runs was silently blind.
+        # The review prompt counted 0 published videos for a user with
+        # 138 of them, and any future per-tenant Library filter would
+        # have shown nothing to everyone.
+        #
+        # Taken from index_entry first, then the summary, so a caller
+        # that already knows the owner wins and the rest still resolve.
+        if not str(entry.get("user_id") or "").strip():
+            owner = (
+                str((summary or {}).get("user_id") or "").strip()
+                or str((summary or {}).get("owner_user_id") or "").strip()
+            )
+            if owner:
+                entry["user_id"] = owner
         # Stamp run_id into the ROW, not just the doc id.
         #
         # No caller passes it (backend/jobs.py and the side-worker both
