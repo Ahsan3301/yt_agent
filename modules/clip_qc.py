@@ -14,10 +14,11 @@ where the drift lives, plus one from the middle, and scores those.
 Three checks, because each catches failures the others are blind to.
 The two local ones cost no API call and run always:
 
-  1. MOTION — frame-to-frame difference on a 64px thumbnail. Catches a
-     clip that is secretly a still (the video model returned a frozen
-     frame, which is the exact thing this niche must never publish) and,
-     more weakly, gross strobing.
+  1. MOTION — frame-to-frame difference on a 64px thumbnail. Answers
+     one question: did the picture actually move? A frozen clip is the
+     exact thing this niche must never publish. It does NOT judge
+     whether the motion is coherent — see the note by STILL_THRESHOLD
+     for why that turned out to be undecidable from this metric.
 
   2. ARTEFACTS — high-frequency energy at full resolution. This exists
      because check 1 is blind to artefacts by construction: downscaling
@@ -50,24 +51,42 @@ import tempfile
 log = logging.getLogger(__name__)
 
 # Below this, consecutive sampled frames are effectively identical and
-# the "video" is a still. Mean absolute difference over 0-255 channels.
-STILL_THRESHOLD = 1.2
-
-# Above this, frame content is being replaced wholesale between samples
-# — strobing, or a hard scene change the shot never asked for.
+# the "video" is a still — the exact failure this niche cannot ship.
+# Mean absolute difference over 0-255 channels.
 #
-# MEASURED, not guessed. Against synthetic clips at 64x64 grey:
-#   frozen colour / SMPTE bars      0.00
-#   gentle zoom                     4.92
-#   normal test-pattern motion      4.91
-#   cellular-automaton churn       11.34
-#   hue-cycling strobe             13.13
-# So the honest separation here is frozen-vs-moving; chaos sits only
-# ~2x above normal motion and a genuinely fast beat could reach it.
-# That asymmetry is fine because a false positive costs ONE extra
-# generation and then keeps the best clip anyway — it never loses a
-# shot. A false negative ships a strobing clip.
-CHAOS_THRESHOLD = 11.0
+# MEASURED: a frozen clip scores 0.00; the verified-good real clip
+# scored 6.33 on its quietest pair and 56.40 on its busiest. 2.0 sits in
+# open space between them, and also catches the "technically moving but
+# nothing is happening" clip that a 1.2 would have passed.
+STILL_THRESHOLD = 2.0
+
+# NO CHAOS THRESHOLD — deliberately.
+#
+# There was one, at 11.0, calibrated against synthetic clips. Then the
+# first REAL image-to-video clip arrived: a terrier trotting toward the
+# camera, verified good frame by frame, character perfectly consistent.
+# Its pairwise frame deltas were 39.2, 56.4, 35.0, 6.3 — mean 34.2, or
+# three times the threshold. It was rejected.
+#
+# The synthetic calibration was measuring the wrong thing. Test patterns
+# have a static camera, so almost nothing moves between frames. A real
+# clip where the subject approaches the lens legitimately replaces most
+# of the frame, and scores higher than cellular-automaton churn (11.3)
+# or a hue strobe (13.1) ever did. There is no threshold that passes the
+# good clip and fails the synthetic bad ones — they overlap completely,
+# in the wrong direction.
+#
+# So frame-differencing keeps the job it is genuinely good at — telling
+# a moving clip from a frozen one, where the separation is 0.00 against
+# 6.3-56.4 — and incoherence is left to the artefact check and the
+# vision model, which look at what a frame CONTAINS rather than at how
+# much of it changed. A high delta is now logged, never rejected.
+#
+# Known gap, stated rather than hidden: a hue-cycling strobe (delta
+# 13.1, detail 2.85) now passes both local checks. It is caught only by
+# the vision model. Accepted, because rejecting real motion is the far
+# more expensive error — every regeneration costs ~90s and a slot
+# against the provider's queue.
 
 # High-frequency energy, measured at full resolution (mean |pixel -
 # gaussian blur|). This is the artefact detector, and it exists because
@@ -197,7 +216,11 @@ def _mean_abs_diff(a_path: str, b_path: str) -> float:
 
 
 def motion_verdict(frames: list[str]) -> tuple[str, float]:
-    """('ok'|'still'|'chaos'|'unknown', mean_difference)."""
+    """('ok'|'still'|'unknown', mean_difference).
+
+    There is no 'chaos' verdict — see the note by STILL_THRESHOLD. This
+    answers one question only: did the picture move?
+    """
     if len(frames) < 2:
         return "unknown", -1.0
     diffs = [
@@ -210,8 +233,6 @@ def motion_verdict(frames: list[str]) -> tuple[str, float]:
     mean = sum(diffs) / len(diffs)
     if mean < STILL_THRESHOLD:
         return "still", mean
-    if mean > CHAOS_THRESHOLD:
-        return "chaos", mean
     return "ok", mean
 
 
@@ -287,9 +308,11 @@ def check(path: str, fit_description: str = "", premise: str = "",
         if motion == "still":
             result.update(ok=False, reason=f"no motion (frame delta {mean:.2f})")
             return result
-        if motion == "chaos":
-            result.update(ok=False, reason=f"incoherent motion (frame delta {mean:.2f})")
-            return result
+        if mean > 45.0:
+            # Observation, not a verdict. Big deltas are normal when the
+            # subject approaches the lens; the verified-good reference
+            # clip peaked at 56.4 on one pair.
+            log.info(f"clip_qc: high frame delta {mean:.1f} — fast motion or a cut")
 
         art, hf = artefact_verdict(frames[1:])
         result["artefact"] = art
