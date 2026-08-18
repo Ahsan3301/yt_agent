@@ -141,7 +141,12 @@ export async function middleware(req: NextRequest) {
       //
       // Gated HERE and not only in the sidebar, because hiding a nav
       // link is decoration — the route stays reachable by typing it.
-      const OPERATOR_APP_PATHS = ["/app/storage", "/app/keys"];
+      //
+      // /app/reports joins them: it is a FLEET report — worker error
+      // logs, cleanup-run history, per-run storage — not a customer's
+      // view of their own channel. That view is Library + the
+      // dashboard.
+      const OPERATOR_APP_PATHS = ["/app/storage", "/app/keys", "/app/reports"];
       if (OPERATOR_APP_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/")) &&
           session.role !== "admin" && session.role !== "superadmin") {
         const url = req.nextUrl.clone();

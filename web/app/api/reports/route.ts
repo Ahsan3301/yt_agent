@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase-admin";
-import { requireTenant, tenantWhereClauses } from "@/lib/tenant";
+import { requireOperator, tenantWhereClauses } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -35,7 +35,11 @@ function _dayKey(epoch: number): string {
 }
 
 export async function GET(req: NextRequest) {
-  const auth = await requireTenant(req);
+  // Operator-only. Middleware bounces /app/reports for non-operators,
+  // but hiding a page is decoration — the route it calls stays
+  // reachable with a fetch. This aggregate spans worker error logs and
+  // cleanup-run history, which is fleet state, not tenant state.
+  const auth = await requireOperator(req);
   if ("response" in auth) return auth.response;
   const url = req.nextUrl;
   const days = Math.max(1, Math.min(180, Number(url.searchParams.get("days") ?? 30)));

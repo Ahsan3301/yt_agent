@@ -207,7 +207,11 @@ export default function Dashboard() {
           label="Success rate"
           value={successRate == null ? "—" : `${successRate}%`}
           hint={recentTerminal.length > 0 ? `${succeeded} of ${recentTerminal.length}` : "no runs yet"}
-          href="/app/reports"
+          // Was /app/reports, which is operator-only now — for a
+          // customer that card would have bounced straight back here
+          // and read as a dead tile. Library is where the runs behind
+          // this number actually are.
+          href="/app/history"
         />
         <StatCard
           icon={Clock}

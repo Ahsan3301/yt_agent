@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase-admin";
-import { requireTenant, tenantWhereClauses } from "@/lib/tenant";
+import { requireOperator, tenantWhereClauses } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -25,7 +25,10 @@ export const runtime = "nodejs";
 const SETTLE_HOURS = 48;
 
 export async function GET(req: NextRequest) {
-  const auth = await requireTenant(req);
+  // Operator-only, for the same reason as /api/reports: this is the
+  // other half of the /app/reports page, and a hidden page whose API
+  // still answers is not hidden.
+  const auth = await requireOperator(req);
   if ("response" in auth) return auth.response;
 
   try {

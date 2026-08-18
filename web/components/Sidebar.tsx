@@ -20,7 +20,6 @@ const USER_NAV: NavItem[] = [
   { href: "/app/create/wizard", label: "Create", icon: Wand2 },
   { href: "/app/channels",  label: "Channels",    icon: Layers          },
   { href: "/app/queue",     label: "Job queue",   icon: ListChecks      },
-  { href: "/app/reports",   label: "Reports",     icon: BarChart3       },
   { href: "/app/history",   label: "Library",     icon: History         },
   { href: "/app/settings",  label: "Settings",    icon: Settings        },
   { href: "/app/referrals", label: "Referrals",   icon: Sparkles        },
@@ -32,6 +31,11 @@ const USER_NAV: NavItem[] = [
 // product. Moved here; middleware enforces the same boundary so a
 // typed URL cannot get around it.
 const ADMIN_NAV: NavItem[] = [
+  // Reports is operator-only. It reports on the FLEET, not on one
+  // customer's channel: worker error logs, cleanup-run history and the
+  // storage each run left behind. A customer asking "how are my videos
+  // doing" is answered by Library and the dashboard, not by this.
+  { href: "/app/reports",   label: "Reports",     icon: BarChart3       },
   { href: "/app/storage",   label: "Storage",     icon: HardDrive       },
   { href: "/app/keys",      label: "Connections", icon: KeyRound        },
   { href: "/admin",         label: "Admin",       icon: Shield          },
