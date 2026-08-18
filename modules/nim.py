@@ -265,7 +265,14 @@ GROQ_PRIMARY_FIRST = os.getenv("NIM_GROQ_PRIMARY", "true").lower() != "false"
 # NIM is kept last rather than removed: it is a different vendor, so
 # it still has value as the final fallback when the others are
 # rate-limited, which Groq and Agnes both are.
-_DEFAULT_LLM_PRIORITY = "agnes,groq,openrouter,nim"
+# Agnes moved to LAST 2026-08-18. It is not a quality judgement — it
+# measured fastest and best. It is a resource one: the same Agnes
+# account now serves image AND video generation for the wordless
+# animation niche, where clips are the critical path and the video
+# endpoint queues. Spending that account's capacity on text, which
+# Groq and OpenRouter do perfectly well, competes with the thing only
+# Agnes can do here.
+_DEFAULT_LLM_PRIORITY = "groq,openrouter,nim,agnes"
 
 
 def _llm_priority() -> list[str]:
@@ -323,6 +330,8 @@ def _try_provider(name: str, messages, max_tokens, temperature,
         key = (os.getenv("AGNES_API_KEY") or "").strip()
         if not key:
             return None
+        if _agnes_open():
+            return None
         model = os.getenv("AGNES_TEXT_MODEL", "").strip() or _AGNES_DEFAULT_MODEL
         try:
             # 45s was copied from the other providers, but Agnes is a
@@ -339,9 +348,11 @@ def _try_provider(name: str, messages, max_tokens, temperature,
                                      response_format=response_format,
                                      timeout=_agnes_timeout)
         except Exception as e:
+            _agnes_record(False)
             log.warning(f"LLM: Agnes ({model}) failed ({e}); falling to next provider")
             raise
         if c and c.strip():
+            _agnes_record(True)
             log.debug(f"LLM: Agnes ({model}) responded")
             return c
         return None
@@ -405,6 +416,52 @@ def _agnes_chat_fallback(messages, model=None, max_tokens=2048, temperature=0.7,
     r.raise_for_status()
     j = r.json() or {}
     return ((j.get("choices") or [{}])[0].get("message", {}) or {}).get("content") or ""
+
+
+# ── Agnes per-worker circuit breaker ─────────────────────────
+# Groq and NIM both had one; Agnes did not, and it was the PRIMARY
+# provider. A ~3-minute Agnes outage on 2026-08-18 produced 20
+# consecutive 500s inside one render — every LLM call paid a full
+# failed round-trip before falling through, and nothing ever stopped
+# retrying it.
+#
+# The 500s were the honest cheap case. Agnes runs with
+# AGNES_TIMEOUT_SECONDS=150 because it is a reasoning model that thinks
+# before it emits, so an outage that HANGS rather than 500s costs 150
+# seconds per call instead of 300ms. On a render that makes tens of LLM
+# calls that is the difference between a slow render and a dead one.
+#
+# Same shape as the Groq breaker directly below: trip after 3
+# consecutive failures, cool down, and let a single success reset it.
+# In-process and non-persistent — a worker restart starts clean, which
+# is right, because the outage it is protecting against is transient by
+# definition.
+_AGNES_CONSECUTIVE_FAILS = 0
+_AGNES_OPEN_UNTIL = 0.0
+_AGNES_FAILS_TO_TRIP = 3
+_AGNES_COOLDOWN_SEC = 180
+
+
+def _agnes_open() -> bool:
+    return time.time() < _AGNES_OPEN_UNTIL
+
+
+def _agnes_record(success: bool) -> None:
+    global _AGNES_CONSECUTIVE_FAILS, _AGNES_OPEN_UNTIL
+    if success:
+        if _AGNES_CONSECUTIVE_FAILS:
+            log.info("Agnes: breaker reset after successful call")
+        _AGNES_CONSECUTIVE_FAILS = 0
+        _AGNES_OPEN_UNTIL = 0.0
+        return
+    _AGNES_CONSECUTIVE_FAILS += 1
+    if _AGNES_CONSECUTIVE_FAILS >= _AGNES_FAILS_TO_TRIP:
+        _AGNES_OPEN_UNTIL = time.time() + _AGNES_COOLDOWN_SEC
+        log.warning(
+            f"Agnes: breaker OPEN — {_AGNES_CONSECUTIVE_FAILS} consecutive failures; "
+            f"skipping for {_AGNES_COOLDOWN_SEC}s. This does NOT affect Agnes image "
+            f"or video generation, which use a separate client and their own cooldown."
+        )
 
 
 # ── Groq per-worker circuit breaker ──────────────────────────
