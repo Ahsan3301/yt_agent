@@ -69,8 +69,8 @@ export function MarketingNav({ ctaHref = "/signup", ctaText = "Get Early Access"
           onClick={() => setOpen(true)}
           aria-label="Open menu"
           aria-expanded={open}
-          className="md:hidden -mr-1 p-2 rounded-full text-neutral-300 hover:text-white
-                     hover:bg-white/5 active:scale-90 transition"
+          className="md:hidden -mr-1 h-11 w-11 flex items-center justify-center rounded-full
+                     text-neutral-300 hover:text-white hover:bg-white/5 active:scale-90 transition"
         >
           <Menu className="h-5 w-5" />
         </button>

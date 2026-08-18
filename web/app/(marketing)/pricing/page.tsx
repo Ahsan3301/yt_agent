@@ -93,7 +93,7 @@ export default async function PricingPage() {
           </h1>
           <p className="mt-5 text-neutral-400 text-lg">
             No credit card required. Want more time?{" "}
-            <Link href="/referrals" className="text-white underline underline-offset-4">
+            <Link href="/referrals" className="inline-block py-2 text-white underline underline-offset-4">
               Invite your friends.
             </Link>
           </p>
