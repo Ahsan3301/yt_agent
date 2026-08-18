@@ -102,7 +102,17 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     try {
       if (d.email) {
         const { sendMail, mailerConfigured } = await import("@/lib/mailer");
-        if (await mailerConfigured()) {
+        const configured = await mailerConfigured();
+        if (!configured) {
+          // Say it. Silence here is indistinguishable from success, and
+          // an operator would go on believing approved users are being
+          // told when nothing has been sent for weeks.
+          console.warn(
+            `[approve] SMTP not configured — no approval email sent to ${d.email}. `
+            + `Set SMTP_* in /superadmin/config.`,
+          );
+        }
+        if (configured) {
           const trialLine = trialGrant
             ? `
 
@@ -133,6 +143,7 @@ https://yven.io/login${trialLine}
                   : "")
               + `<p style="color:#666;font-size:13px">Reply to this email if anything looks wrong.</p>`,
           });
+          console.log(`[approve] approval email sent to ${d.email}`);
         }
       }
     } catch (e) {
