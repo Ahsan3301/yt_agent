@@ -16,6 +16,7 @@ import VideoPlayer from "@/components/VideoPlayer";
 import LogsPanel from "@/components/LogsPanel";
 import { PageHeader } from "@/components/PageHeader";
 import QuotaPanel from "@/components/QuotaPanel";
+import ReviewPrompt from "@/components/ReviewPrompt";
 import { SetupChecklist, SetupChecklistSkeleton } from "@/components/SetupChecklist";
 
 /**
@@ -152,6 +153,11 @@ export default function Dashboard() {
           way to ask for more. Above the fold on purpose — a user who
           hits a limit mid-render should already know why. */}
       <QuotaPanel />
+
+      {/* Asks for a review once a few videos are out. Renders nothing
+          until the server says the user is eligible, and BELOW the
+          allowance panel — the thing they came for stays first. */}
+      <ReviewPrompt />
 
       {/* Preflight — only appears when something's wrong */}
       {isAdmin && preflight && !preflight.ok && (
