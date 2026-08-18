@@ -18,11 +18,19 @@ import { adminDb } from "@/lib/firebase-admin";
  * if some other code path forgets to check.
  */
 
-/** Reward tiers, lowest first. `at` = approved referrals required. */
-export const REWARD_TIERS: Array<{ at: number; days: number; label: string }> = [
-  { at: 5,  days: 14, label: "14 days free" },
-  { at: 10, days: 30, label: "1 month free" },
-];
+/**
+ * Reward tiers, lowest first. `at` = approved referrals required.
+ *
+ * RE-EXPORTED from lib/quota's TRIAL_TIERS rather than declared here.
+ * Two lists meaning the same thing is how the public referrals page
+ * ends up promising terms the grant does not pay: this file said
+ * 5 -> 14d / 10 -> 30d while the trial granted on its own schedule, and
+ * both were "correct" in their own file.
+ *
+ * Current terms: refer 3 -> 7 days, refer 5 -> 14 days.
+ */
+export { TRIAL_TIERS as REWARD_TIERS } from "@/lib/quota";
+import { TRIAL_TIERS } from "@/lib/quota";
 
 /** Plan a referral reward grants. Must exist in the `plans` collection. */
 export const REWARD_PLAN_ID = "pro";
@@ -52,7 +60,7 @@ export async function grantEarnedRewards(
   const out: GrantResult = { granted: [], joined_count: joinedCount, expires_at: null };
   if (!userId || joinedCount <= 0) return out;
 
-  const earned = REWARD_TIERS.filter((t) => joinedCount >= t.at);
+  const earned = TRIAL_TIERS.filter((t) => joinedCount >= t.at);
   if (earned.length === 0) return out;
 
   let alreadyPaid = new Set<number>();
@@ -172,7 +180,7 @@ export async function getRewardHistory(userId: string): Promise<Array<{
 
 /** Next unearned tier, for "N more to go" copy. Null when all earned. */
 export function nextTier(joinedCount: number): { at: number; days: number; label: string } | null {
-  return REWARD_TIERS.find((t) => joinedCount < t.at) || null;
+  return TRIAL_TIERS.find((t) => joinedCount < t.at) || null;
 }
 
 /**

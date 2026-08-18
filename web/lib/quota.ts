@@ -26,24 +26,38 @@ import type { Tenant } from "@/lib/tenant";
 
 export type QuotaKind = "channels" | "renders_month" | "renders_day";
 
-// ── Trial terms (migration 0034) ────────────────────────────────
-// Constants describe FUTURE grants; what a user actually holds is on
-// their row, so an operator can move one account without a deploy.
-export const TRIAL_UNLOCK_REFERRALS = 5;
-export const TRIAL_UNLOCK_DAYS = 7;
-export const TRIAL_EXTEND_EVERY = 4;
-export const TRIAL_EXTEND_DAYS = 7;
+// ── Referral trial terms ────────────────────────────────────────
+//
+// A TABLE, not a formula. The terms are "refer 3 -> 7 days free, refer
+// 5 -> 14 days free", and the days are ABSOLUTE totals rather than
+// additive: at 5 referrals the trial is worth 14 days, not 7 + 14.
+//
+// This replaced an open-ended formula (5 unlocks 7 days, every further
+// 4 adds 7 more). Anything that reads referral rewards — the public
+// referrals page, the dashboard panel, the grant itself — resolves
+// through here, so the marketing copy cannot drift from what the code
+// actually hands out.
+export const TRIAL_TIERS: Array<{ at: number; days: number; label: string }> = [
+  { at: 3, days: 7,  label: "7 days free"  },
+  { at: 5, days: 14, label: "14 days free" },
+];
+
+/** What a trial account may do while the free days run. */
 export const TRIAL_CHANNELS = 1;
 export const TRIAL_VIDEOS_PER_DAY = 1;
 
 /**
  * Days a referral count is worth. Pure and total, so it is checkable
  * without a database.
+ *
+ * Highest matching tier wins. Below the first tier it is worth nothing,
+ * and past the last it does not keep growing — the table is the whole
+ * offer.
  */
 export function daysForReferrals(approved: number): number {
-  if (approved < TRIAL_UNLOCK_REFERRALS) return 0;
-  const extra = Math.floor((approved - TRIAL_UNLOCK_REFERRALS) / TRIAL_EXTEND_EVERY);
-  return TRIAL_UNLOCK_DAYS + extra * TRIAL_EXTEND_DAYS;
+  let days = 0;
+  for (const t of TRIAL_TIERS) if (approved >= t.at) days = Math.max(days, t.days);
+  return days;
 }
 
 /**
@@ -53,7 +67,8 @@ export function daysForReferrals(approved: number): number {
  * idempotent: a recount, re-approval or replayed webhook computes the
  * same total and owes zero. Without it every recount re-grants — the
  * hole migration 0033 closed for rewards, which would otherwise
- * reappear for extensions.
+ * reappear for extensions. It also makes the 3 -> 5 step work correctly:
+ * someone who already took 7 days is owed exactly 7 more, not 14.
  */
 export function pendingTrialDays(approved: number, alreadyGranted: number): number {
   return Math.max(0, daysForReferrals(approved) - Math.max(0, alreadyGranted));

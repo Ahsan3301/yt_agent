@@ -3,7 +3,7 @@ import { adminDb } from "@/lib/firebase-admin";
 import { requireTenant } from "@/lib/tenant";
 import { audit } from "@/lib/audit";
 import { markJoinedAndCheckUnlock, getOrCreateReferral } from "@/lib/referrals";
-import { grantEarnedRewards, grantTrialFromReferrals } from "@/lib/referral-rewards";
+import { grantTrialFromReferrals } from "@/lib/referral-rewards";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -42,7 +42,6 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     // Give the freshly-approved user their own referral code so they
     // can invite others. Idempotent — safe if a code already exists.
     let referralUnlocked: null | { referrerUserId: string; joinedCount: number; newlyUnlocked: boolean } = null;
-    let referralReward: Awaited<ReturnType<typeof grantEarnedRewards>> | null = null;
     let trialGrant: Awaited<ReturnType<typeof grantTrialFromReferrals>> = null;
     try {
       await getOrCreateReferral(id);
@@ -59,10 +58,14 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       // before anyone is approved should collect both the 5 and the 10
       // reward, not just the highest.
       if (referralUnlocked?.referrerUserId) {
-        referralReward = await grantEarnedRewards(
-          referralUnlocked.referrerUserId,
-          referralUnlocked.joinedCount,
-        );
+        // grantEarnedRewards is NOT called any more. It paid referral
+        // rewards as days on the `pro` PLAN, while grantTrialFromReferrals
+        // pays the same referrals as TRIAL days — so approving one signup
+        // granted both, twice for the same referral. One reward, one path.
+        //
+        // The trial path is the one kept because it carries the quotas
+        // (1 channel, 1 video/day) and the idempotency high-water mark,
+        // and it is what the dashboard panel actually displays.
         // Trial time and quotas, which the tier table does not cover.
         // Open-ended by design: 5 approved referrals unlock 7 days and
         // every further 4 add 7 more, so it is computed rather than
@@ -86,7 +89,6 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         email: d.email,
         previous_status: d.status || "pending",
         referral: referralUnlocked || undefined,
-        referral_reward: referralReward?.granted?.length ? referralReward : undefined,
       trial_grant: trialGrant || undefined,
       },
     }, req);
@@ -153,7 +155,6 @@ https://yven.io/login${trialLine}
     return NextResponse.json({
       ok: true, id, status: "active",
       referral: referralUnlocked || undefined,
-      referral_reward: referralReward?.granted?.length ? referralReward : undefined,
       trial_grant: trialGrant || undefined,
     });
   } catch (e) {
