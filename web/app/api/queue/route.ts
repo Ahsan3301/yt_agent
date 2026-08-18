@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { pickWorkers, countLiveWorkers, newRequestId, logRoute } from "@/app/api/_lib/orchestrator";
 import { adminDb } from "@/lib/firebase-admin";
-import { requireOperator, tenantWhereClauses } from "@/lib/tenant";
+import { requireTenant, tenantWhereClauses } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -11,9 +11,13 @@ export const runtime = "nodejs";
  * Reports live worker counts, queued+running job counts, and the
  * best worker URL (so the LaunchBanner can decide what to show).
  */
+// requireTenant, NOT requireOperator: this lists the CALLER'S OWN jobs
+// (tenantWhereClauses filters to them) and a user has to be able to see
+// their renders to cancel or retry one. /api/queue/pause is the
+// operator control and stays gated.
 export async function GET(req: NextRequest) {
   const reqId = newRequestId();
-  const auth = await requireOperator(req);
+  const auth = await requireTenant(req);
   if ("response" in auth) return auth.response;
   try {
     // Liveness must count outbound-poll workers too — pickWorkers()

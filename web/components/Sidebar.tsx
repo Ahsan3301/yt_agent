@@ -18,6 +18,7 @@ const USER_NAV: NavItem[] = [
   { href: "/app",           label: "Dashboard",   icon: LayoutDashboard },
   { href: "/app/create/wizard", label: "Create", icon: Wand2 },
   { href: "/app/channels",  label: "Channels",    icon: Layers          },
+  { href: "/app/queue",     label: "Job queue",   icon: ListChecks      },
   { href: "/app/reports",   label: "Reports",     icon: BarChart3       },
   { href: "/app/history",   label: "Library",     icon: History         },
   { href: "/app/settings",  label: "Settings",    icon: Settings        },
@@ -30,7 +31,6 @@ const USER_NAV: NavItem[] = [
 // product. Moved here; middleware enforces the same boundary so a
 // typed URL cannot get around it.
 const ADMIN_NAV: NavItem[] = [
-  { href: "/app/queue",     label: "Job queue",   icon: ListChecks      },
   { href: "/app/storage",   label: "Storage",     icon: HardDrive       },
   { href: "/app/keys",      label: "Connections", icon: KeyRound        },
   { href: "/admin",         label: "Admin",       icon: Shield          },

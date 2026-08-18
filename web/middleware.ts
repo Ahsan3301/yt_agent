@@ -120,16 +120,19 @@ export async function middleware(req: NextRequest) {
       // gives a clean redirect instead of a mid-render throw.
       // OPERATOR-ONLY PAGES UNDER /app.
       //
-      // These live under /app for historical reasons but are
-      // infrastructure, not customer features: /app/queue drives GPU
-      // workers ("Wake Kaggle"), /app/storage runs MinIO cleanup, and
-      // /app/keys holds provider API keys. A paying customer must not
-      // see, let alone operate, the machinery they are buying a result
-      // from.
+      // Infrastructure, not customer features: /app/storage runs MinIO
+      // cleanup and /app/keys holds provider API keys. A paying customer
+      // must not see, let alone operate, the machinery they are buying a
+      // result from.
+      //
+      // /app/queue is NOT here. A user needs to see their own renders
+      // and cancel or retry them — that is their work, not ours. The
+      // page hides the worker controls (Wake Kaggle / Colab / backend
+      // status) for non-admins instead of hiding the whole page.
       //
       // Gated HERE and not only in the sidebar, because hiding a nav
       // link is decoration — the route stays reachable by typing it.
-      const OPERATOR_APP_PATHS = ["/app/queue", "/app/storage", "/app/keys"];
+      const OPERATOR_APP_PATHS = ["/app/storage", "/app/keys"];
       if (OPERATOR_APP_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/")) &&
           session.role !== "admin" && session.role !== "superadmin") {
         const url = req.nextUrl.clone();

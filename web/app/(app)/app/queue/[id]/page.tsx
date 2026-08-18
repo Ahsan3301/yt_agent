@@ -58,6 +58,18 @@ export default function JobDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  // Role comes from /api/auth/me — the same source the sidebar uses.
+  const [isOperator, setIsOperator] = useState(false);
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((r) => r.json())
+      .then((d) => {
+        const role = String(d?.role || d?.user?.role || "");
+        setIsOperator(role === "admin" || role === "superadmin");
+      })
+      .catch(() => setIsOperator(false));   // fail closed
+  }, []);
+
   const { id } = usePromise(params);
   const [job, setJob] = useState<Job | null>(null);
   const [loading, setLoading] = useState(true);
@@ -323,8 +335,10 @@ export default function JobDetailPage({
             </div>
           )}
 
-          {/* Activity */}
-          {job.run_id && (
+          {/* Activity — operator diagnostics only. Raw pipeline logs
+              carry provider retries, worker ids and stack traces; a
+              customer needs status, not a traceback naming a GPU host. */}
+          {isOperator && job.run_id && (
             <LogsPanel
               runId={job.run_id}
               active={job.status === "running" || job.status === "queued"}

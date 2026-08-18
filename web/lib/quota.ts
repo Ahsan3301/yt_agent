@@ -121,7 +121,26 @@ async function _countChannels(userId: string): Promise<number> {
   }
 }
 
-/** Count non-cancelled render jobs the user submitted this UTC month. */
+/**
+ * Job states that must NOT consume allowance.
+ *
+ * A user is charged for a video, not for an attempt. A render that
+ * failed produced nothing they can publish, so counting it bills them
+ * for our outage — and the failures are usually ours: a provider 500, a
+ * worker dying mid-run, a storage upload timing out. 43 of the jobs in
+ * this database are `failed`, and every one of them was being counted.
+ *
+ * IN-FLIGHT WORK STILL COUNTS. queued/claimed/running are held against
+ * the allowance, otherwise someone could enqueue a hundred renders in a
+ * second and only be stopped once they finished. The allowance is
+ * released if they later fail.
+ */
+function _isRefunded(status: unknown): boolean {
+  const s = String(status || "").toLowerCase();
+  return s === "cancelled" || s === "canceled" || s === "failed";
+}
+
+/** Count CHARGEABLE render jobs the user submitted this UTC month. */
 async function _countRendersThisMonth(userId: string): Promise<number> {
   try {
     const now = new Date();
@@ -132,7 +151,7 @@ async function _countRendersThisMonth(userId: string): Promise<number> {
     snap.forEach((doc) => {
       const d = doc.data() as { queued_at?: number; status?: string; kind?: string };
       if (Number(d.queued_at || 0) < startOfMonth) return;
-      if (d.status === "cancelled") return;
+      if (_isRefunded(d.status)) return;
       // Only count RENDER jobs — publish_youtube / copy_storage side-jobs
       // don't count against the render quota.
       if (d.kind && d.kind !== "render") return;
@@ -144,7 +163,7 @@ async function _countRendersThisMonth(userId: string): Promise<number> {
   }
 }
 
-/** Count non-cancelled render jobs the user submitted today (UTC).
+/** Count CHARGEABLE render jobs the user submitted today (UTC).
  *
  *  UTC, not local: scheduled renders dispatch on UTC hours, and a
  *  local-midnight window would hand someone near the date line two
@@ -159,7 +178,7 @@ async function _countRendersToday(userId: string): Promise<number> {
     snap.forEach((doc) => {
       const d = doc.data() as { queued_at?: number; status?: string; kind?: string };
       if (Number(d.queued_at || 0) < startOfDay) return;
-      if (d.status === "cancelled") return;
+      if (_isRefunded(d.status)) return;
       if (d.kind && d.kind !== "render") return;
       n += 1;
     });

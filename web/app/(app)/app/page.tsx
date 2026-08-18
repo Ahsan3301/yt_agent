@@ -356,7 +356,13 @@ export default function Dashboard() {
               </Link>
             )}
           </div>
-          <LogsPanel active={isRunning} runId={state.run_id || runs[0]?.run_id || undefined} />
+          {/* Raw pipeline logs are operator diagnostics — provider
+              retries, worker ids, stack traces. A customer wants to know
+              their video is rendering, not why a Cloudflare call 500'd.
+              Progress and status stay visible above; this does not. */}
+          {isAdmin && (
+            <LogsPanel active={isRunning} runId={state.run_id || runs[0]?.run_id || undefined} />
+          )}
         </section>
       )}
 
