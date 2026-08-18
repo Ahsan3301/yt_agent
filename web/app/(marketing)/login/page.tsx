@@ -15,7 +15,10 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [nextPath, setNextPath] = useState("/");
+  // Default to the dashboard, not the marketing home. Logging in and
+  // landing back on the sales page reads as a failed login — the user
+  // has no signal it worked and starts hunting for a way in.
+  const [nextPath, setNextPath] = useState("/app");
 
   useEffect(() => {
     const p = new URLSearchParams(window.location.search).get("next");

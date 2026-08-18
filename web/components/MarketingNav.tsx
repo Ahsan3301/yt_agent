@@ -41,10 +41,20 @@ export function MarketingNav({ ctaHref = "/signup", ctaText = "Get Early Access"
         <li><Link href="/roadmap"         className="text-neutral-400 hover:text-white transition">Roadmap</Link></li>
         <li><Link href="/contact"         className="text-neutral-400 hover:text-white transition">Contact</Link></li>
       </ul>
-      <Link href={ctaHref}
-            className="bg-gradient-to-br from-accent to-accent-2 text-[#050508] px-4 py-2 rounded-full font-bold text-xs hover:-translate-y-0.5 hover:shadow-[0_0_20px_rgba(167,139,250,0.4)] transition-all">
-        {ctaText}
-      </Link>
+      <div className="flex items-center gap-3">
+        {/* Log in sat nowhere on the marketing site, so an existing
+            customer had to know /login by heart. Plain text beside the
+            gradient CTA: returning users look for the quiet link, new
+            ones for the loud button, and neither should compete. */}
+        <Link href="/login"
+              className="text-xs font-medium text-neutral-400 hover:text-white transition">
+          Log in
+        </Link>
+        <Link href={ctaHref}
+              className="bg-gradient-to-br from-accent to-accent-2 text-[#050508] px-4 py-2 rounded-full font-bold text-xs hover:-translate-y-0.5 hover:shadow-[0_0_20px_rgba(167,139,250,0.4)] transition-all">
+          {ctaText}
+        </Link>
+      </div>
     </nav>
   );
 }

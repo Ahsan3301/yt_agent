@@ -91,6 +91,54 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       },
     }, req);
 
+    // Tell them. Approval was silent: the account flipped to active and
+    // the person who signed up had no way to know except by trying to
+    // log in again on a hunch. For a product where approval is manual
+    // and can take hours, that is the difference between a customer and
+    // someone who assumed they were rejected.
+    //
+    // Best-effort by design — a mail failure must never undo an
+    // approval that already succeeded in the database.
+    try {
+      if (d.email) {
+        const { sendMail, mailerConfigured } = await import("@/lib/mailer");
+        if (await mailerConfigured()) {
+          const trialLine = trialGrant
+            ? `
+
+Your referral trial is active: ${trialGrant.added_days} day(s) added, `
+              + `running until ${new Date(trialGrant.expires_at * 1000).toDateString()}.`
+            : "";
+          await sendMail({
+            to: String(d.email),
+            subject: "Your Yven account is approved",
+            text:
+              `You're in.
+
+`
+              + `Your Yven account has been approved — you can sign in and connect a `
+              + `channel now.
+
+https://yven.io/login${trialLine}
+
+`
+              + `Reply to this email if anything looks wrong.`,
+            html:
+              `<p><strong>You're in.</strong></p>`
+              + `<p>Your Yven account has been approved — you can sign in and connect a channel now.</p>`
+              + `<p><a href="https://yven.io/login">Sign in to Yven</a></p>`
+              + (trialGrant
+                  ? `<p>Your referral trial is active: <strong>${trialGrant.added_days} day(s)</strong> added, `
+                    + `running until ${new Date(trialGrant.expires_at * 1000).toDateString()}.</p>`
+                  : "")
+              + `<p style="color:#666;font-size:13px">Reply to this email if anything looks wrong.</p>`,
+          });
+        }
+      }
+    } catch (e) {
+      console.error("approval email failed (account is still approved):", e);
+    }
+
     return NextResponse.json({
       ok: true, id, status: "active",
       referral: referralUnlocked || undefined,

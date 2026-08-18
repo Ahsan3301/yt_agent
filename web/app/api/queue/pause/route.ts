@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb, FieldValue } from "@/lib/firebase-admin";
-import { requireTenant } from "@/lib/tenant";
+import { requireOperator } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -25,7 +25,7 @@ const LEGACY_ID = "global";
 function _shadowId(userId: string): string { return `paused__${userId}`; }
 
 export async function GET(req: NextRequest) {
-  const auth = await requireTenant(req);
+  const auth = await requireOperator(req);
   if ("response" in auth) return auth.response;
   try {
     const primary = await adminDb().collection("queue_state").doc(_shadowId(auth.tenant.userId)).get();
@@ -39,7 +39,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const auth = await requireTenant(req);
+  const auth = await requireOperator(req);
   if ("response" in auth) return auth.response;
   try {
     const body = await req.json().catch(() => ({}));

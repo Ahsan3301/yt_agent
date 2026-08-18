@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { pickWorkers, countLiveWorkers, newRequestId, logRoute } from "@/app/api/_lib/orchestrator";
 import { adminDb } from "@/lib/firebase-admin";
-import { requireTenant, tenantWhereClauses } from "@/lib/tenant";
+import { requireOperator, tenantWhereClauses } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -13,7 +13,7 @@ export const runtime = "nodejs";
  */
 export async function GET(req: NextRequest) {
   const reqId = newRequestId();
-  const auth = await requireTenant(req);
+  const auth = await requireOperator(req);
   if ("response" in auth) return auth.response;
   try {
     // Liveness must count outbound-poll workers too — pickWorkers()

@@ -118,6 +118,25 @@ export async function middleware(req: NextRequest) {
       // Role gates (Phase 3). Layouts also enforce these via a
       // server-side check, but the middleware bounce is friendlier —
       // gives a clean redirect instead of a mid-render throw.
+      // OPERATOR-ONLY PAGES UNDER /app.
+      //
+      // These live under /app for historical reasons but are
+      // infrastructure, not customer features: /app/queue drives GPU
+      // workers ("Wake Kaggle"), /app/storage runs MinIO cleanup, and
+      // /app/keys holds provider API keys. A paying customer must not
+      // see, let alone operate, the machinery they are buying a result
+      // from.
+      //
+      // Gated HERE and not only in the sidebar, because hiding a nav
+      // link is decoration — the route stays reachable by typing it.
+      const OPERATOR_APP_PATHS = ["/app/queue", "/app/storage", "/app/keys"];
+      if (OPERATOR_APP_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/")) &&
+          session.role !== "admin" && session.role !== "superadmin") {
+        const url = req.nextUrl.clone();
+        url.pathname = "/app";
+        return NextResponse.redirect(url);
+      }
+
       if (pathname.startsWith("/admin") &&
           session.role !== "admin" && session.role !== "superadmin") {
         const url = req.nextUrl.clone();

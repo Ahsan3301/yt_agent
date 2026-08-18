@@ -7,7 +7,7 @@ import {
   Play, Settings, History, KeyRound, LayoutDashboard, Activity,
   ListChecks, Wand2, HeartPulse, Layers, Menu, X, HardDrive, BarChart3,
   Shield, Crown, Users, Flag, Package, LayoutTemplate, ScrollText, Sparkles,
-  SlidersHorizontal,
+  SlidersHorizontal, LogOut
 } from "lucide-react";
 import clsx from "clsx";
 
@@ -18,16 +18,21 @@ const USER_NAV: NavItem[] = [
   { href: "/app",           label: "Dashboard",   icon: LayoutDashboard },
   { href: "/app/create/wizard", label: "Create", icon: Wand2 },
   { href: "/app/channels",  label: "Channels",    icon: Layers          },
-  { href: "/app/queue",     label: "Job queue",   icon: ListChecks      },
-  { href: "/app/storage",   label: "Storage",     icon: HardDrive       },
   { href: "/app/reports",   label: "Reports",     icon: BarChart3       },
   { href: "/app/history",   label: "Library",     icon: History         },
   { href: "/app/settings",  label: "Settings",    icon: Settings        },
-  { href: "/app/keys",      label: "Connections", icon: KeyRound        },
   { href: "/app/referrals", label: "Referrals",   icon: Sparkles        },
 ];
 
+// Operator surfaces. These were in USER_NAV, so every customer saw
+// worker controls, MinIO cleanup and the provider API keys — the
+// machinery they are buying a result from, not a feature of the
+// product. Moved here; middleware enforces the same boundary so a
+// typed URL cannot get around it.
 const ADMIN_NAV: NavItem[] = [
+  { href: "/app/queue",     label: "Job queue",   icon: ListChecks      },
+  { href: "/app/storage",   label: "Storage",     icon: HardDrive       },
+  { href: "/app/keys",      label: "Connections", icon: KeyRound        },
   { href: "/admin",         label: "Admin",       icon: Shield          },
   { href: "/admin/monitor", label: "Workers",     icon: Activity        },
   { href: "/admin/health",  label: "Health",      icon: HeartPulse      },
@@ -52,6 +57,37 @@ function navForRole(role: Role): { user: NavItem[]; admin: NavItem[]; superadmin
     admin: role === "admin" || role === "superadmin" ? ADMIN_NAV : [],
     superadmin: role === "superadmin" ? SUPERADMIN_NAV : [],
   };
+}
+
+
+/**
+ * Sign out.
+ *
+ * There was no way to log out anywhere in the product — the only exit
+ * was clearing the cookie by hand. On a shared or borrowed machine
+ * that is not an inconvenience, it is the session staying open for
+ * whoever sits down next.
+ *
+ * Posts to /api/auth/logout then hard-navigates, so no client cache
+ * survives with the previous user's data in it.
+ */
+function SignOut() {
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      disabled={busy}
+      onClick={async () => {
+        setBusy(true);
+        try { await fetch("/api/auth/logout", { method: "POST" }); }
+        catch { /* leaving anyway */ }
+        window.location.href = "/login";
+      }}
+      className="mt-auto flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium text-neutral-500 hover:text-white hover:bg-white/[0.04] transition w-full disabled:opacity-50"
+    >
+      <LogOut className="h-4 w-4" />
+      {busy ? "Signing out…" : "Sign out"}
+    </button>
+  );
 }
 
 export default function Sidebar({ role = "user" }: { role?: Role }) {
@@ -146,6 +182,7 @@ export default function Sidebar({ role = "user" }: { role?: Role }) {
             {renderGroup(null, groups.user)}
             {renderGroup("Admin", groups.admin)}
             {renderGroup("Superadmin", groups.superadmin)}
+            <SignOut />
           </aside>
         </div>
       )}
@@ -156,6 +193,7 @@ export default function Sidebar({ role = "user" }: { role?: Role }) {
         {renderGroup(null, groups.user)}
         {renderGroup("Admin", groups.admin)}
         {renderGroup("Superadmin", groups.superadmin)}
+        <SignOut />
       </aside>
     </>
   );

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb, FieldValue } from "@/lib/firebase-admin";
 import { newRequestId, logRoute } from "@/app/api/_lib/orchestrator";
-import { requireTenant } from "@/lib/tenant";
+import { requireOperator } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -108,7 +108,7 @@ async function _writeBlob(userId: string, values: Record<string, string>): Promi
 /** GET /api/keys — return masked status for every managed key. */
 export async function GET(req: NextRequest) {
   const reqId = newRequestId();
-  const auth = await requireTenant(req);
+  const auth = await requireOperator(req);
   if ("response" in auth) return auth.response;
   try {
     const stored = await _readBlob(auth.tenant.userId);
@@ -134,7 +134,7 @@ export async function GET(req: NextRequest) {
  */
 export async function PUT(req: NextRequest) {
   const reqId = newRequestId();
-  const auth = await requireTenant(req);
+  const auth = await requireOperator(req);
   if ("response" in auth) return auth.response;
   try {
     const body = await req.json();

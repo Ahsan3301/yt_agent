@@ -143,3 +143,34 @@ function _parseCookieHeader(header: string, name: string): string {
   for (const p of parts) if (p.startsWith(needle)) return decodeURIComponent(p.slice(needle.length));
   return "";
 }
+
+/**
+ * Operator-only guard.
+ *
+ * `requireTenant` proves WHO you are; it says nothing about what you may
+ * do. Several infrastructure routes only called that, so any signed-in
+ * customer could read and rewrite the provider API keys (/api/keys),
+ * pause the render queue for everyone, or wake a Kaggle GPU on the
+ * operator's quota. The pages were reachable by typing the URL and the
+ * APIs behind them had no role check at all.
+ *
+ * Returns the tenant for admin/superadmin, or a response to return
+ * verbatim. Kept next to requireTenant so the two are seen together and
+ * the weaker one is not reached for by accident.
+ */
+export async function requireOperator(
+  req: NextRequest | Request,
+): Promise<{ tenant: Tenant } | { response: NextResponse }> {
+  const auth = await requireTenant(req);
+  if ("response" in auth) return auth;
+  const role = auth.tenant.role;
+  if (role !== "admin" && role !== "superadmin") {
+    return {
+      response: NextResponse.json(
+        { error: "forbidden — operator access required" },
+        { status: 403 },
+      ),
+    };
+  }
+  return auth;
+}

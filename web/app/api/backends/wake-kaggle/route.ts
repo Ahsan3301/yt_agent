@@ -59,6 +59,23 @@ export async function POST(_req: NextRequest) {
     return NextResponse.json({ error: "unauthorised" }, { status: 401 });
   }
 
+  // A valid session is not enough — it must be an OPERATOR's. Waking a
+  // kernel spends the operator's Kaggle GPU quota and GitHub minutes,
+  // so a signed-in customer clicking it (or curling it) would spend
+  // someone else's money. The maintenance key still passes: that is the
+  // cron and the worker, which are the operator by definition.
+  if (!hasKey) {
+    const { verifySession } = await import("@/lib/session");
+    const sess = cookie ? await verifySession(cookie) : null;
+    const role = sess?.role || "";
+    if (role !== "admin" && role !== "superadmin") {
+      return NextResponse.json(
+        { error: "forbidden — operator access required" },
+        { status: 403 },
+      );
+    }
+  }
+
   const repoFullName = process.env.GITHUB_REPO_FULL_NAME || "Ahsan3301/yt_agent";
   const [owner, repo] = repoFullName.split("/");
   if (!owner || !repo) {
