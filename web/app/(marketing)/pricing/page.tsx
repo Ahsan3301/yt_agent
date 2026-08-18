@@ -169,7 +169,7 @@ export default async function PricingPage() {
 
                     <Link
                       href={p.features?.custom_pricing ? "/contact" : "/signup"}
-                      className={`mt-6 block text-center px-4 py-2.5 rounded-full text-sm font-semibold transition ${
+                      className={`mt-6 block text-center px-4 py-3 rounded-full text-sm font-semibold transition ${
                         rec
                           ? "bg-white text-black hover:bg-neutral-200"
                           : "border border-white/15 text-neutral-200 hover:border-white/30 hover:text-white"
