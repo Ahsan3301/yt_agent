@@ -51,6 +51,16 @@ const SUPERADMIN_NAV: NavItem[] = [
   { href: "/superadmin/audit",     label: "Audit log",    icon: ScrollText      },
 ];
 
+/** The four primary destinations on the mobile tab bar, plus More.
+ *  Chosen as the things a user opens repeatedly — everything else
+ *  lives one tap deeper in the drawer. */
+const TABS: NavItem[] = [
+  { href: "/app",               label: "Home",     icon: LayoutDashboard },
+  { href: "/app/create/wizard", label: "Create",   icon: Wand2           },
+  { href: "/app/channels",      label: "Channels", icon: Layers          },
+  { href: "/app/queue",         label: "Queue",    icon: ListChecks      },
+];
+
 function navForRole(role: Role): { user: NavItem[]; admin: NavItem[]; superadmin: NavItem[] } {
   return {
     user: USER_NAV,
@@ -186,6 +196,63 @@ export default function Sidebar({ role = "user" }: { role?: Role }) {
           </aside>
         </div>
       )}
+
+
+      {/* ── Mobile bottom tab bar ────────────────────────────────
+          Phones get a native app pattern rather than a hamburger:
+          thumb-reachable, always visible, and it shows WHERE you are
+          without opening anything. A drawer hides both the destinations
+          and the current location behind a tap.
+
+          Five slots is the iOS/Android convention and the practical
+          limit at 375px — four primary destinations plus More, which
+          opens the full drawer for everything else (Settings, Reports,
+          Referrals, and the Admin groups).
+
+          pb-[env(safe-area-inset-bottom)] keeps it clear of the iPhone
+          home indicator; without it the labels sit under the gesture
+          bar on every modern iPhone. */}
+      <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 border-t border-line/60
+                      bg-bg-1/80 backdrop-blur-xl pb-[env(safe-area-inset-bottom)]"
+           aria-label="Primary">
+        <div className="grid grid-cols-5">
+          {TABS.map(({ href, label: text, icon: Icon }) => {
+            const active = isActive(href);
+            return (
+              <Link
+                key={href}
+                href={href}
+                aria-current={active ? "page" : undefined}
+                className="relative flex flex-col items-center justify-center gap-1 py-2.5
+                           active:scale-[0.92] transition-transform duration-100 select-none"
+              >
+                {/* Active pill above the icon — the iOS cue for "you are
+                    here", readable at a glance without colour alone. */}
+                <span className={clsx(
+                  "absolute top-0 h-[3px] w-8 rounded-full transition-all duration-200",
+                  active ? "bg-accent opacity-100" : "opacity-0",
+                )} />
+                <Icon className={clsx("h-[22px] w-[22px] transition-colors",
+                                      active ? "text-accent" : "text-neutral-500")} />
+                <span className={clsx("text-[10px] leading-none tracking-tight transition-colors",
+                                      active ? "text-accent font-semibold" : "text-neutral-500")}>
+                  {text}
+                </span>
+              </Link>
+            );
+          })}
+
+          <button
+            onClick={() => setOpen(true)}
+            aria-label="More"
+            className="relative flex flex-col items-center justify-center gap-1 py-2.5
+                       active:scale-[0.92] transition-transform duration-100 select-none"
+          >
+            <Menu className="h-[22px] w-[22px] text-neutral-500" />
+            <span className="text-[10px] leading-none tracking-tight text-neutral-500">More</span>
+          </button>
+        </div>
+      </nav>
 
       {/* Desktop sidebar */}
       <aside className="hidden md:flex md:w-64 flex-col gap-1 border-r border-line/60 bg-bg-1/60 backdrop-blur px-3 py-6 shrink-0 overflow-y-auto">

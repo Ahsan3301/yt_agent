@@ -22,7 +22,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     <div className="flex md:h-screen md:overflow-hidden min-h-screen">
       <Sidebar role={role} />
       <main className="flex-1 overflow-y-auto pt-14 md:pt-0">
-        <div className="mx-auto max-w-6xl px-4 py-6 md:p-8 space-y-6">
+        <div className="mx-auto max-w-6xl px-4 py-6 md:p-8 space-y-6 pb-28 md:pb-8">
           {/* Worker controls are OPERATOR-only. LaunchBanner is the
               "No backend online — Wake Kaggle (GPU) / Launch Colab"
               panel, and it rendered on every /app page for every user:
