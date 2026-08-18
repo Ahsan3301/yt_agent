@@ -1125,6 +1125,23 @@ def _cast_anchor_put(names, path: str) -> None:
             _CAST_ANCHORS.setdefault(n, path)
 
 
+def _generated_only(channel: str) -> bool:
+    """True when every frame of this niche must be generated.
+
+    Stock footage of a specific invented character does not exist, so
+    for these niches searching for it can only ever return the wrong
+    thing convincingly enough to be used.
+    """
+    if not channel:
+        return False
+    try:
+        from modules import channels as _ch
+        cfg = _ch.get_channel(channel) or {}
+        return bool(cfg.get("generated_only") or cfg.get("silent"))
+    except Exception:
+        return False
+
+
 def _score_local_image(path, visual, premise):
     """Vision-score a LOCAL image file by passing it as a data URL."""
     try:
@@ -1199,6 +1216,29 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror",
         nonlocal best
         if best is None or score > best[0]:
             best = (score, src_or_lazy)
+
+    # GENERATED-ONLY NICHES: no stock, ever.
+    #
+    # Stock is tried FIRST and only consults the global providers
+    # toggle, so a niche whose entire premise is generated imagery
+    # silently got photographs. Caught on the first real render of the
+    # wordless animation niche: both clips were image-to-video driven by
+    # Pexels stock — a photorealistic child in a raincoat and a
+    # photorealistic border collie, in a story about one specific
+    # animated terrier. The character bible, the cast sheet and the
+    # style prompt were all correct and all bypassed, because a stock
+    # photo answered before any of them was consulted.
+    #
+    # This is a per-niche PROPERTY, not an operator preference: for
+    # these niches a stock photograph is not a lower-quality result, it
+    # is the wrong medium. Hence a preset flag rather than a settings
+    # toggle someone has to remember to turn off.
+    if _generated_only(channel):
+        query = ""              # nothing to search stock WITH
+        providers = dict(providers)
+        for _p in ("shutterstock", "pexels", "coverr", "pixabay",
+                   "openverse_image", "openverse"):
+            providers[_p] = False
 
     # ── 1. Shutterstock ──
     if providers.get("shutterstock", True) and query:

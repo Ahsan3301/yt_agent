@@ -191,6 +191,10 @@ CHANNEL_PRESETS: dict[str, dict] = {
         "tone":           "warm, wordless, character-driven",
         "silent":         True,
         "footage_mode":   "motion",
+        # Every frame is generated. Stock photography of an invented
+        # character does not exist, so searching for it can only return
+        # something plausible and wrong.
+        "generated_only": True,
         "perspective":    "no narrator, no dialogue — story is carried entirely by action and expression",
         "language":       "en",
         "color_grade":    "warm_punchy",
