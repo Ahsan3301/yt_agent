@@ -163,10 +163,11 @@ export default function Sidebar({ role = "user" }: { role?: Role }) {
           </div>
           <span className="font-bold text-sm tracking-tight bg-gradient-to-r from-accent to-accent-2 bg-clip-text text-transparent">Yven</span>
         </Link>
-        <button onClick={() => setOpen(true)} className="btn-ghost p-2 rounded-md hover:bg-bg-2"
-                aria-label="Open menu">
-          <Menu className="h-5 w-5" />
-        </button>
+        {/* No hamburger here any more. The bottom tab bar's More tab
+            opens the same drawer, and two entry points to one menu — one
+            of them out of thumb reach at the top of the screen — is the
+            web habit this redesign is replacing. The bar stays as a
+            brand header, which is what a native app puts here. */}
       </header>
 
       {/* Mobile drawer */}
