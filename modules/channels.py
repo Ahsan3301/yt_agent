@@ -168,6 +168,69 @@ NICHE_VOICE_CATALOG: dict[str, dict[str, list[str]]] = {
 # define one at runtime via the dashboard (LLM expands a name + blurb
 # into the same shape).
 CHANNEL_PRESETS: dict[str, dict] = {
+    # ── Wordless 3D animated shorts ───────────────────────────
+    #
+    # The odd one out, and deliberately so. Every other preset here
+    # configures how words are written and spoken; this one has no
+    # words at all. `silent` is what main.py reads to skip TTS and
+    # subtitles, and it is the single switch that changes the pipeline's
+    # timing spine from "however long the audio came out" to "however
+    # long the beat sheet says".
+    #
+    # footage_mode is pinned to "motion" rather than left to the channel
+    # row. A still image with a Ken Burns pan is exactly what this niche
+    # must never produce, and making that a per-channel toggle would let
+    # one wrong click turn the whole thing into a slideshow.
+    #
+    # image_style names no studio. Prompting a generator with a studio's
+    # name to imitate its house style is a trademark problem the moment
+    # the output is published under a channel that monetises, and the
+    # descriptive version below is what actually drives the look anyway.
+    "pixar": {
+        "display_name":   "Animated shorts (wordless)",
+        "tone":           "warm, wordless, character-driven",
+        "silent":         True,
+        "footage_mode":   "motion",
+        "perspective":    "no narrator, no dialogue — story is carried entirely by action and expression",
+        "language":       "en",
+        "color_grade":    "warm_punchy",
+        "footage_keywords": [],   # nothing is searched; every frame is generated
+        "image_style": (
+            "3D animated feature film still, stylised cartoon character design with "
+            "large expressive eyes and soft rounded forms, subsurface scattering skin, "
+            "soft global illumination, warm cinematic key light with cool rim light, "
+            "shallow depth of field, physically based rendering, volumetric light, "
+            "highly detailed textures, 4k, family animation"
+        ),
+        "negative_style": (
+            "photorealistic human, live action, uncanny valley, deformed hands, extra fingers, "
+            "extra limbs, melted face, warped anatomy, text, watermark, signature, subtitles, "
+            "lens flare artefacts, low resolution, blurry, jpeg artefacts, oversaturated"
+        ),
+        "music_keywords":   "whimsical orchestral score",
+        "youtube_category": "1",          # Film & Animation
+        "hook_style":       "open on the character already wanting something — no establishing dawdle",
+        "research_mode":    "none",
+        "web_research_enabled": False,
+        "viral_seo": {
+            "hook_patterns": [
+                "{noun} — a short film",
+                "He only wanted {noun}",
+                "The little {noun} who wouldn't give up",
+                "A tiny story about {noun}",
+            ],
+            "banned_openers": ["Learn about", "In this video", "Did you know", "Today we", "Let me tell"],
+            "tag_seeds": [
+                "animated short", "3d animation", "short film", "animation shorts",
+                "wordless animation", "cgi short", "cute animation", "story short",
+                "heartwarming", "animation", "3d animated short film",
+            ],
+            "hashtag_seeds": ["#animatedshort", "#3danimation", "#shortfilm"],
+            "description_first_two_lines": "Open with the emotional premise in one line — what the character wants, and what stands in the way. Never describe the ending.",
+            "youtube_category_id": 1,
+            "engagement_cta": "What should the next short be about? Comment below.",
+        },
+    },
     "horror": {
         "display_name":   "Horror stories",
         "tone":           "chilling, dread-first, atmospheric",

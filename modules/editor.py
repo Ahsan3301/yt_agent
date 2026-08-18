@@ -1167,21 +1167,44 @@ def prepare_clips(sources, target_duration, work_dir, channel="horror"):
     return concat_out
 
 
+def _silent_music_volume() -> float:
+    """Music level for a wordless render.
+
+    music_base_volume is tuned to sit UNDER a voice (0.55). With no
+    voice it is simply quiet, so wordless renders get their own setting
+    — defaulting near unity because the score is the soundtrack.
+    """
+    try:
+        v = float((load_settings().get("video") or {}).get("silent_music_volume", 0.9))
+    except Exception:
+        v = 0.9
+    return max(0.1, min(1.5, v))
+
+
 def assemble_video(voiceover_path, sources, music_path, narration_text, output_dir,
-                    channel="horror"):
+                    channel="horror", silent_duration: float = 0.0):
     """
     Full assembly pipeline. Returns path to final MP4.
 
     `sources` is a list of {type, path} dicts as produced by footage.get_footage.
     Each source is shown exactly once — no clip is ever repeated.
     `channel` drives the image color grade.
+
+    `silent_duration` > 0 puts this in WORDLESS mode: there is no
+    voiceover track to measure or mix, and no captions are burned. The
+    caller supplies the runtime because a wordless short's length comes
+    from its beat sheet rather than from an audio file. Music then
+    carries the whole soundtrack, so it is mixed at full level with no
+    sidechain ducking — there is nothing to duck against, and ducking
+    against silence just makes the score pump.
     """
+    silent = float(silent_duration or 0) > 0
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     work_dir = os.path.join(output_dir, "_work")
     Path(work_dir).mkdir(exist_ok=True)
 
     log.info("Getting audio duration...")
-    duration = get_audio_duration(voiceover_path)
+    duration = float(silent_duration) if silent else get_audio_duration(voiceover_path)
     # Hard ceiling on finished length.
     #
     # max_video_seconds bounded the SHOT PLANNER (6 shots, correctly) but
@@ -1203,16 +1226,17 @@ def assemble_video(voiceover_path, sources, music_path, narration_text, output_d
             f"the tail of the script is being cut."
         )
         duration = _cap
-    log.info(f"Voiceover duration: {duration:.1f}s")
+    log.info(f"{'Wordless runtime' if silent else 'Voiceover duration'}: {duration:.1f}s")
 
     # Step 1: Prepare background video (one segment per source, no repeats)
     log.info("Preparing background montage...")
     bg_video = prepare_clips(sources, duration, work_dir, channel=channel)
 
-    # Step 2: Create caption file
+    # Step 2: Create caption file — skipped entirely when wordless.
     caption_filename = "captions.ass"
-    caption_path = os.path.join(work_dir, caption_filename)
-    create_caption_file(narration_text, duration, caption_path, audio_path=voiceover_path)
+    if not silent:
+        caption_path = os.path.join(work_dir, caption_filename)
+        create_caption_file(narration_text, duration, caption_path, audio_path=voiceover_path)
 
     final_path = os.path.join(output_dir, "final_video.mp4")
 
@@ -1223,7 +1247,7 @@ def assemble_video(voiceover_path, sources, music_path, narration_text, output_d
     # ever bites inside a filter option string like `ass=<path>`.
     work_dir_abs = os.path.abspath(work_dir)
     bg_video_abs = os.path.abspath(bg_video)
-    voiceover_path_abs = os.path.abspath(voiceover_path)
+    voiceover_path_abs = os.path.abspath(voiceover_path) if voiceover_path else None
     final_path_abs = os.path.abspath(final_path)
     music_path_abs = os.path.abspath(music_path) if music_path else None
 
@@ -1251,10 +1275,53 @@ def assemble_video(voiceover_path, sources, music_path, narration_text, output_d
             final_path_abs,
         ], desc="final assembly (no music)", cwd=work_dir_abs)
 
+    def _final_assembly_silent():
+        """Wordless: music is the entire soundtrack, no captions.
+
+        If music is missing we still have to emit an audio track —
+        YouTube treats a video with no audio stream as broken on some
+        clients and Shorts in particular — so anullsrc stands in.
+        """
+        if music_path and os.path.exists(music_path):
+            run_ffmpeg([
+                "-i", bg_video_abs,
+                "-i", music_path_abs,
+                "-filter_complex",
+                # Full level: nothing is competing with it. A short
+                # fade at each end stops the hard cut-in and the abrupt
+                # tail that a raw -t truncation leaves.
+                (f"[1:a]volume={_silent_music_volume()},"
+                 f"afade=t=in:st=0:d=1.0,"
+                 f"afade=t=out:st={max(0.0, duration - 1.5):.2f}:d=1.5[aout]"),
+                "-map", "0:v", "-map", "[aout]",
+                *_vcodec_args(crf=out_crf, preset_cpu=out_preset),
+                *_colour_args(),
+                *_audio_args(out_abr),
+                "-t", str(duration),
+                "-movflags", "+faststart",
+                final_path_abs,
+            ], desc="final assembly (wordless, music only)", cwd=work_dir_abs)
+        else:
+            log.warning("wordless render has no music track — emitting silent audio "
+                        "so the file still has a valid audio stream")
+            run_ffmpeg([
+                "-i", bg_video_abs,
+                "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+                "-map", "0:v", "-map", "1:a",
+                *_vcodec_args(crf=out_crf, preset_cpu=out_preset),
+                *_colour_args(),
+                *_audio_args(out_abr),
+                "-t", str(duration),
+                "-movflags", "+faststart",
+                final_path_abs,
+            ], desc="final assembly (wordless, no music)", cwd=work_dir_abs)
+
     # Run ffmpeg with cwd=work_dir_abs and reference the caption file by its
     # bare filename. No drive letter, no colon, nothing for the ass filter's
     # parser to misinterpret as "original_size".
-    if music_path and os.path.exists(music_path):
+    if silent:
+        _final_assembly_silent()
+    elif music_path and os.path.exists(music_path):
         vcfg = load_settings().get("video", {})
         mvol  = float(vcfg.get("music_base_volume", 0.55))
         mthr  = float(vcfg.get("music_duck_threshold", 0.15))

@@ -735,6 +735,18 @@ def run_pipeline(
                 channel_cfg=channel_cfg,
                 language=_pipeline_lang,
             ), run_id=run_id)
+        elif bool(channel_cfg.get("silent")):
+            # Wordless niche. The beat sheet IS the script: it carries
+            # the story, the cast bible and — critically — the runtime,
+            # because there will be no audio file to measure later.
+            log.info("[2/6] Writing wordless beat sheet...")
+            from modules import silent_story as _silent
+            if language is not None:
+                content["language"] = (language or "en").lower()[:2]
+            if _tone_clean:
+                content["tone_override"] = _tone_clean
+            script = _step(summary, "script",
+                           lambda: _silent.write_beat_sheet(content), run_id=run_id)
         else:
             log.info("[2/6] Writing script with LLM...")
             # Inject job-level language + real_events into the research
@@ -761,22 +773,36 @@ def run_pipeline(
         log.info(f"Script length: {len(script.get('narration','').split())} words")
 
         # ── STEP 3: Voiceover ─────────────────────────────────────
-        log.info("[3/6] Generating voiceover...")
+        # A wordless short has none. audio_path stays None and every
+        # later consumer branches on it: the shot planner takes its
+        # duration from the beat sheet instead of the audio file, and
+        # the editor lays music alone with no caption burn.
+        _silent_mode = bool(script.get("silent"))
+        audio_path = None
+        eff_language = _pipeline_lang
+        if _silent_mode:
+            _target = float(script.get("target_seconds") or 0) or 45.0
+            log.info(f"[3/6] Wordless short — no voiceover. "
+                     f"Runtime from beat sheet: {_target:.1f}s")
+            summary["steps"]["voiceover"] = {"ok": True, "skipped": True,
+                                             "reason": "wordless niche", "seconds": 0}
+        else:
+            log.info("[3/6] Generating voiceover...")
         audio_dir = os.path.join(work_dir, "audio")
         # Resolve effective language for voiceover — same value as the
         # pipeline-wide _pipeline_lang set above, kept as a local for
         # backward compat with existing references below.
-        eff_language = _pipeline_lang
         # (SDXL bg warm was kicked at [2/6] script start above — it's
         # still running here overlapping TTS. Joined before fetch_shots.)
-        audio_path = _step(summary, "voiceover", lambda: generate_voiceover(
-            script["narration"], channel_type, audio_dir,
-            language=eff_language,
-            voice_override=voice_override,
-        ), run_id=run_id)
-        if not audio_path:
-            log.error("Voiceover generation failed. Aborting.")
-            return _finish(summary, work_dir, False)
+        if not _silent_mode:
+            audio_path = _step(summary, "voiceover", lambda: generate_voiceover(
+                script["narration"], channel_type, audio_dir,
+                language=eff_language,
+                voice_override=voice_override,
+            ), run_id=run_id)
+            if not audio_path:
+                log.error("Voiceover generation failed. Aborting.")
+                return _finish(summary, work_dir, False)
 
         # ── STEP 3.5: Publish-ready SEO metadata ─────────────────
         # Narration is now frozen. Run the SEO writer BEFORE render so
@@ -970,7 +996,12 @@ def run_pipeline(
         log.info("[4/6] Fetching stock footage (storyboard-driven)...")
         clips_dir = os.path.join(work_dir, "clips")
         from modules.editor import get_audio_duration
-        voice_seconds = get_audio_duration(audio_path)
+        # Wordless shorts have no audio to measure, so the beat sheet is
+        # the authority on length. Everything downstream still reads
+        # `voice_seconds`, which keeps the shot planner, the editor and
+        # the summary on one number regardless of which branch set it.
+        voice_seconds = (float(script.get("target_seconds") or 45.0)
+                         if _silent_mode else get_audio_duration(audio_path))
         # Shot length is a setting, not a constant: a 30s video built
         # from 5s shots needs exactly 6, which is also the number of
         # generated clips a full-motion render produces.
@@ -983,14 +1014,26 @@ def run_pipeline(
 
         # Storyboard: NIM breaks the narration into shots with per-shot
         # visual_description, search_query, and ai_prompt.
-        shots = plan_shots(
-            script["narration"], num_shots, channel=channel_type,
-            language=_pipeline_lang, tone_override=_tone_clean,
-        )
+        #
+        # Wordless shorts skip that model call entirely. Its job is to
+        # infer shots from spoken narration, and here the beats already
+        # ARE shots — each with its action, camera and own duration.
+        # Re-deriving them would only give a second model the chance to
+        # drop the character descriptions the whole niche depends on.
+        if _silent_mode:
+            from modules import silent_story as _silent
+            shots = _silent.shots_from_beats(script)
+            log.info(f"wordless: {len(shots)} shots straight from the beat sheet")
+        else:
+            shots = plan_shots(
+                script["narration"], num_shots, channel=channel_type,
+                language=_pipeline_lang, tone_override=_tone_clean,
+            )
         footage = None
 
         if shots:
-            assign_timing(shots, voice_seconds)
+            if not _silent_mode:
+                assign_timing(shots, voice_seconds)
             for i, sh in enumerate(shots):
                 log.info(f"  shot {i+1}: [{sh['start']:.1f}-{sh['end']:.1f}s] "
                          f"{sh['search_query']!r}")
@@ -1116,6 +1159,25 @@ def run_pipeline(
             music = get_music(music_q, clips_dir)
             footage = {"sources": sources, "music": music}
 
+        # Clips that could not be brought up to standard. The operator
+        # chose best-effort publishing, so these do not stop the render
+        # — but they must reach the dashboard, or "degraded" is a state
+        # only the log knows about and the video gets shown to someone
+        # on the assumption it is clean.
+        try:
+            from modules.shotfinder import take_degraded as _take_deg
+            _deg = _take_deg()
+            if _deg:
+                summary["degraded"] = True
+                summary["degraded_shots"] = _deg
+                log.warning("=" * 70)
+                log.warning("  RENDER IS DEGRADED — %d shot(s) shipped below standard:", len(_deg))
+                for _d in _deg:
+                    log.warning("    shot %s: %s", _d.get("shot"), _d.get("reason"))
+                log.warning("=" * 70)
+        except Exception as _de:
+            log.debug(f"degraded tally unavailable: {_de!r}")
+
         if not footage["sources"]:
             log.error("No footage downloaded. Check API keys. Aborting.")
             return _finish(summary, work_dir, False)
@@ -1126,9 +1188,13 @@ def run_pipeline(
             voiceover_path=audio_path,
             sources=footage["sources"],
             music_path=footage["music"],
-            narration_text=script["narration"],
+            # No captions on a wordless short. Passing the story prose
+            # here would burn the beat sheet onto the screen, which is
+            # the one thing the niche promises not to do.
+            narration_text="" if _silent_mode else script["narration"],
             output_dir=work_dir,
             channel=channel_type,
+            silent_duration=voice_seconds if _silent_mode else 0.0,
         ), run_id=run_id)
         if not final_video:
             log.error("Video assembly failed. Aborting.")

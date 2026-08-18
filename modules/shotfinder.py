@@ -959,7 +959,76 @@ _CAST_ANCHORS: dict[str, str] = {}
 _CAST_ANCHOR_LOCK = __import__("threading").Lock()
 
 
-def build_cast_sheet(shots, output_dir) -> int:
+# ── generated-clip quality gate ──────────────────────────────
+# Per-render tally of shots whose clip could not be brought up to
+# standard. The operator chose best-effort publishing, so a failure
+# here does not stop the render — it marks it, and main.py copies the
+# marks onto the run summary so the dashboard can show the video as
+# degraded before anyone puts it in front of an audience.
+_DEGRADED: list[dict] = []
+_DEGRADED_LOCK = __import__("threading").Lock()
+
+
+def reset_degraded() -> None:
+    with _DEGRADED_LOCK:
+        _DEGRADED.clear()
+
+
+def take_degraded() -> list[dict]:
+    """Drain the tally. Called once by the pipeline after fetch_shots."""
+    with _DEGRADED_LOCK:
+        out = list(_DEGRADED)
+        _DEGRADED.clear()
+    return out
+
+
+def _register_degraded(idx: int, verdict: dict) -> None:
+    with _DEGRADED_LOCK:
+        _DEGRADED.append({
+            "shot":      idx + 1,
+            "reason":    str(verdict.get("reason") or "unknown"),
+            "motion":    verdict.get("motion"),
+            "vision":    verdict.get("vision"),
+            "mean_diff": verdict.get("mean_diff"),
+        })
+
+
+def _clip_qc_tries() -> int:
+    """Generations allowed per shot before we accept the best one.
+
+    Each retry costs a full generation — ~90s plus the provider's rate
+    limit — so this is bounded low by default. Two is enough to catch
+    the common "it came back frozen" failure without doubling render
+    time on a channel where the first attempt is usually fine.
+    """
+    try:
+        v = int((load_settings().get("video") or {}).get("clip_qc_attempts", 2))
+    except Exception:
+        v = 2
+    return max(1, min(4, v))
+
+
+def _qc_clip(path: str, shot: dict) -> dict:
+    """Judge one generated clip against the shot it was made for."""
+    try:
+        from modules import clip_qc
+        _vcfg = load_settings().get("video") or {}
+        return clip_qc.check(
+            path,
+            fit_description=str(shot.get("visual_description")
+                                or shot.get("ai_prompt") or "")[:600],
+            premise=str(shot.get("narration_excerpt") or "")[:300],
+            min_vision=int(_vcfg.get("clip_qc_min_vision",
+                                     clip_qc.DEFAULT_MIN_VISION)),
+            use_vision=bool(_vcfg.get("clip_qc_vision", True)),
+        )
+    except Exception as e:
+        # A broken gate must never block a render. Unknown = pass.
+        log.warning(f"clip QC skipped for shot: {e!r}")
+        return {"ok": True, "reason": f"qc error: {e}"}
+
+
+def build_cast_sheet(shots, output_dir, channel: str = "") -> int:
     """Generate one reference portrait per recurring character.
 
     Anchoring on "whatever shot 1 produced" is weak: the opening shot is
@@ -987,15 +1056,41 @@ def build_cast_sheet(shots, output_dir) -> int:
             if _marker in _ap:
                 seg = _ap.split(_marker, 1)[1]
                 looks[nm] = seg.split(";")[0].strip(" .")[:300]
+    # Animated niches need a FULL-BODY reference, not a head-and-
+    # shoulders one. Their shots are full-figure action — a character
+    # running, reaching, falling — and a reference cropped at the
+    # collar tells the model nothing about build, proportions, or what
+    # the character is wearing below the chest. Those are exactly the
+    # things that drift, and the drift is more visible in animation
+    # than in photography because the silhouette IS the character.
+    _style = ""
+    _animated = False
+    try:
+        from modules import channels as _ch
+        _cfg = _ch.get_channel(channel) if channel else {}
+        _animated = bool(_cfg.get("silent")) or "animated" in str(_cfg.get("image_style", ""))
+        _style = str(_cfg.get("image_style") or "")
+    except Exception:
+        pass
+
     built = 0
     for nm, look in list(looks.items())[:3]:      # 3 portraits is plenty for a Short
         if not look:
             continue
-        prompt = (
-            f"Head and shoulders portrait photograph of {look}. "
-            "Facing camera, neutral expression, even soft lighting, "
-            "plain neutral background, sharp focus, photorealistic."
-        )
+        if _animated:
+            prompt = (
+                f"Character model sheet: full body, head to toe, of {look}. "
+                "Standing straight facing the camera, arms relaxed at the sides, "
+                "neutral expression, feet fully visible, even soft studio lighting, "
+                "plain light grey background, entire figure inside the frame. "
+                + _style
+            )
+        else:
+            prompt = (
+                f"Head and shoulders portrait photograph of {look}. "
+                "Facing camera, neutral expression, even soft lighting, "
+                "plain neutral background, sharp focus, photorealistic."
+            )
         try:
             path, _seed = _agnes_generate(prompt, output_dir, trial=0)
         except Exception as e:
@@ -1207,6 +1302,18 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror",
     ]
     ig_enabled = ig_cfg.get("enabled") or {}
     negative_prompt = str(ig_cfg.get("negative_prompt") or "").strip()
+    # Per-niche negatives, merged on top of the global list rather than
+    # replacing it. What ruins a render is niche-specific: an animated
+    # short is wrecked by "photorealistic human" and by melted hands,
+    # neither of which belongs in a global negative that also governs
+    # the photographic niches.
+    try:
+        from modules import channels as _chn
+        _neg_style = str((_chn.get_channel(channel) or {}).get("negative_style") or "").strip()
+        if _neg_style:
+            negative_prompt = f"{negative_prompt}, {_neg_style}".strip(" ,")
+    except Exception:
+        pass
 
     def _provider_ready(name: str) -> tuple[bool, str]:
         """Return (ready, reason-if-not). Combines user toggle + key/GPU check."""
@@ -1501,6 +1608,7 @@ def fetch_shots(shots, output_dir, channel="horror", preset_sources=None,
     # starts, or a worker that stays up would reference the last
     # video's protagonist in this video's shots.
     reset_cast_anchors()
+    reset_degraded()
     used_ids = set(F._load_used_clips())
     presets = list(preset_sources or [])
     total = max(1, len(shots))
@@ -1513,7 +1621,7 @@ def fetch_shots(shots, output_dir, channel="horror", preset_sources=None,
     # appearance already matches the sheet rather than defining it.
     if _mode != "stills":
         try:
-            _n = build_cast_sheet(shots, output_dir)
+            _n = build_cast_sheet(shots, output_dir, channel=channel)
             if _n:
                 log.info(f"cast-sheet: {_n} character reference(s) ready")
         except Exception as _e:
@@ -1634,13 +1742,58 @@ def fetch_shots(shots, output_dir, channel="horror", preset_sources=None,
                                              + _b64.b64encode(_rf.read()).decode("ascii"))
                             except Exception as _re:
                                 log.warning(f"agnes-video: shot still unreadable: {_re}")
-                        src = _agnes_video_generate(_vp, output_dir, idx,
-                                                    seconds=_dur if _dur > 0 else 5.0,
-                                                    init_image_url=_init)
+                        # QUALITY GATE. Generate, judge, regenerate.
+                        #
+                        # The judging happens here rather than after the
+                        # whole render because this is the only point
+                        # where a bad clip can still be replaced — once
+                        # the montage is concatenated the choice is
+                        # "ship it or throw away the entire video".
+                        _tries = _clip_qc_tries()
+                        _best, _best_score, _last_verdict = None, -2, {}
+                        for _attempt in range(1, _tries + 1):
+                            _cand = _agnes_video_generate(
+                                _vp, output_dir, idx,
+                                seconds=_dur if _dur > 0 else 5.0,
+                                init_image_url=_init)
+                            if _cand is None:
+                                break
+                            _v = _qc_clip(_cand.get("path"), shot)
+                            # Rank by vision score, falling back to
+                            # "it at least moved" when vision is
+                            # unavailable, so the best of N is kept
+                            # even when every one of them failed.
+                            _score = _v.get("vision", -1)
+                            if _score < 0:
+                                _score = 0 if _v.get("ok") else -1
+                            if _score > _best_score:
+                                _best, _best_score, _last_verdict = _cand, _score, _v
+                            if _v.get("ok"):
+                                log.info(
+                                    "shot %d clip passed QC on attempt %d "
+                                    "(motion=%s delta=%.1f vision=%s)",
+                                    idx + 1, _attempt, _v.get("motion"),
+                                    _v.get("mean_diff", -1), _v.get("vision"))
+                                break
+                            log.warning(
+                                "shot %d clip failed QC on attempt %d/%d: %s",
+                                idx + 1, _attempt, _tries, _v.get("reason"))
+                        src = _best
+                        if src is not None and not _last_verdict.get("ok", True):
+                            # Best effort: keep the least-bad clip and
+                            # record WHY, so the run is flagged degraded
+                            # in the dashboard instead of quietly
+                            # shipping as if it were clean.
+                            src["qc_failed"] = True
+                            src["qc_reason"] = str(_last_verdict.get("reason") or "")
+                            _register_degraded(idx, _last_verdict)
                         # Animation failed but we already have a good
                         # still for this shot — use it rather than
                         # throwing the work away and re-fetching below.
                         if src is None and _still:
+                            log.warning("shot %d: no usable clip after %d attempt(s) — "
+                                        "falling back to the still", idx + 1, _tries)
+                            _register_degraded(idx, {"reason": "no clip generated; used a still"})
                             src = _still
                 # Real archive footage — ONLY for channels explicitly
                 # put in motion mode. Agnes has generation quota and
