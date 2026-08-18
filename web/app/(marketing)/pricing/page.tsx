@@ -11,7 +11,16 @@ export const metadata: Metadata = {
     "Automated YouTube Shorts from $19/month. Research, script, voiceover, edit and publish — on autopilot.",
 };
 
-export const revalidate = 60;
+// DYNAMIC, not ISR. The PocketBase client fetches with no-store, so
+// this page cannot be statically generated: at build time inside Docker
+// the database is unreachable, _plans() catches, and the EMPTY STATE
+// gets baked into the static HTML. The deployed page then advertised no
+// tiers at all while the plans table was fully populated.
+//
+// Same failure as /roadmap, which rendered its fallback for the same
+// reason. Prices are the worst possible thing to serve from a stale
+// build artifact, so this one is dynamic on purpose.
+export const dynamic = "force-dynamic";
 
 /**
  * Public pricing.
