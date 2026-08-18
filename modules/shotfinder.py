@@ -1008,15 +1008,42 @@ def _clip_qc_tries() -> int:
     return max(1, min(4, v))
 
 
-def _qc_clip(path: str, shot: dict) -> dict:
+def _qc_medium(channel: str) -> str:
+    """How to tell the vision judge what MEDIUM to expect.
+
+    Without this the judge scores an animated frame against an implicit
+    assumption of photorealism and marks it down for not being a
+    photograph. Measured on one real frame — a 3D-animated cat on a
+    lighthouse railing, verified good by eye:
+
+        beat's own action text ............................  1/10
+        literal description of the frame ..................  2/10
+        same description prefixed "3D animated film still" . 10/10
+        deliberately wrong description (a car in a desert) .  0/10
+
+    The judge discriminates correctly; it was answering a question we
+    never asked properly. Empty for photographic niches, which keeps
+    their scoring exactly as it was.
+    """
+    try:
+        from modules import channels as _ch
+        return str((_ch.get_channel(channel) or {}).get("medium_hint") or "").strip()
+    except Exception:
+        return ""
+
+
+def _qc_clip(path: str, shot: dict, channel: str = "") -> dict:
     """Judge one generated clip against the shot it was made for."""
     try:
         from modules import clip_qc
         _vcfg = load_settings().get("video") or {}
+        _desc = str(shot.get("visual_description") or shot.get("ai_prompt") or "")[:600]
+        _med = _qc_medium(channel)
+        if _med:
+            _desc = f"{_med}: {_desc}"
         return clip_qc.check(
             path,
-            fit_description=str(shot.get("visual_description")
-                                or shot.get("ai_prompt") or "")[:600],
+            fit_description=_desc,
             premise=str(shot.get("narration_excerpt") or "")[:300],
             min_vision=int(_vcfg.get("clip_qc_min_vision",
                                      clip_qc.DEFAULT_MIN_VISION)),
@@ -1798,7 +1825,7 @@ def fetch_shots(shots, output_dir, channel="horror", preset_sources=None,
                                 init_image_url=_init)
                             if _cand is None:
                                 break
-                            _v = _qc_clip(_cand.get("path"), shot)
+                            _v = _qc_clip(_cand.get("path"), shot, channel=channel)
                             # Rank by vision score, falling back to
                             # "it at least moved" when vision is
                             # unavailable, so the best of N is kept

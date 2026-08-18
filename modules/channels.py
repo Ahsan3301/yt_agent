@@ -206,6 +206,11 @@ CHANNEL_PRESETS: dict[str, dict] = {
             "shallow depth of field, physically based rendering, volumetric light, "
             "highly detailed textures, 4k, family animation"
         ),
+        # Told to the vision judge when it scores a generated clip, so
+        # it grades the frame as animation rather than marking it down
+        # for not being a photograph. Worth 1/10 -> 10/10 on a measured
+        # real frame; see shotfinder._qc_medium.
+        "medium_hint":    "3D animated film still",
         "negative_style": (
             "photorealistic human, live action, uncanny valley, deformed hands, extra fingers, "
             "extra limbs, melted face, warped anatomy, text, watermark, signature, subtitles, "
