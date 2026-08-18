@@ -53,12 +53,16 @@ const SUPERADMIN_NAV: NavItem[] = [
 
 /** The four primary destinations on the mobile tab bar, plus More.
  *  Chosen as the things a user opens repeatedly — everything else
- *  lives one tap deeper in the drawer. */
+ *  lives one tap deeper in the drawer.
+ *
+ *  Library over Queue: finished videos are what someone comes back to
+ *  look at, while the queue matters only while something is rendering.
+ *  Queue keeps its sidebar entry and is one tap away under More. */
 const TABS: NavItem[] = [
   { href: "/app",               label: "Home",     icon: LayoutDashboard },
   { href: "/app/create/wizard", label: "Create",   icon: Wand2           },
   { href: "/app/channels",      label: "Channels", icon: Layers          },
-  { href: "/app/queue",         label: "Queue",    icon: ListChecks      },
+  { href: "/app/history",       label: "Library",  icon: History         },
 ];
 
 function navForRole(role: Role): { user: NavItem[]; admin: NavItem[]; superadmin: NavItem[] } {

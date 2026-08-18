@@ -82,7 +82,7 @@ export default function ComparePage() {
           <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-accent/40 to-transparent" />
           <h2 className="text-2xl font-extrabold mb-3">Stop stacking tools. Start scaling.</h2>
           <p className="text-neutral-400 mb-7">One engine replaces the entire video stack.</p>
-          <Link href="/signup" className="btn btn-primary h-12 px-9 text-sm font-bold">Get Early Access</Link>
+          <Link href="/signup" className="btn btn-primary h-12 px-9 text-sm font-bold">Sign up</Link>
         </div>
       </div>
     </div>

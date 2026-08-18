@@ -49,7 +49,7 @@ const DEFAULT_CONTENT = {
   hero_title:    "The end of video production.",
   hero_tail:     "Ship YouTube on autopilot.",
   hero_sub:      "Attach a channel. Yven researches, writes, narrates, edits and publishes — while you sleep. One engine replaces the entire stack.",
-  hero_cta_text: "Get Early Access",
+  hero_cta_text: "Sign up",
   hero_cta_href: "/signup",
   features: [
     // Every claim below is something the pipeline actually does. The

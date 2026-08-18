@@ -33,7 +33,7 @@ const EMPTY: Content = {
   hero_title: "",
   hero_tail: "",
   hero_sub: "",
-  hero_cta_text: "Get Early Access",
+  hero_cta_text: "Sign up",
   hero_cta_href: "/signup",
   features: [],
   pipeline_steps: [],

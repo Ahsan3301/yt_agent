@@ -9,7 +9,7 @@ import { Menu, X } from "lucide-react";
  * Fades in a stronger backdrop on scroll so it stays legible over
  * light hero content.
  */
-export function MarketingNav({ ctaHref = "/signup", ctaText = "Get Early Access" }: { ctaHref?: string; ctaText?: string }) {
+export function MarketingNav({ ctaHref = "/signup", ctaText = "Sign up" }: { ctaHref?: string; ctaText?: string }) {
   const [scrolled, setScrolled] = useState(false);
   const [open, setOpen] = useState(false);
 
@@ -48,7 +48,7 @@ export function MarketingNav({ ctaHref = "/signup", ctaText = "Get Early Access"
       <Link href="/" className="font-extrabold text-lg tracking-tight bg-gradient-to-br from-accent to-accent-2 bg-clip-text text-transparent">
         Yven
       </Link>
-      <ul className="hidden md:flex items-center gap-5 list-none text-xs font-medium">
+      <ul className="hidden lg:flex items-center gap-5 list-none text-xs font-medium whitespace-nowrap">
         <li><Link href="/#features"       className="text-neutral-400 hover:text-white transition">Features</Link></li>
         <li><Link href="/niches"          className="text-neutral-400 hover:text-white transition">Niches</Link></li>
         <li><Link href="/#pipeline"       className="text-neutral-400 hover:text-white transition">How It Works</Link></li>
@@ -69,7 +69,7 @@ export function MarketingNav({ ctaHref = "/signup", ctaText = "Get Early Access"
           onClick={() => setOpen(true)}
           aria-label="Open menu"
           aria-expanded={open}
-          className="md:hidden -mr-1 h-11 w-11 shrink-0 flex items-center justify-center rounded-full
+          className="lg:hidden -mr-1 h-11 w-11 shrink-0 flex items-center justify-center rounded-full
                      text-neutral-300 hover:text-white hover:bg-white/5 active:scale-90 transition"
         >
           <Menu className="h-5 w-5" />
@@ -81,12 +81,12 @@ export function MarketingNav({ ctaHref = "/signup", ctaText = "Get Early Access"
         {/* px/py so this clears the 44px minimum tap target — it
             measured 21x32 before, which is a miss on a phone. */}
         <Link href="/login"
-              className="hidden sm:inline-flex items-center px-3 py-2.5 text-xs font-medium
-                         text-neutral-400 hover:text-white transition">
+              className="hidden sm:inline-flex items-center whitespace-nowrap px-3 py-2.5 text-xs
+                         font-medium text-neutral-400 hover:text-white transition">
           Log in
         </Link>
         <Link href={ctaHref}
-              className="bg-gradient-to-br from-accent to-accent-2 text-[#050508] px-4 py-2 rounded-full font-bold text-xs hover:-translate-y-0.5 hover:shadow-[0_0_20px_rgba(167,139,250,0.4)] transition-all">
+              className="bg-gradient-to-br from-accent to-accent-2 text-[#050508] whitespace-nowrap px-4 py-2 rounded-full font-bold text-xs hover:-translate-y-0.5 hover:shadow-[0_0_20px_rgba(167,139,250,0.4)] transition-all">
           {ctaText}
         </Link>
       </div>
@@ -96,7 +96,7 @@ export function MarketingNav({ ctaHref = "/signup", ctaText = "Get Early Access"
         Slides from the right like a native app drawer, full-height,
         with generous rows: 44px+ targets, one destination per line. */}
     {open && (
-      <div className="md:hidden fixed inset-0 z-[60]">
+      <div className="lg:hidden fixed inset-0 z-[60]">
         <div
           className="absolute inset-0 bg-black/70 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]"
           onClick={() => setOpen(false)}

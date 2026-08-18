@@ -133,7 +133,7 @@ export default function RoastPage() {
                   Want Yven to fix these automatically on your next 10 videos?
                 </p>
                 <Link href="/signup" className="btn btn-primary h-11 px-7 text-sm font-bold">
-                  Get Early Access
+                  Sign up
                 </Link>
               </div>
             </div>
