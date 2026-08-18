@@ -3,6 +3,7 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { adminDb } from "@/lib/firebase-admin";
 import { Reveal } from "@/components/Reveal";
+import { Logo } from "@/components/Logo";
 import { MarketingNav } from "@/components/MarketingNav";
 import { Tilt3D } from "@/components/Tilt3D";
 import { HeroBackdropMount } from "@/components/HeroBackdropMount";
@@ -586,7 +587,7 @@ export default async function LandingPage() {
       <footer className="relative z-10 border-t border-white/5 px-6 py-14 text-neutral-500 text-sm">
         <div className="max-w-6xl mx-auto grid grid-cols-2 md:grid-cols-4 gap-8">
           <div className="col-span-2 md:col-span-1">
-            <div className="text-2xl font-semibold tracking-tight text-white">Yven</div>
+            <Logo className="h-8 w-auto" />
             <p className="text-xs text-neutral-500 mt-2 max-w-[16rem] font-light">The complete video automation engine.</p>
           </div>
           {[

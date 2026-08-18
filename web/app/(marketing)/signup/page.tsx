@@ -2,9 +2,10 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { Logo } from "@/components/Logo";
 import {
   Loader2, ArrowLeft, ArrowRight, CheckCircle2, KeyRound, Mail,
-  Play, Sparkles, UserPlus, Zap, Layers, Rocket,
+  Sparkles, UserPlus, Zap, Layers, Rocket,
 } from "lucide-react";
 
 /**
@@ -86,11 +87,8 @@ export default function SignupPage() {
 
       {/* Left panel */}
       <aside className="hidden md:flex flex-col justify-between p-12 relative border-r border-line/40 bg-bg-1/40 backdrop-blur">
-        <Link href="/" className="flex items-center gap-2.5 group w-fit">
-          <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-accent via-accent-2 to-accent-glow flex items-center justify-center shadow-glow group-hover:scale-105 transition-transform">
-            <Play className="h-4 w-4 text-white fill-white" strokeWidth={0} />
-          </div>
-          <span className="font-extrabold tracking-tight bg-gradient-to-br from-accent to-accent-2 bg-clip-text text-transparent">Yven</span>
+        <Link href="/" className="w-fit block" aria-label="Yven — home">
+          <Logo className="h-8 w-auto hover:scale-[1.03] transition-transform" />
         </Link>
 
         <div className="space-y-8 max-w-md">
@@ -116,11 +114,8 @@ export default function SignupPage() {
 
       {/* Right panel — form */}
       <main className="flex flex-col items-center justify-center p-6 md:p-12 relative">
-        <Link href="/" className="md:hidden absolute top-6 left-6 flex items-center gap-2">
-          <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-accent via-accent-2 to-accent-glow flex items-center justify-center shadow-glow">
-            <Play className="h-3.5 w-3.5 text-white fill-white" strokeWidth={0} />
-          </div>
-          <span className="font-extrabold tracking-tight text-sm bg-gradient-to-br from-accent to-accent-2 bg-clip-text text-transparent">Yven</span>
+        <Link href="/" className="md:hidden absolute top-6 left-6" aria-label="Yven — home">
+          <Logo className="h-7 w-auto" />
         </Link>
 
         <div className="w-full max-w-sm animate-[fadeUp_0.6s_cubic-bezier(0.16,1,0.3,1)_both]">

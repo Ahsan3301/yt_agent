@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Menu, X } from "lucide-react";
+import { Logo, LogoMark } from "@/components/Logo";
 
 /**
  * Floating pill navigation used on every marketing / public page.
@@ -45,8 +46,14 @@ export function MarketingNav({ ctaHref = "/signup", ctaText = "Sign up" }: { cta
         ? "bg-[#050508]/80 border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.4)]"
         : "bg-white/[0.02] border-white/6")
     }>
-      <Link href="/" className="font-extrabold text-lg tracking-tight bg-gradient-to-br from-accent to-accent-2 bg-clip-text text-transparent">
-        Yven
+      {/* Device only on phones, full lockup from sm up. The lockup is
+          ~96px wide at this height against the old text wordmark's 45px,
+          and the nav pill at 375px has just been tuned so the CTA sits on
+          one line — spending that 50px there would undo it. The device
+          alone is 24px and still reads as the brand. */}
+      <Link href="/" className="shrink-0" aria-label="Yven — home">
+        <LogoMark className="h-7 w-auto sm:hidden" />
+        <Logo className="hidden sm:block h-7 w-auto" />
       </Link>
       <ul className="hidden lg:flex items-center gap-5 list-none text-xs font-medium whitespace-nowrap">
         <li><Link href="/#features"       className="text-neutral-400 hover:text-white transition">Features</Link></li>
@@ -106,9 +113,7 @@ export function MarketingNav({ ctaHref = "/signup", ctaText = "Sign up" }: { cta
                           pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]
                           animate-[fadeUp_0.28s_cubic-bezier(0.16,1,0.3,1)_both]">
           <div className="flex items-center justify-between px-5 py-4 border-b border-white/8">
-            <span className="font-extrabold text-lg tracking-tight bg-gradient-to-br from-accent to-accent-2 bg-clip-text text-transparent">
-              Yven
-            </span>
+            <Logo className="h-6 w-auto" />
             <button onClick={() => setOpen(false)} aria-label="Close menu"
                     className="p-2 -mr-2 rounded-full text-neutral-400 hover:text-white active:scale-90 transition">
               <X className="h-5 w-5" />

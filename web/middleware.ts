@@ -78,6 +78,15 @@ export async function middleware(req: NextRequest) {
       PUBLIC_PATHS.has(pathname) ||
       pathname.startsWith("/_next/") ||
       pathname.startsWith("/favicon") ||
+      // Brand assets. THIS MATTERS: the matcher below only exempts
+      // _next/* and favicon.ico, so anything else under /public goes
+      // through this gate — and a logo that 307s to /login renders as a
+      // broken image for every logged-out visitor, i.e. on the entire
+      // marketing site. Same for the generated icon/apple-icon routes
+      // and the OG card, which is fetched by crawlers with no cookie.
+      pathname.startsWith("/brand/") ||
+      pathname === "/icon.png" ||
+      pathname === "/apple-icon.png" ||
       // Marketing surfaces added post-launch — all public by design.
       pathname === "/roadmap" ||
       pathname === "/compare" ||
