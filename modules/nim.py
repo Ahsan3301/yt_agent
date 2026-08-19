@@ -265,30 +265,34 @@ GROQ_PRIMARY_FIRST = os.getenv("NIM_GROQ_PRIMARY", "true").lower() != "false"
 # NIM is kept last rather than removed: it is a different vendor, so
 # it still has value as the final fallback when the others are
 # rate-limited, which Groq and Agnes both are.
-# Order set from a live measurement of what actually answers
-# (2026-08-18), not from preference:
+# Order set from live measurement, and REVERSED from an earlier
+# decision in this same file — recorded here because the earlier
+# reasoning was sound and the evidence still overturned it.
 #
-#   nim         WORKS. Served a beat sheet in ~18-20s.
-#   openrouter  429 on its configured free model. Kept as #2 because a
-#               rate limit is temporary and it costs ~1.3s to find out.
-#   agnes       WORKS, and is deliberately LAST. Not a quality
-#               judgement — it measured fastest and best. A resource
-#               one: the same Agnes account serves image AND video
-#               generation for the wordless animation niche, where
-#               clips are the critical path and the video endpoint
-#               already queues. Spending it on text competes with the
-#               only job nothing else can do.
+# Agnes was put LAST to protect its quota for image and video, on the
+# theory that spending it on text competes with clip generation. What
+# the measurements showed:
 #
-# GROQ IS REMOVED, not reordered. Its configured model
-# llama-3.3-70b-versatile has been DECOMMISSIONED — the API 404s on
-# every call, which the chain silently absorbed by falling through. No
-# remaining Groq model satisfies this codebase's contract either:
-# openai/gpt-oss-120b returns empty content and rejects
-# response_format=json_object, qwen/qwen3.6-27b emits <think> blocks and
-# rejects it too, and groq/compound answers small JSON requests but
-# returns 413 on a realistic 2048-token script prompt. Leaving it in the
-# chain bought nothing but a guaranteed failed round-trip per call.
-_DEFAULT_LLM_PRIORITY = "nim,openrouter,agnes"
+#   agnes   text 200s across every body shape tried; vision [9,7,9,9]
+#           on a good frame and [0,0,0,0] on a wrong one, 1-4s a call.
+#   nim     vision read-timed-out 31 times in ONE render at a 90s
+#           timeout. Text works, ~20s, but the chain paid a failed
+#           NIM round-trip before every single call.
+#   groq    configured model decommissioned; 404 on every call. No
+#           remaining Groq model satisfies this codebase's contract.
+#   openrt  configured model 404s. Same disease as groq. Dropped.
+#
+# The quota argument was about the wrong resource. Agnes's binding
+# constraint is the VIDEO queue (2 creates/minute); text and vision are
+# ordinary chat calls that do not touch it. So putting Agnes first costs
+# nothing that matters and removes a guaranteed failed hop.
+#
+# NIM IS KEPT, deliberately, despite being the unreliable one. It is a
+# different vendor, and the circuit breaker means a dead NIM costs
+# almost nothing after three strikes — whereas an empty chain during an
+# Agnes outage (one was observed today: 20 consecutive 500s over three
+# minutes) fails the render outright at the script step.
+_DEFAULT_LLM_PRIORITY = "agnes,nim"
 
 
 def _llm_priority() -> list[str]:
