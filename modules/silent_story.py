@@ -363,15 +363,34 @@ def shots_from_beats(script: dict) -> list[dict]:
         emotion = str(b.get("emotion") or "").strip()
         camera = str(b.get("camera") or "").strip()
 
-        prompt_parts = [action]
+        # CHARACTER FIRST. This used to end with the cast bible, and
+        # that cost identity twice over:
+        #
+        #   1. Truncation. Providers cap the prompt — the Agnes path
+        #      distils to 700 chars — and a measured shot put the
+        #      character description at char 499 of 806, so the back of
+        #      it was simply cut off. The one clause that must never be
+        #      dropped was the first to go.
+        #   2. Weighting. Diffusion models attend more strongly to
+        #      early tokens. Trailing the identity behind the action,
+        #      the expression, the camera and the setting made it the
+        #      weakest signal in the prompt.
+        #
+        # Observed consequence, twice, on the same beats: a four-legged
+        # cat rendered in a knitted hat and coat standing upright, and
+        # in the wrong colour. Leading with the character makes the
+        # subject the thing the model commits to first, and makes the
+        # action the modifier — which is the correct relationship.
+        prompt_parts = []
+        if cast_clause:
+            prompt_parts.append(f"Character — {cast_clause}")
+        prompt_parts.append(action)
         if emotion:
             prompt_parts.append(f"Expression: {emotion}")
         if camera:
             prompt_parts.append(f"Camera: {camera}")
         if setting:
             prompt_parts.append(f"Setting: {setting}")
-        if cast_clause:
-            prompt_parts.append(f"Character reference — {cast_clause}")
 
         shots.append({
             # narration_excerpt drives assign_timing's weighting

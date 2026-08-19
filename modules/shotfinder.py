@@ -1037,7 +1037,20 @@ def _qc_clip(path: str, shot: dict, channel: str = "") -> dict:
     try:
         from modules import clip_qc
         _vcfg = load_settings().get("video") or {}
-        _desc = str(shot.get("visual_description") or shot.get("ai_prompt") or "")[:600]
+        # Score against the CHARACTER as well as the action.
+        #
+        # visual_description is the beat's action alone, and a cat that
+        # has sprouted a coat and stood up on two legs still "climbs the
+        # wet rocks" — so the judge passed exactly the clips that had
+        # drifted, while flagging two that were fine. It was never shown
+        # what the character is supposed to look like, so it could not
+        # possibly catch a change in it.
+        #
+        # ai_prompt now leads with the cast bible (see
+        # silent_story.shots_from_beats), so using it here gives the
+        # judge identity first and action second — the same ordering the
+        # image model got.
+        _desc = str(shot.get("ai_prompt") or shot.get("visual_description") or "")[:600]
         _med = _qc_medium(channel)
         if _med:
             _desc = f"{_med}: {_desc}"
