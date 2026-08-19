@@ -78,6 +78,14 @@ CHARACTER CONSISTENCY IS CRITICAL. Every beat is rendered by a separate image mo
 
 STATE THE BODY PLAN EXPLICITLY, as the FIRST thing in `look`. For an animal say whether it moves on four legs like a real animal, or walks upright like a person — the model will otherwise invent one, and it will not pick the same one twice. Then state exactly what the character wears, and say "wears nothing else" when that is the whole wardrobe. A terrier described only as "a scruffy terrier in a red scarf" came back on four legs in one shot and upright in a flat cap and overcoat in the next.
 
+GIVE EVERY BEAT ENERGY. A wordless short with no dialogue lives entirely on movement, so a beat whose motion is "stands and looks" or "slowly drifts" is dead on screen. In `action`, name a FAST PHYSICAL VERB — bounds, spins, leaps, tumbles, skids, dives, flings. In `camera`, give the camera a JOB — "dolly back fast to keep up", "orbit around them", "push in hard then settle", "whip pan to follow". Never "slow push in" or "almost still" on more than one beat in a film.
+
+VARY THE SHOT SIZE ACROSS BEATS. Seven medium frontal shots of the same character is a turnaround, not a film. Mix extreme wide (character tiny in a big place), macro detail (an eye, two hands, a single object filling frame), low angle, overhead, and silhouette. At least two beats should not show the character's face at all.
+
+TWO PROMPT TRAPS, both measured:
+- NEVER describe size by naming an object ("the size of a teapot", "no bigger than a kettle"). The image model draws that object onto the character — a cub described as teapot-sized grew a ceramic spout on its chest. Use plain scale words: small, tiny, knee-high.
+- Do not expect a negative to remove anything. State what you DO want. Putting a word in the negatives can summon it into the scene instead.
+
 Return ONLY this JSON, no prose, no markdown fences:
 {{
   "title": "short evocative title, max 8 words, no colon",

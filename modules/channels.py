@@ -168,6 +168,85 @@ NICHE_VOICE_CATALOG: dict[str, dict[str, list[str]]] = {
 # define one at runtime via the dashboard (LLM expands a name + blurb
 # into the same shape).
 CHANNEL_PRESETS: dict[str, dict] = {
+    # ── Cozy animated shorts ──────────────────────────────────
+    #
+    # The look and the motion here are not invented — they are the
+    # settings that produced "A Cozy Autumn Bounce", verified on screen
+    # and published. Recorded as a preset so the next render starts from
+    # a known-good result instead of a fresh guess.
+    #
+    # What actually mattered, in order of effect:
+    #
+    #   1. motion_hint. The first wordless film used "slow push in" and
+    #      "almost still" on every shot and was correctly called boring.
+    #      Naming a FAST physical action AND a working camera per shot
+    #      roughly doubled measured motion: frame deltas went from 15-23
+    #      to 41-45 on otherwise identical machinery.
+    #   2. image_style. Saturated warm palette plus soft rounded chunky
+    #      proportions is what reads as "cozy" rather than merely bright.
+    #   3. Keeping the character description free of object comparisons
+    #      — see prompt_notes.
+    "cozy": {
+        "display_name":   "Cozy animated shorts (wordless)",
+        "tone":           "warm, playful, joyful",
+        "silent":         True,
+        "footage_mode":   "motion",
+        "generated_only": True,
+        "motion_required": True,
+        "perspective":    "no narrator, no dialogue — carried by action and expression",
+        "language":       "en",
+        "color_grade":    "warm_punchy",
+        "footage_keywords": [],
+        "image_style": (
+            "3D animated feature film still, cozy stylised cartoon world, VERY colourful and warm, "
+            "saturated amber gold coral teal and cream palette, soft rounded shapes, chunky friendly "
+            "proportions, subsurface scattering on fur, warm rim light, glowing practical lights "
+            "(lanterns, fireflies, glowing mushrooms, fairy lights), shallow depth of field, "
+            "whimsical and inviting, 4k"
+        ),
+        # Appended to every VIDEO prompt. The single highest-impact
+        # field in this preset — see the note above.
+        "motion_hint": (
+            "The motion must be energetic and playful: name a fast physical action (bounding, "
+            "spinning, leaping, tumbling) and give the camera a job (dolly back to keep up, orbit "
+            "around the subject, push in fast then settle). Never a slow drift or a near-still hold."
+        ),
+        "medium_hint":    "3D animated film still",
+        "negative_style": (
+            "dark, gloomy, desaturated, grim, horror, photorealistic human, live action, "
+            "deformed hands, extra fingers, extra limbs, melted face, warped anatomy, "
+            "text, watermark, signature, subtitles, low resolution, blurry, jpeg artefacts"
+        ),
+        # Hard-won prompt rules. Kept on the preset rather than in a
+        # comment because the beat-sheet writer reads them.
+        "prompt_notes": (
+            "Never describe a character's size by naming an object ('the size of a teapot') — the "
+            "model draws the object onto the character. Use a neutral scale word instead. "
+            "Do not rely on the negative prompt to remove something: this model treats negatives "
+            "as weak suggestions and adding a word there can summon it into the scene instead. "
+            "State what you DO want, in the positive prompt."
+        ),
+        "music_keywords":   "wholesome cozy acoustic instrumental",
+        "youtube_category": "1",
+        "hook_style":       "open on movement — the character already doing something joyful",
+        "research_mode":    "none",
+        "web_research_enabled": False,
+        "viral_seo": {
+            "hook_patterns": [
+                "A cozy {noun}", "{noun} — 10 seconds of calm",
+                "The little {noun} who just wanted {noun}", "Cozy {noun} moment",
+            ],
+            "banned_openers": ["Learn about", "In this video", "Did you know", "Today we"],
+            "tag_seeds": [
+                "cozy animation", "animated short", "3d animation", "cute animation",
+                "wholesome", "relaxing", "shorts", "animation shorts", "cosy",
+            ],
+            "hashtag_seeds": ["#cozy", "#animatedshort", "#3danimation"],
+            "description_first_two_lines": "One warm sentence about what the character is doing. Never explain the ending.",
+            "youtube_category_id": 1,
+            "engagement_cta": "What should the next cozy short be? Comment below.",
+        },
+    },
     # ── Wordless 3D animated shorts ───────────────────────────
     #
     # The odd one out, and deliberately so. Every other preset here

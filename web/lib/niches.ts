@@ -32,6 +32,11 @@ export type NicheCopy = {
 };
 
 const COPY: Record<string, NicheCopy> = {
+  cozy: {
+    blurb: "Warm, colourful animated shorts — a small character having a good time in a beautiful world.",
+    example: "“A fox cub bounds through a glowing autumn forest and lands somewhere warm.”",
+    research: "original",
+  },
   pixar: {
     blurb: "Wordless 3D animated shorts — a complete story told in action alone, no narration, no dialogue.",
     example: "“A scruffy terrier guards his owner’s umbrella through a downpour.”",

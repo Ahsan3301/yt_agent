@@ -39,6 +39,11 @@ export const PRESET_CHANNELS: ChannelPreset[] = [
   // false because there is nothing to research: the story is invented,
   // not reported.
   { name: "pixar",    label: "Animated shorts (wordless)", webDefault: false },
+  // The look that produced "A Cozy Autumn Bounce" — warm saturated
+  // palette, chunky friendly characters, energetic motion. Kept as its
+  // own niche rather than folded into pixar because the motion_hint and
+  // palette are materially different.
+  { name: "cozy",     label: "Cozy animated shorts",       webDefault: false },
 ];
 
 const _STORAGE_KEY = "yt_agent_custom_channels_v1";

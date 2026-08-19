@@ -1165,6 +1165,29 @@ def _cast_anchor_put(names, path: str) -> None:
             _CAST_ANCHORS.setdefault(n, path)
 
 
+def _motion_hint(channel: str) -> str:
+    """Per-niche direction appended to every VIDEO prompt.
+
+    The highest-impact preset field there is. The first wordless film
+    used "slow push in" and "almost still" on every shot and played
+    dead; naming a fast physical action AND giving the camera a job
+    roughly doubled measured motion on identical machinery — frame
+    deltas 15-23 became 41-45.
+
+    Wired here rather than left on the preset because a preset field
+    nothing reads is decoration, which this codebase has now produced
+    five separate times (footage_mode, music_keywords, the Agnes image
+    negatives, medium_hint, motion_required).
+    """
+    if not channel:
+        return ""
+    try:
+        from modules import channels as _ch
+        return str((_ch.get_channel(channel) or {}).get("motion_hint") or "").strip()
+    except Exception:
+        return ""
+
+
 def _motion_required(channel: str) -> bool:
     """True when a still may NEVER stand in for a generated clip.
 
@@ -1790,6 +1813,12 @@ def fetch_shots(shots, output_dir, channel="horror", preset_sources=None,
                     # which wants the short search phrase).
                     _vp = (shot.get("ai_prompt") or shot.get("visual_description")
                            or shot.get("search_query") or "")
+                    # Per-niche motion direction. Highest-impact
+                    # preset field: naming a fast action and a
+                    # working camera doubled measured motion.
+                    _mh = _motion_hint(channel)
+                    if _mh:
+                        _vp = f"{_vp}. {_mh}"
                     if _vp:
                         # Generate to the shot's real length. The default
                         # was a fixed 5s regardless of the shot, so a 3s
