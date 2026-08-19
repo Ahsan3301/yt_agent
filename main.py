@@ -751,6 +751,19 @@ def run_pipeline(
                 channel_cfg=channel_cfg,
                 language=_pipeline_lang,
             ), run_id=run_id)
+        elif bool(channel_cfg.get("silent")) and manual_script.strip():
+            # Wordless niche, and the caller supplied the story. Manual
+            # mode for every other niche takes narration prose; here the
+            # equivalent input is the beat sheet itself. Falls through to
+            # writing one if what arrived is not a usable sheet.
+            log.info("[2/6] Using the SUPPLIED beat sheet...")
+            from modules import silent_story as _silent
+            script = _step(summary, "script",
+                           lambda: _silent.beat_sheet_from_manual(manual_script), run_id=run_id)
+            if not script:
+                log.warning("supplied beat sheet unusable — writing one instead")
+                script = _step(summary, "script",
+                               lambda: _silent.write_beat_sheet(content), run_id=run_id)
         elif bool(channel_cfg.get("silent")):
             # Wordless niche. The beat sheet IS the script: it carries
             # the story, the cast bible and — critically — the runtime,

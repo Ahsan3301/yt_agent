@@ -328,6 +328,59 @@ def write_beat_sheet(research_data: dict, max_attempts: int = 3) -> dict | None:
     return None
 
 
+def beat_sheet_from_manual(manual_script: str) -> dict | None:
+    """Accept a beat sheet the USER supplied, instead of writing one.
+
+    Manual mode already exists for every other niche — a caller hands in
+    narration prose and the pipeline skips the scriptwriter. A wordless
+    niche has no narration, so the equivalent input is the beat sheet
+    itself: same JSON shape write_beat_sheet() produces.
+
+    This exists because the LLM slot is pluggable. LLM_PRIORITY already
+    carries four providers, and an operator who has a better model than
+    any of them — or simply a story they want told — should be able to
+    put it in without the pipeline caring where it came from. The visual
+    work, timing, editing and publishing are unchanged.
+
+    Validated and clamped exactly like a generated sheet, so a
+    hand-written one cannot skip the checks that stop a vague cast or an
+    over-long runtime reaching the renderer. Returns None when the input
+    is not a usable beat sheet, and the caller falls back to writing one.
+    """
+    txt = (manual_script or "").strip()
+    if not txt or "{" not in txt:
+        return None
+    d = _coerce(txt)
+    if d is None or not isinstance(d, dict) or "beats" not in d:
+        return None
+    ok, why = _validate(d)
+    if not ok:
+        log.warning(f"silent_story: supplied beat sheet rejected — {why}")
+        return None
+
+    beats, total = _clamp_beats(d.get("beats") or [])
+    cast = d.get("cast") or []
+    title = str(d.get("title") or "").strip()[:100]
+    log.info(
+        "silent_story: using a SUPPLIED beat sheet — %d beats, %.1fs, cast: %s",
+        len(beats), total, ", ".join(str(c.get("name")) for c in cast),
+    )
+    return {
+        "silent": True,
+        "target_seconds": round(total, 2),
+        "beats": beats,
+        "cast": cast,
+        "setting": str(d.get("setting") or ""),
+        "logline": str(d.get("logline") or ""),
+        "narration": _story_prose(d),
+        "youtube_title": title,
+        "raw_title": title,
+        "description": str(d.get("logline") or "")[:500],
+        "tags": [],
+        "manual": True,
+    }
+
+
 def shots_from_beats(script: dict) -> list[dict]:
     """Turn the beat sheet directly into timed storyboard shots.
 
