@@ -1649,7 +1649,15 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror",
                     language=language,
                 )
                 prompt_to_use = crafted or ai_prompt
-            log.info(f"    {provider_name} prompt (try {trial+1}): {(crafted or ai_prompt)[:90]}...")
+            # Log what is ACTUALLY SENT. This printed
+            # `(crafted or ai_prompt)` — the prompt BEFORE the style
+            # tail is applied — which made a style-injection bug
+            # undiagnosable from the log: the render came back
+            # photorealistic and the log showed a prompt that could
+            # not explain it either way.
+            log.info(f"    {provider_name} prompt (try {trial+1}) [{len(prompt_to_use)} ch]: "
+                     f"{prompt_to_use[:110]}"
+                     f"{' ... TAIL: ' + prompt_to_use[-70:] if len(prompt_to_use) > 180 else ''}")
             # Character anchor: only Agnes supports image-to-image, so
             # only it takes the reference. Everything else keeps the
             # signature it always had.
