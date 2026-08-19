@@ -1053,12 +1053,24 @@ def chat_with_tools(messages, tools, model=None, max_tokens=2048,
 _INT_RE = re.compile(r"\b(10|[0-9])\b")
 
 
-def vision_score(image_url, fit_description, premise="", model=None, timeout=30):
+def vision_score(image_url, fit_description, premise="", model=None,
+                 timeout=int(os.getenv("NIM_VISION_TIMEOUT", "90"))):
     """
     Score how well `image_url` matches `fit_description` (the per-shot
     visual description the storyboard produced) and, optionally, the
     story premise. Returns an int 0-10, or -1 on parse/network failure
     (caller treats -1 as 'unknown, fall through').
+
+    TIMEOUT 30 -> 90. The 90b vision model read-timed-out on EVERY
+    call at 30s, measured repeatedly, so the score always came from
+    whichever weaker model answered next. That is why one clip scored
+    1 on one frame and 9 on another: the judge's identity was changing
+    between samples. An unstable judge behind a hard quality gate
+    rejects good clips at random, and each rejection costs a ~90s
+    regeneration plus a slot in the video provider's queue.
+
+    A vision call that takes 45s is cheap against that. Env-tunable
+    via NIM_VISION_TIMEOUT.
 
     Channel-agnostic: previously the prompt hard-coded a gothic-horror
     rubric and rejected e.g. bright science-lab shots for the Orbitarium

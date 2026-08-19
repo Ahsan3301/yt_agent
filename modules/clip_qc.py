@@ -111,7 +111,21 @@ HF_MUSH_MAX = 0.9
 HF_NOISE_MIN = 12.0
 
 # Vision score, 0-10, below which a clip is considered a miss.
-DEFAULT_MIN_VISION = 5
+# 5 -> 3, from measurement. With a healthy judge and the medium named,
+# a verified-good frame scores 7. With the 90b model read-timing-out —
+# which it did on every call until NIM_VISION_TIMEOUT was raised — the
+# same frame scored 1-3, because a weaker fallback model answered.
+#
+# The two local checks are deterministic and proven. The vision check
+# sits on infrastructure that can degrade without warning, so it is
+# tuned to catch what it is UNAMBIGUOUSLY good at: a controlled test
+# scored a deliberately wrong description 0/10 against 7/10 for the
+# right one. At 3, genuinely wrong content still fails, and a flaky
+# judge cannot silently reject a good render.
+#
+# The score is logged either way, so a judge drifting low shows up in
+# the render log rather than as mystery churn.
+DEFAULT_MIN_VISION = 3
 
 
 def _ffmpeg() -> str:
