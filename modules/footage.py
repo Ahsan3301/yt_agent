@@ -1316,9 +1316,140 @@ def fetch_openverse_music(query, output_dir):
     return None
 
 
+def fetch_archive_music(query: str, output_dir: str):
+    """Fetch a track from the Internet Archive. No API key required.
+
+    THE REASON THIS EXISTS: Pixabay retired their music API. /api/music/
+    returns 404 and /api/audio/ rejects the key that still works for
+    images, so fetch_pixabay_music could not succeed under any
+    configuration — and because the editor degrades gracefully to a
+    silent track, EVERY niche had been rendering without music and
+    nothing surfaced it.
+
+    Licence handling is the point of care here. Archive.org carries
+    everything from public domain to all-rights-reserved, so this asks
+    only for CC0 / public-domain-mark / CC-BY and refuses the rest. CC0
+    and PD are preferred because they need no attribution; a CC-BY track
+    is accepted but registers a credit through the same path stock
+    footage uses, so the uploader puts it in the description. A licence
+    we cannot satisfy is not worth a soundtrack.
+    """
+    import json as _json
+    import urllib.parse as _up
+    import urllib.request as _ur
+
+    def _search(lic_clause: str, want: str):
+        q = f'mediatype:(audio) AND {lic_clause} AND ({want})'
+        url = ("https://archive.org/advancedsearch.php?q=" + _up.quote(q) +
+               "&fl%5B%5D=identifier&fl%5B%5D=title&fl%5B%5D=licenseurl"
+               "&fl%5B%5D=creator&rows=12&output=json")
+        try:
+            req = _ur.Request(url, headers={"User-Agent": "yt-agent/1.0"})
+            with _ur.urlopen(req, timeout=30) as r:
+                return _json.load(r).get("response", {}).get("docs", []) or []
+        except Exception as e:
+            log.debug(f"archive music search failed: {e}")
+            return []
+
+    # MUSIC ONLY, and actually matching, without being so strict it
+    # returns nothing.
+    #
+    # First attempt OR'd every query word across all of mediatype:audio
+    # and returned an R'n'B instrumental for "wholesome cozy acoustic"
+    # (it matched "instrumental") and a 91 MB horror PODCAST for "dark
+    # ambient horror". Both would have shipped as a backing track.
+    #
+    # Second attempt AND'd two words and returned nothing at all.
+    #
+    # So: cascade. Narrow query first, widen only if it comes back
+    # empty, and keep the collection restriction, the spoken-word
+    # exclusions and the size cap at every step — those are what stop a
+    # podcast winning, and they never need to be relaxed.
+    _MUSIC_SCOPE = ("collection:(audio_music OR netlabels) "
+                    "AND NOT title:(podcast) AND NOT title:(interview) "
+                    "AND NOT title:(episode) AND NOT title:(sermon) "
+                    "AND NOT title:(audiobook) AND NOT title:(lecture)")
+    words = [w for w in (query or "instrumental").split() if len(w) > 2][:4]
+    if not words:
+        words = ["instrumental"]
+    attempts = []
+    if len(words) >= 2:
+        attempts.append(f"title:({words[0]}) AND title:({words[1]})")
+    for w in words:
+        attempts.append(f"title:({w})")
+    attempts.append("title:(instrumental)")
+
+    # CC0/PD first — no attribution burden. CC-BY only if nothing else.
+    tiers = [
+        ('licenseurl:(*publicdomain\/zero*)', "CC0"),
+        ('licenseurl:(*publicdomain\/mark*)', "Public Domain"),
+        ('licenseurl:(*licenses\/by\/*)', "CC BY"),
+    ]
+    for terms_try in attempts:
+      scoped = f"{_MUSIC_SCOPE} AND ({terms_try})"
+      for lic_clause, lic_name in tiers:
+        for doc in _search(lic_clause, scoped):
+            ident = str(doc.get("identifier") or "")
+            if not ident:
+                continue
+            try:
+                req = _ur.Request(f"https://archive.org/metadata/{ident}",
+                                  headers={"User-Agent": "yt-agent/1.0"})
+                with _ur.urlopen(req, timeout=30) as r:
+                    meta = _json.load(r)
+            except Exception:
+                continue
+            # A backing track is roughly 1-25 MB. Anything larger is a
+            # DJ set, a lecture or an audiobook chapter — the 91 MB
+            # "Horror Video Game podcast" that the first version happily
+            # returned as background music.
+            files = [f for f in meta.get("files", [])
+                     if str(f.get("name", "")).lower().endswith((".mp3", ".ogg"))
+                     and 500_000 < int(f.get("size") or 0) < 25_000_000]
+            if not files:
+                continue
+            f = sorted(files, key=lambda x: int(x.get("size") or 0))[len(files) // 2]
+            name = str(f["name"])
+            url = f"https://archive.org/download/{ident}/{_up.quote(name)}"
+            dest = os.path.join(output_dir, "music_archive" +
+                                (".ogg" if name.lower().endswith(".ogg") else ".mp3"))
+            try:
+                rq = _ur.Request(url, headers={"User-Agent": "yt-agent/1.0"})
+                with _ur.urlopen(rq, timeout=180) as r, open(dest, "wb") as out:
+                    out.write(r.read())
+            except Exception as e:
+                log.debug(f"archive music download failed for {ident}: {e}")
+                continue
+            if os.path.getsize(dest) < 100_000:
+                continue
+            title = str(doc.get("title") or ident)[:120]
+            creator = str(doc.get("creator") or "").strip()
+            if lic_name == "CC BY":
+                # Attribution is a licence CONDITION, not a courtesy.
+                _remember_credit(
+                    title=f"{title}" + (f" by {creator}" if creator else ""),
+                    source="Internet Archive", licence="CC BY 4.0",
+                    url=f"https://archive.org/details/{ident}")
+            log.info(f"music: '{title}' [{lic_name}] from archive.org -> "
+                     f"{os.path.getsize(dest)//1024} KB")
+            return dest
+    log.info("music: archive.org returned nothing usable")
+    return None
+
+
 def get_music(query, output_dir):
-    """Try Pixabay first, then Openverse as a no-key fallback."""
-    return fetch_pixabay_music(query, output_dir) or fetch_openverse_music(query, output_dir)
+    """Find a licensed backing track, or None.
+
+    Archive.org is tried FIRST because it is the only source in this
+    chain currently capable of returning a file: Pixabay retired their
+    music API (404 on /api/music/) and Openverse's audio index returns
+    nothing for these queries. The other two are kept behind it so a
+    restored Pixabay endpoint starts working again without a code
+    change — they cost one failed request each.
+    """
+    return (fetch_archive_music(query, output_dir)
+            or fetch_pixabay_music(query, output_dir)
+            or fetch_openverse_music(query, output_dir))
 
 
 def get_footage(channel_type, output_dir, sources_needed=8, extra_keywords=None,
