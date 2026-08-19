@@ -1165,6 +1165,22 @@ def _cast_anchor_put(names, path: str) -> None:
             _CAST_ANCHORS.setdefault(n, path)
 
 
+def _niche_image_style(channel: str) -> str:
+    """The niche's LOOK, as a prompt tail.
+
+    Exists because craft_image_prompt conflated two responsibilities —
+    rewriting the shot and applying the style — so declining the
+    rewrite silently dropped the style as well.
+    """
+    if not channel:
+        return ""
+    try:
+        from modules import channels as _ch
+        return str((_ch.get_channel(channel) or {}).get("image_style") or "").strip()
+    except Exception:
+        return ""
+
+
 def _directed_prompt(channel: str) -> bool:
     """True when this niche composes its own per-shot prompts.
 
@@ -1604,7 +1620,22 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror",
             # Everything else still gets the rewriter, which is genuinely
             # useful when the input is a bare narration sentence.
             if _directed_prompt(channel) and ai_prompt:
+                # Keep the composition, but STILL APPLY THE STYLE.
+                #
+                # craft_image_prompt was doing two jobs: rewriting the
+                # shot (which destroys direction) and injecting the
+                # niche's look (which is essential). Skipping it threw
+                # both away, and a narrated cozy render came back as
+                # PHOTOREALISTIC footage of elderly people — correct
+                # composition, correct story, entirely the wrong medium.
+                #
+                # So the style is appended here explicitly. Belt and
+                # braces on the medium too: a niche that says it is
+                # animated must not silently render as live action.
                 prompt_to_use = ai_prompt
+                _style = _niche_image_style(channel)
+                if _style and _style.lower()[:24] not in prompt_to_use.lower():
+                    prompt_to_use = f"{prompt_to_use}. {_style}"
                 crafted = None
             else:
                 crafted = craft_image_prompt(
