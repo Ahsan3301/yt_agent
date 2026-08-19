@@ -1053,24 +1053,74 @@ def chat_with_tools(messages, tools, model=None, max_tokens=2048,
 _INT_RE = re.compile(r"\b(10|[0-9])\b")
 
 
+# ── Agnes as the vision judge ────────────────────────────────
+# See the rationale block inside vision_score. Kept as its own small
+# client rather than routed through chat(), because chat() walks
+# LLM_PRIORITY — where Agnes sits LAST on purpose, to preserve its
+# quota for image and video generation. Vision scoring wants the
+# opposite order, and one function should not have to mean both.
+_AGNES_VISION_MODEL = os.getenv("AGNES_VISION_MODEL", "agnes-2.5-flash")
+
+
+def _agnes_vision_enabled() -> bool:
+    if os.getenv("AGNES_VISION", "1").strip().lower() in ("0", "false", "no"):
+        return False
+    return bool((os.getenv("AGNES_API_KEY") or "").strip())
+
+
+def _agnes_vision_score(messages, timeout: int = 60):
+    """Score with Agnes. Returns 0-10, or None so the caller falls through.
+
+    max_tokens is deliberately large: Agnes is a reasoning model and
+    spends its budget thinking before it emits. Measured on one frame,
+    it returned EMPTY with finish_reason="length" at 8, 64 and 256
+    tokens, and answered correctly at 1024.
+    """
+    key = (os.getenv("AGNES_API_KEY") or "").strip()
+    if not key:
+        return None
+    try:
+        r = requests.post(
+            f"{os.getenv('AGNES_API_BASE', 'https://apihub.agnes-ai.com/v1')}/chat/completions",
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+            json={"model": _AGNES_VISION_MODEL, "messages": messages,
+                  "max_tokens": 1024, "temperature": 0.0},
+            timeout=timeout,
+        )
+        if r.status_code != 200:
+            log.warning(f"vision_score: agnes HTTP {r.status_code}")
+            return None
+        text = (r.json()["choices"][0]["message"].get("content") or "").strip()
+    except Exception as e:
+        log.warning(f"vision_score: agnes error: {e}")
+        return None
+    m = _INT_RE.search(text)
+    if not m:
+        log.debug(f"vision_score: agnes unparseable {text!r}")
+        return None
+    return max(0, min(10, int(m.group(1))))
+
+
 def vision_score(image_url, fit_description, premise="", model=None,
-                 timeout=int(os.getenv("NIM_VISION_TIMEOUT", "90"))):
+                 timeout=int(os.getenv("NIM_VISION_TIMEOUT", "25"))):
     """
     Score how well `image_url` matches `fit_description` (the per-shot
     visual description the storyboard produced) and, optionally, the
     story premise. Returns an int 0-10, or -1 on parse/network failure
     (caller treats -1 as 'unknown, fall through').
 
-    TIMEOUT 30 -> 90. The 90b vision model read-timed-out on EVERY
-    call at 30s, measured repeatedly, so the score always came from
-    whichever weaker model answered next. That is why one clip scored
-    1 on one frame and 9 on another: the judge's identity was changing
-    between samples. An unstable judge behind a hard quality gate
-    rejects good clips at random, and each rejection costs a ~90s
-    regeneration plus a slot in the video provider's queue.
+    TIMEOUT: 30 -> 90 -> 25, and the reversal is the point.
 
-    A vision call that takes 45s is cheap against that. Env-tunable
-    via NIM_VISION_TIMEOUT.
+    It went to 90 to give NIM's 90b vision model room to answer, on the
+    theory it was slow. It is not slow — it does not answer at all: 31
+    read-timeouts in a single render at the 90s setting. Raising the
+    ceiling only made each failure more expensive.
+
+    With Agnes now scoring first (see the block in the body), NIM is a
+    FALLBACK, and a fallback wants a short leash. Every second spent
+    waiting on a model that will not reply is a second added to the
+    render. 25s is generous for a model that answers in 2-4s when
+    healthy. Env-tunable via NIM_VISION_TIMEOUT.
 
     Channel-agnostic: previously the prompt hard-coded a gothic-horror
     rubric and rejected e.g. bright science-lab shots for the Orbitarium
@@ -1133,6 +1183,28 @@ def vision_score(image_url, fit_description, premise="", model=None,
         ],
     }]
 
+    # ── AGNES FIRST ──────────────────────────────────────────
+    # Measured head-to-head on four frames of a verified-good clip,
+    # each scored against the correct description and against a
+    # deliberately wrong one:
+    #
+    #   agnes-2.5-flash   correct [9, 7, 9, 9]   wrong [0, 0, 0, 0]
+    #                     1.1-4.4s per call
+    #   llama-3.2-90b     read-timeout on every call, 90s each
+    #
+    # Perfect discrimination, consistent, and roughly thirty times
+    # faster than NIM's timeout. NIM stays in the chain behind it —
+    # it is a different vendor, so it is still the right thing to fall
+    # to when Agnes is rate-limited or down.
+    #
+    # Cheap in the way that matters: this is a text call against the
+    # Agnes account, not an image or video generation, so it does not
+    # compete with the clip generation that account is also serving.
+    if not model and _agnes_vision_enabled():
+        s = _agnes_vision_score(messages, timeout=timeout)
+        if s is not None:
+            return s
+
     # Try the primary model then the fallback chain. Note we treat parse
     # failures (returning -1) as retriable too since a bigger model may
     # comply with 'integer only' formatting where a smaller one waffled.
@@ -1140,8 +1212,21 @@ def vision_score(image_url, fit_description, premise="", model=None,
     last_err: Exception | None = None
     for m_name in models:
         try:
+            # max_tokens 16 -> 1024. 16 is plenty for a model that
+            # replies with a bare integer, which the NIM vision models
+            # do — but the chain falls through to Agnes, and Agnes is a
+            # reasoning model that thinks before it emits. Measured on
+            # one frame: at 8, 64 and 256 tokens it returned EMPTY with
+            # finish_reason="length", having spent the whole budget
+            # reasoning; at 1024 it answered "9" in 3.0s.
+            #
+            # So every vision call that reached Agnes came back
+            # unparseable and scored as unknown. 1024 sits just under
+            # chat()'s auto-streaming threshold, and a correct answer
+            # costs the same few output tokens either way — the budget
+            # is a ceiling, not a spend.
             text = chat(messages, model=m_name,
-                        max_tokens=16, temperature=0.0, timeout=timeout)
+                        max_tokens=1024, temperature=0.0, timeout=timeout)
         except Exception as e:
             log.warning(f"vision_score: {m_name} error: {e}")
             last_err = e
