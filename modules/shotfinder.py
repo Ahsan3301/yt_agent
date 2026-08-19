@@ -2044,9 +2044,24 @@ def fetch_shots(shots, output_dir, channel="horror", preset_sources=None,
                     src = _archive_clip_for_shot(shot, output_dir, idx, _snap)
                     with used_lock:
                         used_ids.update(_snap)
-                if src is None:
+                if src is None and not _motion_required(channel):
                     log.info(f"Shot {idx+1}: no motion source, using a still instead")
-            if src is None:
+            # SECOND still-fallback gate. The first one lives inside the
+            # motion branch above and refuses to substitute a still for a
+            # failed clip. This one is the generic "no source yet" path,
+            # and it was still handing back a photograph afterwards —
+            # observed live as two consecutive log lines:
+            #
+            #   shot 2: NO CLIP ... this niche forbids stills
+            #   Shot 2: no motion source, using a still instead
+            #
+            # A guarantee enforced in one place and undone in the next is
+            # worse than no guarantee, because the log says it held.
+            if src is None and _motion_required(channel):
+                log.error("Shot %d: no motion clip and stills are forbidden for this "
+                          "niche — shot left EMPTY", idx + 1)
+                _register_degraded(idx, {"reason": "no motion clip; stills not permitted"})
+            elif src is None:
                 # Snapshot used_ids under lock so the provider sees a
                 # consistent view; merge new additions back under lock.
                 with used_lock:

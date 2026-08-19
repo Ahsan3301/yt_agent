@@ -32,6 +32,11 @@ export type NicheCopy = {
 };
 
 const COPY: Record<string, NicheCopy> = {
+  cozy_story: {
+    blurb: "Warm animated stories with a gentle narrator — the voice carries what the pictures cannot.",
+    example: "“She mended the cracked cup with gold, and it was better than new.”",
+    research: "original",
+  },
   cozy: {
     blurb: "Warm, colourful animated shorts — a small character having a good time in a beautiful world.",
     example: "“A fox cub bounds through a glowing autumn forest and lands somewhere warm.”",

@@ -168,6 +168,88 @@ NICHE_VOICE_CATALOG: dict[str, dict[str, list[str]]] = {
 # define one at runtime via the dashboard (LLM expands a name + blurb
 # into the same shape).
 CHANNEL_PRESETS: dict[str, dict] = {
+    # ── Cozy NARRATED shorts ──────────────────────────────────
+    #
+    # Same world and the same motion machinery as `cozy`, with a voice.
+    #
+    # Why both exist. A wordless short asks ten independently generated
+    # 4-second clips to carry causality, and they cannot: they share no
+    # space, no continuity and no consistent light across a cut. Watched
+    # live on a kintsugi story the pipeline wrote itself — she wires a
+    # cracked cup, the wire LOOKS UGLY, so she reaches for gold lacquer.
+    # That hinge is the whole story and it has to be read from four
+    # seconds of a hand holding a cup.
+    #
+    # Narration carries exactly what the visuals cannot, and costs
+    # little here: every other niche in this pipeline is narrated, so the
+    # word budget, audio-derived timing, subtitles, SEO-from-narration
+    # and retention hooks all already work. The clips illustrate instead
+    # of having to carry.
+    #
+    # Wordless stays the right choice for a pure-vibe piece with no plot
+    # to convey.
+    "cozy_story": {
+        "display_name":   "Cozy narrated shorts",
+        "tone":           "warm, gentle, unhurried",
+        # NOT silent — this is the whole difference.
+        "silent":         False,
+        "footage_mode":   "motion",
+        "generated_only": True,
+        "motion_required": True,
+        "perspective":    ("third_person_storyteller — a warm, quiet narrator describing what "
+                           "someone is doing and why it matters. Never 'I'. Present tense, "
+                           "unhurried. The narrator notices small things."),
+        "voice":          "en-GB-LibbyNeural",
+        "rate":           "-6%",
+        "pitch":          "0Hz",
+        "language":       "en",
+        "color_grade":    "warm_punchy",
+        "footage_keywords": [],
+        "image_style": (
+            "3D animated feature film still, cozy stylised cartoon world, VERY colourful and warm, "
+            "saturated amber gold coral teal and cream palette, soft rounded shapes, chunky friendly "
+            "proportions, subsurface scattering, warm rim light, glowing practical lights "
+            "(lanterns, fireflies, fairy lights, window light), shallow depth of field, "
+            "whimsical and inviting, 4k"
+        ),
+        "motion_hint": (
+            "The motion must be purposeful and readable: name the physical action the narration "
+            "describes (lifting, pouring, brushing, turning, reaching) and give the camera a job "
+            "(push in on the hands, dolly alongside, tilt up to the face). Never a slow drift or a "
+            "near-still hold."
+        ),
+        "medium_hint":    "3D animated film still",
+        "negative_style": (
+            "dark, gloomy, desaturated, grim, horror, photorealistic human, live action, "
+            "deformed hands, extra fingers, extra limbs, melted face, warped anatomy, "
+            "text, watermark, signature, subtitles, low resolution, blurry, jpeg artefacts"
+        ),
+        "prompt_notes": (
+            "Never describe size by naming an object ('the size of a teapot') — the model draws the "
+            "object onto the character. Do not rely on the negative prompt to remove something; this "
+            "model treats negatives as weak suggestions and can summon the word instead."
+        ),
+        "music_keywords":   "wholesome cozy acoustic instrumental",
+        "youtube_category": "1",
+        "hook_style":       "open on the small problem, stated in one warm line",
+        "research_mode":    "none",
+        "web_research_enabled": False,
+        "viral_seo": {
+            "hook_patterns": [
+                "She mended it with {noun}", "The {noun} that was broken",
+                "A small story about {noun}", "Why she kept the {noun}",
+            ],
+            "banned_openers": ["Learn about", "In this video", "Did you know", "Today we"],
+            "tag_seeds": [
+                "cozy animation", "animated story", "3d animation", "wholesome",
+                "storytelling", "short story", "relaxing", "animation shorts", "cosy",
+            ],
+            "hashtag_seeds": ["#cozy", "#animatedstory", "#wholesome"],
+            "description_first_two_lines": "Open with the small problem in one warm line. Never give away the ending.",
+            "youtube_category_id": 1,
+            "engagement_cta": "What small thing should she mend next? Comment below.",
+        },
+    },
     # ── Cozy animated shorts ──────────────────────────────────
     #
     # The look and the motion here are not invented — they are the

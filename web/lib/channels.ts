@@ -44,6 +44,7 @@ export const PRESET_CHANNELS: ChannelPreset[] = [
   // own niche rather than folded into pixar because the motion_hint and
   // palette are materially different.
   { name: "cozy",     label: "Cozy animated shorts",       webDefault: false },
+  { name: "cozy_story", label: "Cozy narrated shorts",      webDefault: false },
 ];
 
 const _STORAGE_KEY = "yt_agent_custom_channels_v1";

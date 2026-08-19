@@ -83,7 +83,7 @@ GIVE EVERY BEAT ENERGY. A wordless short with no dialogue lives entirely on move
 VARY THE SHOT SIZE ACROSS BEATS. Seven medium frontal shots of the same character is a turnaround, not a film. Mix extreme wide (character tiny in a big place), macro detail (an eye, two hands, a single object filling frame), low angle, overhead, and silhouette. At least two beats should not show the character's face at all.
 
 TWO PROMPT TRAPS, both measured:
-- NEVER describe size by naming an object ("the size of a teapot", "no bigger than a kettle"). The image model draws that object onto the character — a cub described as teapot-sized grew a ceramic spout on its chest. Use plain scale words: small, tiny, knee-high.
+- NEVER describe size by naming an object ("the size of a teapot", "no bigger than a kettle"). The image model draws that object onto the character — a cub described as teapot-sized grew a ceramic spout on its chest. Use plain scale words appropriate to the subject: small, tiny, stocky, slender. Do NOT apply creature-scale words to a human — a beat sheet came back describing "a knee-high elderly woman, 68" because this rule was followed too literally.
 - Do not expect a negative to remove anything. State what you DO want. Putting a word in the negatives can summon it into the scene instead.
 
 Return ONLY this JSON, no prose, no markdown fences:
