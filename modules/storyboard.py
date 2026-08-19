@@ -190,12 +190,42 @@ def _genre_block(channel: str) -> dict[str, str]:
     if channel in _GENRE_TONE_BY_CHANNEL:
         d = _GENRE_TONE_BY_CHANNEL[channel]
     else:
-        d = {
-            "genre_tone":       f"channel niche: {channel}. Match tone + subject to what the narration actually describes.",
-            "visual_style":     "photorealistic, cinematic, grounded in the specific subject of each sentence.",
-            "avoid_line":       "no cartoons or illustrations unless the narration explicitly calls for them.",
-            "style_keywords_tail": "cinematic, photorealistic, professional photography, sharp focus",
-        }
+        # THE PRESET'S OWN LOOK WINS, when it declares one.
+        #
+        # The fallback below tells the storyboard "photorealistic,
+        # cinematic" and "no cartoons or illustrations". For a niche
+        # that is entirely animated that is the exact opposite
+        # instruction, and it is applied to any niche not hard-coded in
+        # _GENRE_TONE_BY_CHANNEL — which every new niche is.
+        #
+        # Observed: a cozy ANIMATED niche produced photorealistic shot
+        # descriptions ("Close-up of Grandma Elara's weathered hands"),
+        # and appending the animation style to the end of an
+        # 850-character photoreal prompt could not overcome them. The
+        # fight has to be won here, where the shot is described, not
+        # downstream in a prompt tail.
+        _style = ""
+        try:
+            from modules import channels as _ch2
+            _style = str((_ch2.CHANNEL_PRESETS.get(channel) or {}).get("image_style") or "").strip()
+        except Exception:
+            pass
+        if _style:
+            d = {
+                "genre_tone":       (f"channel niche: {channel}. Match tone + subject to what the "
+                                     f"narration actually describes."),
+                "visual_style":     _style,
+                "avoid_line":       ("no photorealistic or live-action imagery — every shot in this "
+                                     "niche is rendered animation."),
+                "style_keywords_tail": _style,
+            }
+        else:
+            d = {
+                "genre_tone":       f"channel niche: {channel}. Match tone + subject to what the narration actually describes.",
+                "visual_style":     "photorealistic, cinematic, grounded in the specific subject of each sentence.",
+                "avoid_line":       "no cartoons or illustrations unless the narration explicitly calls for them.",
+                "style_keywords_tail": "cinematic, photorealistic, professional photography, sharp focus",
+            }
     # Try to pull channel footage_keywords for keyword_examples if
     # channels.py knows about the channel.
     try:
