@@ -48,11 +48,21 @@ log = logging.getLogger(__name__)
 MIN_SECONDS = 30.0
 MAX_SECONDS = 60.0
 
-# One beat per generated clip. Image-to-video models hold coherence for
-# a few seconds and then start inventing, so beats are kept short — and
-# more, shorter beats also read as better editing than fewer long ones.
-MIN_BEAT_SECONDS = 3.0
-MAX_BEAT_SECONDS = 6.0
+# One beat per generated clip, and SHORT — this is the single biggest
+# lever on perceived quality.
+#
+# MEASURED by sampling inside finished clips rather than at their
+# midpoint. Over 4-5 seconds this image-to-video model reliably drifts:
+# a clip that opened on a medium shot of a mouse ended on an extreme
+# close-up of a DIFFERENT mouse — different face, teeth and clothing —
+# and a "pull back slowly" instruction zoomed out until the character
+# had left the frame entirely. Coherence holds for roughly two seconds.
+#
+# Shorter clips also simply look better. Fast cutting reads as
+# premium; long held shots of drifting geometry read as cheap. Ten
+# 2.5-second cuts beat six 4-second ones on both counts.
+MIN_BEAT_SECONDS = 2.0
+MAX_BEAT_SECONDS = 3.5
 
 # Below this many characters a "look" is a label rather than a
 # description, and the character will drift between clips.
@@ -78,7 +88,7 @@ CHARACTER CONSISTENCY IS CRITICAL. Every beat is rendered by a separate image mo
 
 STATE THE BODY PLAN EXPLICITLY, as the FIRST thing in `look`. For an animal say whether it moves on four legs like a real animal, or walks upright like a person — the model will otherwise invent one, and it will not pick the same one twice. Then state exactly what the character wears, and say "wears nothing else" when that is the whole wardrobe. A terrier described only as "a scruffy terrier in a red scarf" came back on four legs in one shot and upright in a flat cap and overcoat in the next.
 
-GIVE EVERY BEAT ENERGY. A wordless short with no dialogue lives entirely on movement, so a beat whose motion is "stands and looks" or "slowly drifts" is dead on screen. In `action`, name a FAST PHYSICAL VERB — bounds, spins, leaps, tumbles, skids, dives, flings. In `camera`, give the camera a JOB — "dolly back fast to keep up", "orbit around them", "push in hard then settle", "whip pan to follow". Never "slow push in" or "almost still" on more than one beat in a film.
+GIVE EVERY BEAT ENERGY. A wordless short with no dialogue lives entirely on movement, so a beat whose motion is "stands and looks" or "slowly drifts" is dead on screen. In `action`, name a FAST PHYSICAL VERB — bounds, spins, leaps, tumbles, skids, dives, flings. In `camera`, keep the move SMALL and name it plainly — "slight push in", "small drift left", "hold steady on the hands". Do NOT ask for big reveals, fast orbits or long pull-backs: the model over-executes them and a "pull back slowly to reveal the village" ended with the character gone from the frame. Let the SUBJECT carry the energy and keep the camera modest. Never "slow push in" or "almost still" on more than one beat in a film.
 
 VARY THE SHOT SIZE ACROSS BEATS. Seven medium frontal shots of the same character is a turnaround, not a film. Mix extreme wide (character tiny in a big place), macro detail (an eye, two hands, a single object filling frame), low angle, overhead, and silhouette. At least two beats should not show the character's face at all.
 
@@ -105,7 +115,8 @@ Return ONLY this JSON, no prose, no markdown fences:
 }}
 
 Rules for `beats`:
-- Between {min_beat:.0f} and {max_beat:.0f} seconds each. They must sum to between {min_s:.0f} and {max_s:.0f}.
+- Between {min_beat:.1f} and {max_beat:.1f} seconds each — SHORT. They must sum to between {min_s:.0f} and {max_s:.0f}.
+- ONE action per beat, and one only. "She lifts the cup, turns, and walks to the window" is three beats. A beat containing two actions comes back as a morphing mess, because the model cannot hold both.
 - 8 to 12 beats.
 - `action` describes ONE continuous piece of motion. Not "she walks in, sits, and opens the box" — that is three beats.
 - Keep the SAME cast across beats. A one-character story is stronger than a three-character one at this length.

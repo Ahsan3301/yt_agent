@@ -213,10 +213,11 @@ CHANNEL_PRESETS: dict[str, dict] = {
             "whimsical and inviting, 4k"
         ),
         "motion_hint": (
-            "The motion must be purposeful and readable: name the physical action the narration "
-            "describes (lifting, pouring, brushing, turning, reaching) and give the camera a job "
-            "(push in on the hands, dolly alongside, tilt up to the face). Never a slow drift or a "
-            "near-still hold."
+            "ONE physical action from the narration, performed clearly — lifting, pouring, "
+            "brushing, turning, reaching. Keep the camera move SMALL (a slight push in, a small "
+            "drift) or hold steady. Do NOT attempt large reveals or long pull-backs: measured, "
+            "this model over-executes them and loses the subject out of frame. Never a slow "
+            "aimless drift, never a near-still hold."
         ),
         "medium_hint":    "3D animated film still",
         "negative_style": (
@@ -289,9 +290,12 @@ CHANNEL_PRESETS: dict[str, dict] = {
         # Appended to every VIDEO prompt. The single highest-impact
         # field in this preset — see the note above.
         "motion_hint": (
-            "The motion must be energetic and playful: name a fast physical action (bounding, "
-            "spinning, leaping, tumbling) and give the camera a job (dolly back to keep up, orbit "
-            "around the subject, push in fast then settle). Never a slow drift or a near-still hold."
+            "ONE clear physical action, performed energetically — bounding, spinning, leaping, "
+            "tumbling, reaching. Keep the camera move SMALL (a slight push in, a small drift) or "
+            "hold steady and let the subject carry the energy. Do NOT attempt large reveals, fast "
+            "orbits or long pull-backs: measured, this model over-executes them — a \"pull back to "
+            "reveal\" ended with the character gone from frame. Never a slow aimless drift, never a "
+            "near-still hold."
         ),
         "medium_hint":    "3D animated film still",
         "negative_style": (
