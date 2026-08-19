@@ -250,7 +250,7 @@ def motion_verdict(frames: list[str]) -> tuple[str, float]:
     return "ok", mean
 
 
-def vision_verdict(frames: list[str], fit_description: str, premise: str = "") -> int:
+def vision_verdict(frames: list[str], fit_description: str, premise: str = "") -> list:
     """Median vision score across the sampled frames, or -1 if unknown.
 
     This took the WORST score, on the reasoning that one melted frame is
@@ -298,9 +298,8 @@ def vision_verdict(frames: list[str], fit_description: str, premise: str = "") -
     if not scores:
         return -1
     scores.sort()
-    median = scores[len(scores) // 2]
-    log.info("clip_qc: vision scores %s -> median %d", scores, median)
-    return median
+    log.info("clip_qc: vision scores %s", scores)
+    return scores
 
 
 def check(path: str, fit_description: str = "", premise: str = "",
@@ -364,12 +363,32 @@ def check(path: str, fit_description: str = "", premise: str = "",
             # Score the late frames only. The 0.15 sample exists for the
             # motion pair; spending a vision call on it would be paying
             # to check the frame the model was handed.
-            v = vision_verdict(frames[1:], fit_description, premise)
-            result["vision"] = v
-            if v >= 0 and v < min_vision:
-                result.update(ok=False, reason=f"vision score {v}/10 below {min_vision}")
+            # UNANIMITY, not median. The judge is too noisy per-frame
+            # to adjudicate a near-miss: measured on real clips it
+            # returned [2,2,2,10] and [1,2,9,9] for good clips, so any
+            # single summary statistic is close to a coin flip. NIM's
+            # 90b vision endpoint also read-timed-out 31 times in one
+            # render even at a 90s timeout, which means the model
+            # answering can change between frames of the SAME clip.
+            #
+            # So the score is acted on only when EVERY sampled frame
+            # agrees the clip is bad. One good frame is enough to
+            # conclude the model rendered the scene — a clip that is
+            # genuinely wrong (wrong character, wrong scene) scores low
+            # on all of them, and a controlled test scored a
+            # deliberately wrong description 0/10 across the board.
+            #
+            # Everything is recorded either way, so a clip that some
+            # frames disliked still shows up in the log.
+            scores = vision_verdict(frames[1:], fit_description, premise)
+            result["vision_scores"] = scores
+            result["vision"] = min(scores) if scores else -1
+            if scores and all(s <= min_vision for s in scores):
+                result.update(
+                    ok=False,
+                    reason=f"every sampled frame scored {scores} (<= {min_vision})")
                 return result
-            if v < 0:
+            if not scores:
                 result["reason"] = "vision scoring unavailable — motion check only"
 
     return result
