@@ -201,7 +201,7 @@ CHANNEL_PRESETS: dict[str, dict] = {
                            "unhurried. The narrator notices small things."),
         "voice":          "en-GB-LibbyNeural",
         "rate":           "-6%",
-        "pitch":          "0Hz",
+        "pitch":          "+0Hz",   # SIGNED — edge-tts rejects a bare "0Hz"
         "language":       "en",
         "color_grade":    "warm_punchy",
         "footage_keywords": [],

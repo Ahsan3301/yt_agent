@@ -71,6 +71,30 @@ NICHE_GENDER_HINT = {
 }
 
 
+def _normalise_prosody(value: str, unit: str) -> str:
+    """Force edge-tts's required leading sign onto a rate/pitch value.
+
+    edge-tts rejects an unsigned value outright — "Invalid pitch '0Hz'"
+    — and the rejection is fatal per voice, so a single unsigned preset
+    field walks the ENTIRE fallback voice chain and then aborts the
+    render. That happened live: a new niche shipped pitch="0Hz" instead
+    of "+0Hz" and killed the run after every other stage had succeeded,
+    including 10 generated motion clips.
+
+    A one-character typo in a preset should cost a warning, not a
+    render. Normalising here rather than validating at the preset means
+    an operator editing a channel row in the dashboard is covered too.
+    """
+    s = str(value or "").strip()
+    if not s:
+        return f"+0{unit}"
+    if s[0] in "+-":
+        return s
+    log.warning("prosody %r is missing its sign — edge-tts requires one; "
+                "using '+%s'", s, s)
+    return "+" + s
+
+
 def _resolve_voice(preset: dict, language: str | None, voice_override: str | None = None) -> tuple[str, str, str]:
     """Resolve (voice_id, rate, pitch) from the channel preset honoring
     the requested language. settings.json can override either the per-
@@ -130,7 +154,7 @@ def _resolve_voice(preset: dict, language: str | None, voice_override: str | Non
     voice = settings_voice or preset.get("voice", "en-US-BrianMultilingualNeural")
     rate = settings.get(f"edge_rate_{niche}", preset.get("rate", "+0%"))
     pitch = settings.get(f"edge_pitch_{niche}", preset.get("pitch", "+0Hz"))
-    return voice, rate, pitch
+    return voice, _normalise_prosody(rate, "%"), _normalise_prosody(pitch, "Hz")
 
 
 _KNOWN_VOICES: set[str] | None = None
