@@ -1165,6 +1165,52 @@ def _cast_anchor_put(names, path: str) -> None:
             _CAST_ANCHORS.setdefault(n, path)
 
 
+def _directed_prompt(channel: str) -> bool:
+    """True when this niche composes its own per-shot prompts.
+
+    Such a niche has already decided the subject, the framing and the
+    camera; running an LLM rewriter over that throws the direction away.
+    Implied by `generated_only`, since a niche that generates every
+    frame is one that cares what is in it.
+    """
+    if not channel:
+        return False
+    try:
+        from modules import channels as _ch
+        cfg = _ch.get_channel(channel) or {}
+        return bool(cfg.get("directed_prompt") or cfg.get("generated_only"))
+    except Exception:
+        return False
+
+
+# Shots whose meaning lives in the FRAMING rather than in the subject's
+# face. Anchoring these to a character reference overrides the framing —
+# image-to-image copies the reference's pose — and buys nothing, because
+# at this scale the identity is not legible anyway.
+_FRAMING_CUES = (
+    "extreme wide", "very wide", "wide establishing", "aerial", "bird's eye",
+    "birds eye", "overhead", "top-down", "top down", "from high above",
+    "macro", "extreme close", "close-up of", "close up of", "only the hands",
+    "hands only", "silhouette", "backlit", "no face", "no body",
+    "tiny in frame", "small in frame", "percent of the frame",
+)
+
+
+def _framing_over_identity(shot: dict) -> bool:
+    """True when this shot's composition must beat identity lock.
+
+    Read from the shot's own text rather than a flag, so a beat sheet
+    that says "EXTREME WIDE ... the character is a speck" gets the right
+    treatment without the writer having to know this function exists.
+    """
+    try:
+        blob = " ".join(str(shot.get(k) or "") for k in
+                        ("camera", "visual_description", "ai_prompt")).lower()
+    except Exception:
+        return False
+    return any(cue in blob for cue in _FRAMING_CUES)
+
+
 def _motion_hint(channel: str) -> str:
     """Per-niche direction appended to every VIDEO prompt.
 
@@ -1539,22 +1585,60 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror",
         log.info(f"  [ai-{slot+1}] {provider_name}: trying ({ai_attempts} attempts)")
         for trial in range(ai_attempts):
             _rs.check_cancel()
-            crafted = craft_image_prompt(
-                narration_excerpt=premise,
-                visual_description=visual,
-                channel=channel,
-                # Offset per provider so each gets a distinct seed pool.
-                attempt=trial + (slot * 100),
-                period=period,
-                tone_override=tone_override,
-                language=language,
-            )
-            prompt_to_use = crafted or ai_prompt
+            # DIRECTED NICHES KEEP THEIR OWN PROMPT.
+            #
+            # craft_image_prompt rewrites the shot from scratch with an
+            # LLM. For a niche whose shots were composed deliberately —
+            # a beat sheet that names the character, the camera and the
+            # framing — that discards the direction entirely.
+            #
+            # Measured, on a wordless render whose beats were correct:
+            # the rewriter produced "a hunched figure with matted dark
+            # hair", "a weathered lighthouse keeper in a wool coat" and
+            # "a tan mixed-breed dog" for three shots of the SAME tin
+            # robot, set in a 1920s farmhouse and a 1970s basement. The
+            # beat sheet was intact; everything downstream of it was
+            # invented.
+            #
+            # So a niche that supplies its own composed prompt keeps it.
+            # Everything else still gets the rewriter, which is genuinely
+            # useful when the input is a bare narration sentence.
+            if _directed_prompt(channel) and ai_prompt:
+                prompt_to_use = ai_prompt
+                crafted = None
+            else:
+                crafted = craft_image_prompt(
+                    narration_excerpt=premise,
+                    visual_description=visual,
+                    channel=channel,
+                    # Offset per provider so each gets a distinct seed pool.
+                    attempt=trial + (slot * 100),
+                    period=period,
+                    tone_override=tone_override,
+                    language=language,
+                )
+                prompt_to_use = crafted or ai_prompt
             log.info(f"    {provider_name} prompt (try {trial+1}): {(crafted or ai_prompt)[:90]}...")
             # Character anchor: only Agnes supports image-to-image, so
             # only it takes the reference. Everything else keeps the
             # signature it always had.
-            if provider_name == "agnes" and _cast_ref:
+            # The anchor is applied SELECTIVELY, not to every shot.
+            #
+            # Image-to-image reproduces the reference's pose and framing,
+            # not just its identity. Anchoring all seven shots of a film
+            # to one still produced seven near-identical medium frontal
+            # portraits — a character turnaround rather than a film, with
+            # every camera instruction (extreme wide, macro, overhead,
+            # silhouette) silently overridden.
+            #
+            # So the anchor is skipped on shots where framing carries the
+            # meaning and identity is barely legible anyway: a wide where
+            # the character is a speck, a macro of an eye or a pair of
+            # hands, a backlit silhouette. Those shots keep identity via
+            # the written description instead, which is enough at that
+            # scale.
+            _use_ref = bool(_cast_ref) and not _framing_over_identity(shot)
+            if provider_name == "agnes" and _use_ref:
                 path, seed = fn(prompt_to_use, output_dir, trial,
                                 negative_prompt, ref_image_path=_cast_ref)
             else:
@@ -1565,7 +1649,7 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror",
             # inside the store means a later shot never overwrites it,
             # so every appearance references the same frame rather than
             # drifting one hop at a time.
-            if provider_name == "agnes" and not _cast_ref:
+            if provider_name == "agnes" and not _cast_ref and not _framing_over_identity(shot):
                 _cast_anchor_put(shot.get("cast_names") or [], path)
             tag = f"{provider_name}:{seed}"
             if judge_on and threshold >= 0:
