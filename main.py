@@ -743,15 +743,13 @@ def run_pipeline(
             log.debug(f"bg SDXL warm skipped: {_wex}")
 
         # ── STEP 2: Script (or manual + refine) ──────────────────
-        if manual_script:
-            log.info("[2/6] Refining user-provided script (hook + polish)...")
-            script = _step(summary, "script", lambda: _refine_user_script(
-                manual_script=manual_script,
-                manual_title=manual_title,
-                channel_cfg=channel_cfg,
-                language=_pipeline_lang,
-            ), run_id=run_id)
-        elif bool(channel_cfg.get("silent")) and manual_script.strip():
+        # ORDER MATTERS. The wordless branch is tested FIRST, because
+        # `if manual_script:` is the broader condition and swallowed it
+        # when this was written the other way round — a supplied beat
+        # sheet went to the narration refiner, which produced a 41.8s
+        # VOICEOVER on a niche whose entire premise is that nobody
+        # speaks. Dead code that looked live.
+        if bool(channel_cfg.get("silent")) and manual_script.strip():
             # Wordless niche, and the caller supplied the story. Manual
             # mode for every other niche takes narration prose; here the
             # equivalent input is the beat sheet itself. Falls through to
@@ -764,6 +762,14 @@ def run_pipeline(
                 log.warning("supplied beat sheet unusable — writing one instead")
                 script = _step(summary, "script",
                                lambda: _silent.write_beat_sheet(content), run_id=run_id)
+        elif manual_script:
+            log.info("[2/6] Refining user-provided script (hook + polish)...")
+            script = _step(summary, "script", lambda: _refine_user_script(
+                manual_script=manual_script,
+                manual_title=manual_title,
+                channel_cfg=channel_cfg,
+                language=_pipeline_lang,
+            ), run_id=run_id)
         elif bool(channel_cfg.get("silent")):
             # Wordless niche. The beat sheet IS the script: it carries
             # the story, the cast bible and — critically — the runtime,
