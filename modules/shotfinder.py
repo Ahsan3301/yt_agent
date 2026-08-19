@@ -1165,6 +1165,24 @@ def _cast_anchor_put(names, path: str) -> None:
             _CAST_ANCHORS.setdefault(n, path)
 
 
+def _motion_required(channel: str) -> bool:
+    """True when a still may NEVER stand in for a generated clip.
+
+    Separate from _generated_only: that one says "do not use stock",
+    this one says "do not use a frozen frame". A niche can want the
+    first without the second, but a wordless animated short needs both
+    — its whole claim is that every shot moves.
+    """
+    if not channel:
+        return False
+    try:
+        from modules import channels as _ch
+        cfg = _ch.get_channel(channel) or {}
+        return bool(cfg.get("motion_required") or cfg.get("silent"))
+    except Exception:
+        return False
+
+
 def _generated_only(channel: str) -> bool:
     """True when every frame of this niche must be generated.
 
@@ -1867,14 +1885,41 @@ def fetch_shots(shots, output_dir, channel="horror", preset_sources=None,
                             src["qc_failed"] = True
                             src["qc_reason"] = str(_last_verdict.get("reason") or "")
                             _register_degraded(idx, _last_verdict)
-                        # Animation failed but we already have a good
-                        # still for this shot — use it rather than
-                        # throwing the work away and re-fetching below.
+                        # A STILL IS NOT AN ACCEPTABLE OUTCOME for a
+                        # motion-required niche.
+                        #
+                        # This used to substitute the seed image when the
+                        # video model failed, on the reasoning that a
+                        # still beats losing the shot. For a niche whose
+                        # entire premise is "no still images, every shot
+                        # is a real motion clip", that reasoning inverts:
+                        # a single frozen shot is the one defect a viewer
+                        # notices immediately, and it shipped silently
+                        # because the fallback looked like resilience.
+                        #
+                        # Observed: one Agnes video task exceeded the
+                        # 180s poll window while the queue was full, and
+                        # the shot became a photograph in a film that
+                        # promises none.
+                        #
+                        # So motion-required niches keep trying, and if
+                        # they still cannot get a clip the shot is left
+                        # EMPTY and the run is marked degraded — a
+                        # missing shot is visible and fixable, a frozen
+                        # one is neither.
                         if src is None and _still:
-                            log.warning("shot %d: no usable clip after %d attempt(s) — "
-                                        "falling back to the still", idx + 1, _tries)
-                            _register_degraded(idx, {"reason": "no clip generated; used a still"})
-                            src = _still
+                            if _motion_required(channel):
+                                log.error("shot %d: NO CLIP after %d attempt(s) and this "
+                                          "niche forbids stills — leaving the shot empty",
+                                          idx + 1, _tries)
+                                _register_degraded(idx, {
+                                    "reason": f"no motion clip after {_tries} attempts; "
+                                              f"stills are not permitted for this niche"})
+                            else:
+                                log.warning("shot %d: no usable clip after %d attempt(s) — "
+                                            "falling back to the still", idx + 1, _tries)
+                                _register_degraded(idx, {"reason": "no clip generated; used a still"})
+                                src = _still
                 # Real archive footage — ONLY for channels explicitly
                 # put in motion mode. Agnes has generation quota and
                 # the Archive's coverage is uneven, so this stays

@@ -195,6 +195,10 @@ CHANNEL_PRESETS: dict[str, dict] = {
         # character does not exist, so searching for it can only return
         # something plausible and wrong.
         "generated_only": True,
+        # A still may never stand in for a failed clip here. The
+        # niche promises every shot moves; one frozen frame is the
+        # defect a viewer spots instantly.
+        "motion_required": True,
         "perspective":    "no narrator, no dialogue — story is carried entirely by action and expression",
         "language":       "en",
         "color_grade":    "warm_punchy",

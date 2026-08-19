@@ -80,7 +80,12 @@ def _agnes_key() -> str:
 # cap applies to the FIRST shots because Shorts retention is decided in
 # the opening seconds — that is where motion earns the most.
 _AGNES_VIDEO_MODEL = os.getenv("AGNES_VIDEO_MODEL", "agnes-video-v2.0")
-_AGNES_VIDEO_POLL_SECONDS = int(os.getenv("AGNES_VIDEO_POLL_SECONDS", "180"))
+# 180 -> 600. Measured: a task exceeded 180s while the provider's
+# queue was full (503 video_queue_full on a neighbouring shot), and
+# the shot degraded to a still. The task was still processing
+# server-side — we gave up, it did not. Waiting is nearly free;
+# abandoning a clip costs the shot.
+_AGNES_VIDEO_POLL_SECONDS = int(os.getenv("AGNES_VIDEO_POLL_SECONDS", "600"))
 
 
 # NOTE: _archive_clips_enabled travelled with this block but STAYS in
