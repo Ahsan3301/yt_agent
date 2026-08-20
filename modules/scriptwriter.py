@@ -823,6 +823,34 @@ def write_script(research_data, max_attempts=3):
     # words that is four words a sentence.
     _wb_cap = _wb.cap_seconds(s)
     _wb_wps = _wb.words_per_sec(channel_cfg)
+
+    # Reconcile what we ASK for with what the validator will ACCEPT.
+    #
+    # The acceptance floor below is 80% of the SLOT (see `_wmin` in the
+    # retry loop), not a fraction of this target. budget() only ever
+    # checked that the configured range fits UNDER the ceiling — nothing
+    # checked it clears the floor. For a 30s finance slot at 2.37 w/s
+    # the floor is 56 words while the configured range is 46-54, so the
+    # instructed range and the accepted range did not overlap AT ALL: a
+    # model that obeyed the brief exactly came back at 51 words and was
+    # rejected as "too short (want >=56)" every time. Three attempts,
+    # then the whole render aborted at the script stage.
+    #
+    # Lift the ask to meet the floor rather than lowering the floor,
+    # which would reinstate the under-filled videos the floor exists to
+    # prevent (sampled output was shipping 20.9s of narration into a 30s
+    # slot). A budget the model cannot satisfy is not a budget.
+    _accept_floor = max(20, int(0.80 * _wb_cap * _wb_wps))
+    if word_min < _accept_floor:
+        _was = (word_min, word_max)
+        word_min = _accept_floor
+        word_max = max(word_max, _accept_floor + 6)
+        log.warning(
+            f"Script word budget lifted {_was[0]}-{_was[1]} -> {word_min}-{word_max}: "
+            f"the validator floor is {_accept_floor} words (80% of a {_wb_cap:.0f}s "
+            f"slot at {_wb_wps:.2f} w/s), so the configured range could never be accepted."
+        )
+
     word_target = int(round((word_min + word_max) / 2))
     target_seconds = int(round(word_target / _wb_wps)) if _wb_wps else int(_wb_cap)
     # ~7 words per spoken sentence in this clipped style, so the sentence
