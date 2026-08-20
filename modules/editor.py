@@ -10,6 +10,7 @@ Uses ffmpeg to:
 Requires ffmpeg installed: sudo apt install ffmpeg  (or choco install ffmpeg on Windows)
 """
 import os
+import shutil
 import re
 import random
 import logging
@@ -333,12 +334,30 @@ def run_ffmpeg(args, desc="ffmpeg", cwd=None):
             raise run_state.Cancelled("ffmpeg terminated by user cancel")
         stderr_tail = (stderr or "")[-1500:].strip() or "(empty)"
         stdout_tail = (stdout or "")[-500:].strip()
-        log.error(f"ffmpeg [{desc}] failed (exit {proc.returncode})")
+        # A negative returncode means the OS killed us with that signal.
+        # This distinction is the whole diagnosis: exit 1 is ffmpeg
+        # objecting to its inputs, -9 is the OOM killer, -15 is someone
+        # calling terminate_active(). Empty stderr at -loglevel warning
+        # looks identical in all three cases, so the code MUST travel
+        # with the error — six renders died at "failed: (empty)" on
+        # ephemeral Kaggle/Colab workers whose logs were gone by the
+        # time anyone looked, leaving nothing to work from.
+        rc = proc.returncode
+        if rc is not None and rc < 0:
+            try:
+                import signal as _sig
+                _name = _sig.Signals(-rc).name
+            except Exception:
+                _name = f"signal {-rc}"
+            why = f"killed by {_name}"
+        else:
+            why = f"exit {rc}"
+        log.error(f"ffmpeg [{desc}] failed ({why})")
         log.error(f"  cmd: {' '.join(cmd)}")
         log.error(f"  stderr: {stderr_tail}")
         if stdout_tail:
             log.error(f"  stdout: {stdout_tail}")
-        raise RuntimeError(f"ffmpeg [{desc}] failed: {stderr_tail[-300:]}")
+        raise RuntimeError(f"ffmpeg [{desc}] failed ({why}): {stderr_tail[-300:]}")
     # Stash captured output on a Result-like for the success path below.
     class _R:
         pass
@@ -1146,9 +1165,45 @@ def prepare_clips(sources, target_duration, work_dir, channel="horror"):
             segment_files[i] = out
             run_state.tick("edit", 0.7 * (i + 1) / n)
 
+    # Preflight the segments before handing them to ffmpeg.
+    #
+    # Concat is the single longest ffmpeg run in the pipeline and it
+    # sits at ~82% — after every image, clip and voice credit has
+    # already been spent. A silent failure here is the most expensive
+    # failure the pipeline can have, so it is worth being loud about
+    # what went in. A segment that is missing or zero-byte is dropped
+    # rather than fatal: a short video is a far better outcome than no
+    # video, and the drop is recorded so the run is flagged degraded.
+    good, dropped = [], []
+    for c in segment_files:
+        try:
+            if c and os.path.exists(c) and os.path.getsize(c) > 0:
+                good.append(c)
+            else:
+                dropped.append(c)
+        except OSError:
+            dropped.append(c)
+    if dropped:
+        log.warning(f"concat: dropping {len(dropped)}/{len(segment_files)} unusable segment(s): {dropped}")
+    if not good:
+        raise RuntimeError(
+            f"concat: all {len(segment_files)} segments are missing or empty — "
+            "nothing to assemble"
+        )
+    try:
+        _mb = sum(os.path.getsize(c) for c in good) / 1e6
+        _free = shutil.disk_usage(work_dir).free / 1e6
+        log.info(f"concat: {len(good)} segments, {_mb:.1f}MB in, {_free:.0f}MB free on {work_dir}")
+        # ffmpeg needs room for the output; running the disk dry mid-write
+        # is a plausible cause of a killed encode on a notebook worker.
+        if _free < _mb:
+            log.warning(f"concat: low disk — {_free:.0f}MB free vs {_mb:.1f}MB of input")
+    except OSError:
+        pass
+
     concat_list = os.path.join(work_dir, "concat.txt")
     with open(concat_list, "w") as f:
-        for c in segment_files:
+        for c in good:
             abs_path = os.path.abspath(c).replace("\\", "/")
             f.write(f"file '{abs_path}'\n")
 
@@ -1156,14 +1211,26 @@ def prepare_clips(sources, target_duration, work_dir, channel="horror"):
     # Re-encode on concat (not -c copy) because image segments may have
     # slightly different encode params than video segments, and -c copy
     # would refuse to splice them. CRF 23 keeps quality at a sane level.
-    run_ffmpeg([
+    concat_args = [
         "-f", "concat", "-safe", "0",
         "-i", os.path.abspath(concat_list),
         "-t", str(target_duration),
         *_vcodec_args(crf="23"),
         "-pix_fmt", "yuv420p",
         concat_out,
-    ], desc="concat segments")
+    ]
+    try:
+        run_ffmpeg(concat_args, desc="concat segments")
+    except RuntimeError as e:
+        # One retry. If the encode was killed by memory or scheduling
+        # pressure rather than by bad input, the second attempt on a
+        # quieter machine usually lands — and retrying one ffmpeg call
+        # is enormously cheaper than re-running the whole render.
+        # A genuine input error fails again immediately and propagates.
+        from modules import run_state as _rs
+        _rs.check_cancel()
+        log.warning(f"concat: first attempt failed ({e}) — retrying once single-threaded")
+        run_ffmpeg(["-threads", "1"] + concat_args, desc="concat segments (retry)")
     return concat_out
 
 

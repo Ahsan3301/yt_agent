@@ -338,6 +338,21 @@ services:
           # host — Docker tolerates that where it rejects an oversized
           # cpus, so it would have failed later and less obviously.
           memory: 3g
+          # 95% of one core, leaving 5% of headroom for PocketBase,
+          # MinIO, Caddy and the dashboard, which share this box. An
+          # uncapped render pins the single core at 100% and starves
+          # the heartbeat writes — the documented cause of renders that
+          # complete on the host but show as "failed" because the
+          # worker stopped answering PocketBase.
+          #
+          # Why this is safe where the old "1.6" was a deploy-time bomb
+          # (see the note above): Docker rejects a cpus value ABOVE the
+          # host core count. 1.6 exceeded a 1-core host and aborted the
+          # compose run mid-deploy. 0.95 is <= 1.00 and therefore valid
+          # on any host with at least one core, so no future resize can
+          # turn it into a failed deploy. On a bigger host it throttles
+          # rather than breaks — a performance choice, not an outage.
+          cpus: "0.95"
     cpu_shares: 512
 
 networks:
