@@ -809,14 +809,15 @@ def _run_side_job(job: dict[str, Any], kind: str):
     try:
         from backend import notifier
         _side_niche = str(job.get("channel") or "").strip() or None
+        _side_name = str(job.get("source_channel_name") or "").strip() or None
         if ok:
             notifier.info(f"✅ {kind} complete", body=msg,
-                          channel_niche=_side_niche)
+                          channel_niche=_side_niche, channel_name=_side_name)
         else:
             notifier.report_error(err=msg, title=f"❌ {kind} failed",
                                   run_id=job.get("run_id") or job_id,
                                   req_id=req_id,
-                                  channel_niche=_side_niche)
+                                  channel_niche=_side_niche, channel_name=_side_name)
     except Exception:
         pass
 

@@ -637,15 +637,19 @@ def handle(job: dict) -> None:
         # and failures land on the operator's default DISCORD_WEBHOOK_URL
         # regardless of which channel actually failed.
         _ch_niche = str(job.get("channel") or "").strip() or None
+        # job["channel"] is the NICHE, not the channel. Pass the real
+        # channel name too so an alert lands in that channel's own
+        # Discord instead of whichever same-niche sibling sorts first.
+        _ch_name = str(job.get("source_channel_name") or "").strip() or None
         if ok:
             notifier.info(f"✅ {kind} complete (Oracle)", body=msg,
-                          channel_niche=_ch_niche)
+                          channel_niche=_ch_niche, channel_name=_ch_name)
         elif _final_status == "cancelled":
             pass  # silence — user cancelled deliberately
         else:
             notifier.report_error(err=msg, title=f"❌ {kind} failed (Oracle)",
                                   run_id=job.get("run_id"), req_id=job.get("req_id"),
-                                  channel_niche=_ch_niche)
+                                  channel_niche=_ch_niche, channel_name=_ch_name)
     except Exception:
         pass
 

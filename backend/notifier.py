@@ -47,44 +47,95 @@ _dedup_lock = threading.Lock()
 _dedup: dict[tuple[str, str], float] = {}
 
 
-def _webhook_url(channel_niche: str | None = None) -> str:
+def _webhook_url(channel_niche: str | None = None,
+                 channel_name: str | None = None) -> str:
     """Look up the webhook URL.
 
     Priority order:
-      1. Per-channel URL — channels/<niche>.discord_webhook, so each
-         dashboard channel can post to its own server/channel
-      2. DISCORD_WEBHOOK_URL env var
-      3. Firestore api_keys/DISCORD_WEBHOOK_URL (global default)
+      1. The named channel's own URL — channels/<name>.discord_webhook
+      2. Per-niche URL, only when the caller could not name a channel
+      3. DISCORD_WEBHOOK_URL env var
+      4. Firestore api_keys/DISCORD_WEBHOOK_URL (global default)
 
-    Passing channel_niche=None (default) skips step 1 and behaves like
-    the pre-2026-07-09 single-webhook world. Callers with a channel
-    should always pass it — otherwise a horror-channel Discord post
-    could land in the science-channel Discord.
+    Step 1 exists because step 2 is only correct when a niche has one
+    channel. Niche is NOT identity: three horror channels share the
+    niche "horror", so the niche lookup returns whichever row streams
+    first and every horror render reports into that one server. That is
+    the cross-posting people see as "this Discord gets notifications
+    for channels I never pointed at it".
+
+    A named channel that sets no webhook of its own therefore falls
+    straight through to the global default. It must NOT inherit a
+    sibling's webhook — inheriting is how one channel's server starts
+    receiving another's traffic in the first place.
     """
-    # 1. Per-channel — first enabled channels row matching this niche.
-    if channel_niche:
+    # 1. The channel itself, matched by name. Exact identity.
+    if channel_name:
         try:
             from backend import db
             if db.is_configured():
                 for ch_doc in (db.client()
                                  .collection("channels")
+                                 .where("name", "==", channel_name)
+                                 .limit(2)
+                                 .stream()):
+                    d = ch_doc.to_dict() or {}
+                    per_ch = str(d.get("discord_webhook", "")).strip()
+                    if per_ch:
+                        return per_ch
+                    # Row found, no webhook set — the user has not
+                    # chosen one, so use the global default below
+                    # rather than a same-niche sibling's.
+                    channel_niche = None
+                    break
+        except Exception as e:
+            log.debug(f"notifier: per-channel webhook lookup failed: {e}")
+
+    # 2. Per-niche, and ONLY when it is unambiguous.
+    #
+    # Reached when the caller could not name a channel (the YouTube
+    # publish alert is the notable one). If exactly one enabled channel
+    # in the niche has a webhook, that alert can only belong to it, so
+    # route there. If several do, the niche does not identify anyone
+    # and the old code silently picked whichever streamed first —
+    # sending every horror channel's alerts to one server.
+    #
+    # Ambiguity falls through to the global default deliberately. An
+    # alert in the operator's own inbox is a much smaller problem than
+    # an alert in the wrong user's Discord, which is both noise and a
+    # small information leak between channels.
+    if channel_niche:
+        try:
+            from backend import db
+            if db.is_configured():
+                hooks = []
+                for ch_doc in (db.client()
+                                 .collection("channels")
                                  .where("niche", "==", channel_niche)
-                                 .limit(3)
+                                 .limit(10)
                                  .stream()):
                     d = ch_doc.to_dict() or {}
                     if d.get("enabled") is False:
                         continue
                     per_ch = str(d.get("discord_webhook", "")).strip()
-                    if per_ch:
-                        return per_ch
+                    if per_ch and per_ch not in hooks:
+                        hooks.append(per_ch)
+                if len(hooks) == 1:
+                    return hooks[0]
+                if len(hooks) > 1:
+                    log.debug(
+                        f"notifier: niche {channel_niche!r} has {len(hooks)} "
+                        "channels with distinct webhooks — cannot tell which "
+                        "this alert belongs to, using the global default"
+                    )
         except Exception as e:
-            log.debug(f"notifier: per-channel webhook lookup failed: {e}")
+            log.debug(f"notifier: per-niche webhook lookup failed: {e}")
 
-    # 2. Env var (fastest global path).
+    # 3. Env var (fastest global path).
     v = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
     if v:
         return v
-    # 3. Firestore api_keys global.
+    # 4. Firestore api_keys global.
     try:
         from backend import db
         if not db.is_configured():
@@ -118,6 +169,7 @@ def send(
     fields: Iterable[tuple[str, str, bool]] | None = None,
     url: str | None = None,
     channel_niche: str | None = None,
+    channel_name: str | None = None,
 ) -> bool:
     """Post one Discord embed. Returns True on success, False on any
     failure (including config missing — silent so callers don't care).
@@ -127,12 +179,15 @@ def send(
     `body`   — main description (under ~2000 chars; auto-truncated)
     `fields` — iterable of (name, value, inline). Each value < 1024 chars.
     `url`    — clickable link on the title (use for YouTube URLs etc.)
-    `channel_niche` — if passed, the notifier looks up
-                      channels/<niche>.discord_webhook first so per-
-                      channel Discord routing works. Falls back to the
-                      global webhook when the channel row doesn't set one.
+    `channel_niche` — fallback routing when the caller cannot name a
+                      channel. Ambiguous whenever a niche has more than
+                      one channel, so prefer `channel_name`.
+    `channel_name`  — the exact channel this alert belongs to. Routes to
+                      that channel's own webhook, or the global default
+                      if it has none. Always pass this when you have it.
     """
-    webhook = _webhook_url(channel_niche=channel_niche)
+    webhook = _webhook_url(channel_niche=channel_niche,
+                           channel_name=channel_name)
     if not webhook:
         return False
     if not _should_send(level, title):
@@ -207,6 +262,7 @@ def report_error(
     extra: dict | None = None,
     fire_discord: bool = True,
     channel_niche: str | None = None,
+    channel_name: str | None = None,
 ) -> bool:
     """
     Persist an error to Firestore + (optionally) fire a Discord embed.
@@ -281,7 +337,8 @@ def report_error(
                               title=("❌ " + auto_title)[:240],
                               body=body[:3500],
                               fields=fields,
-                              channel_niche=channel_niche)
+                              channel_niche=channel_niche,
+                              channel_name=channel_name)
         except Exception as _e:
             log.debug(f"report_error discord sink failed: {_e}")
 
