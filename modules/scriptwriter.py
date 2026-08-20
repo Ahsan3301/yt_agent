@@ -1107,6 +1107,26 @@ def write_script(research_data, max_attempts=3):
                     f"but within 85% — accepting rather than failing the render."
                 )
                 return script
+            # Same rescue in the other direction. This was missing, and
+            # the asymmetry cost whole renders: a finance script came
+            # back at 70 words against a 60 cap three times running and
+            # the run aborted at the script stage, before a single
+            # credit had bought anything — a usable script thrown away
+            # over ten words.
+            #
+            # Overshooting is also the safer of the two failures. A
+            # short narration leaves the video with nothing to say; a
+            # slightly long one just runs a few seconds more, and ten
+            # words is roughly four seconds of speech, well inside the
+            # Shorts limit. Cap the rescue at 125% so a genuine runaway
+            # (a model ignoring the brief entirely) still fails loudly.
+            _long_only = all("too long" in p for p in problems)
+            if _long_only and _wc <= int(word_max * 1.25):
+                log.warning(
+                    f"Script last-attempt rescue: {_wc} words > target max {word_max} "
+                    f"but within 125% — accepting rather than failing the render."
+                )
+                return script
 
         log.warning(f"Attempt {attempt}: schema problems: {problems}")
         extra = [
