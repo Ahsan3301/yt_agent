@@ -234,6 +234,7 @@ export default function MonitorPage() {
           <>
             <LaunchColabQuickButton />
             <WakeKaggleQuickButton />
+            <WakeColabQuickButton />
             <Pill icon={Wifi}    label={`${online} online`}    color="emerald" />
             <Pill icon={Loader2} label={`${busy} busy`}        color="amber" />
             <Pill icon={Box}     label={`${totalQueue} queued`} color="neutral" />
@@ -594,6 +595,64 @@ function WakeKaggleQuickButton() {
       >
         {waking ? <Loader2 className="h-3 w-3 animate-spin" /> : <Cloud className="h-3 w-3" />}
         Wake Kaggle
+      </button>
+      {tip && (
+        <span className="text-[11px] text-neutral-400 max-w-[280px] truncate" title={tip}>
+          {tip}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * "Wake Colab" — the twin of the button above, firing
+ * colab-dispatch.yml via POST /api/backends/wake-colab.
+ *
+ * Until this existed, Colab was the only worker in the fleet that
+ * needed a person: Kaggle had a dispatch, Oracle is always-on, and
+ * Colab meant opening the notebook in a browser and running its cells.
+ *
+ * Sends no body, which the route reads as "CPU runtime". That is the
+ * intended default — nothing in the pipeline runs a local model any
+ * more, so the worker wants ffmpeg and outbound HTTP rather than a
+ * card, and a free-tier CPU runtime is far more reliably available
+ * than a T4. The route still accepts {gpu} for when that changes.
+ */
+function WakeColabQuickButton() {
+  const [waking, setWaking] = useState(false);
+  const [tip, setTip] = useState<string | null>(null);
+
+  const wake = async () => {
+    setWaking(true);
+    setTip(null);
+    try {
+      const r = await fetch("/api/backends/wake-colab", { method: "POST" });
+      const d = await r.json();
+      if (r.ok) {
+        setTip("Dispatch fired. Runtime boots, then installs before it heartbeats.");
+        setTimeout(() => setTip(null), 6000);
+      } else {
+        setTip(d.error || `HTTP ${r.status}`);
+        setTimeout(() => setTip(null), 8000);
+      }
+    } catch (e) {
+      setTip(String(e));
+      setTimeout(() => setTip(null), 8000);
+    }
+    setWaking(false);
+  };
+
+  return (
+    <div className="inline-flex items-center gap-2">
+      <button
+        onClick={wake}
+        disabled={waking}
+        className="inline-flex items-center gap-1 px-2 h-7 rounded-md border border-line text-neutral-300 hover:border-accent/40 hover:text-accent text-xs"
+        title="Spin up a Colab CPU runtime via GitHub Actions"
+      >
+        {waking ? <Loader2 className="h-3 w-3 animate-spin" /> : <Cloud className="h-3 w-3" />}
+        Wake Colab
       </button>
       {tip && (
         <span className="text-[11px] text-neutral-400 max-w-[280px] truncate" title={tip}>

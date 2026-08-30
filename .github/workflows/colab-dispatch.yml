@@ -1,0 +1,145 @@
+name: Colab on-demand worker
+
+# Manual wake for a Colab runtime, via Google's official CLI
+# (github.com/googlecolab/google-colab-cli). Mirrors
+# kaggle-dispatch.yml, with two deliberate differences.
+#
+# 1. DISPATCH ONLY — no cron. kaggle-dispatch runs every 5 min and asks
+#    /api/maintenance/needs-worker whether to wake. That probe is
+#    Kaggle-specific, and more to the point an automatic waker spends
+#    Colab quota on a schedule. This is a trigger you pull, not a
+#    daemon. Add a cron later once the quota behaviour is understood.
+#
+# 2. CPU BY DEFAULT. Nothing in the pipeline runs a local model any
+#    more — SDXL/Kokoro moved to APIs, and the worker's real job is
+#    ffmpeg plus HTTP calls. A CPU runtime is both sufficient and far
+#    more reliably available than a free-tier T4. The `gpu` input is
+#    kept, unused, for when that changes: pass T4/L4/A100 and the
+#    runtime and INSTANCE_TIER follow.
+#
+# Why this runs on a GitHub runner rather than on our own boxes: the
+# CLI needs Python >=3.12. The dashboard image is Node, and the Oracle
+# side-worker image is python:3.11-slim. The runner has 3.12 and can
+# hold the Google credential as a repo secret instead of leaving a
+# refresh token on the Oracle host.
+
+on:
+  workflow_dispatch:
+    inputs:
+      gpu:
+        description: "GPU variant (T4/L4/G4/H100/A100). Leave blank for a CPU runtime."
+        required: false
+        default: ""
+      session:
+        description: "Colab session name to create or reuse."
+        required: false
+        default: "yt-agent-worker"
+
+concurrency:
+  group: colab-dispatch
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # The CLI declares python_requires >=3.12.
+          python-version: "3.12"
+
+      - name: Install Colab CLI
+        run: pip install --quiet google-colab-cli
+
+      - name: Write Google credentials
+        env:
+          COLAB_ADC_JSON: ${{ secrets.COLAB_ADC_JSON }}
+        run: |
+          set -e
+          if [ -z "$COLAB_ADC_JSON" ]; then
+            echo "::error::COLAB_ADC_JSON repo secret is required."
+            echo "Produce it once with: colab sessions   (approve in a browser),"
+            echo "then paste the contents of ~/.config/gcloud/application_default_credentials.json"
+            exit 1
+          fi
+          # Written outside the workspace so no later step can archive
+          # it into an artifact by accident.
+          printf '%s' "$COLAB_ADC_JSON" > "$HOME/adc.json"
+          chmod 600 "$HOME/adc.json"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$HOME/adc.json" >> "$GITHUB_ENV"
+
+      - name: Reuse or create the session
+        id: session
+        env:
+          SESSION: ${{ inputs.session }}
+          GPU: ${{ inputs.gpu }}
+        run: |
+          set -e
+          # DOUBLE-BOOT GUARD, same lesson as the Kaggle death-spiral
+          # comment: creating a second runtime while the first is still
+          # coming up gives you two workers racing for the same queue,
+          # both billed against the same account quota. If a session by
+          # this name is already alive, reuse it.
+          if colab sessions 2>/dev/null | grep -qw "$SESSION"; then
+            echo "::notice::Session '$SESSION' already exists — reusing it."
+          else
+            if [ -n "$GPU" ]; then
+              echo "Creating GPU runtime ($GPU)."
+              colab new -s "$SESSION" --gpu "$GPU"
+            else
+              echo "Creating CPU runtime."
+              colab new -s "$SESSION"
+            fi
+          fi
+          if [ -n "$GPU" ]; then
+            echo "tier=gpu" >> "$GITHUB_OUTPUT"
+            echo "label=colab-gpu" >> "$GITHUB_OUTPUT"
+          else
+            echo "tier=cpu" >> "$GITHUB_OUTPUT"
+            echo "label=colab-cpu" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Launch the worker
+        env:
+          SESSION: ${{ inputs.session }}
+          # Bootstrap secrets. Everything else is pulled from PocketBase
+          # by the worker itself once it is up.
+          COOLIFY_BASE_URL:          ${{ vars.DASHBOARD_BASE_URL }}
+          PB_URL:                    ${{ secrets.PB_URL }}
+          POCKETBASE_ADMIN_EMAIL:    ${{ secrets.POCKETBASE_ADMIN_EMAIL }}
+          POCKETBASE_ADMIN_PASSWORD: ${{ secrets.POCKETBASE_ADMIN_PASSWORD }}
+          RENDER_TRIGGER_KEY:        ${{ secrets.RENDER_TRIGGER_KEY }}
+          STORAGE_PROVIDERS_ENC_KEY: ${{ secrets.STORAGE_PROVIDERS_ENC_KEY }}
+          INSTANCE_TIER:             ${{ steps.session.outputs.tier }}
+          INSTANCE_LABEL:            ${{ steps.session.outputs.label }}
+        run: |
+          set -e
+          # `colab exec` runs a local file on the VM but does not carry
+          # our environment across, so the secrets are prepended to the
+          # bootstrap as a literal prelude. Built with python (not a
+          # heredoc) so a value containing quotes or newlines cannot
+          # break out of the generated source.
+          python - <<'PY' > /tmp/colab_boot.py
+          import os, json
+          keys = [
+              "COOLIFY_BASE_URL", "PB_URL", "POCKETBASE_ADMIN_EMAIL",
+              "POCKETBASE_ADMIN_PASSWORD", "RENDER_TRIGGER_KEY",
+              "STORAGE_PROVIDERS_ENC_KEY", "INSTANCE_TIER", "INSTANCE_LABEL",
+          ]
+          print("import os")
+          for k in keys:
+              print(f"os.environ[{k!r}] = {os.environ.get(k, '')!r}")
+          print(open("colab/bootstrap.py").read())
+          PY
+          colab exec -s "$SESSION" -f /tmp/colab_boot.py
+          rm -f /tmp/colab_boot.py
+          echo "::notice::Bootstrap sent to '$SESSION'. The worker appears in the Monitor when it heartbeats — a green workflow only means the VM accepted it."
+
+      - name: Always drop the credential
+        if: always()
+        run: rm -f "$HOME/adc.json" /tmp/colab_boot.py

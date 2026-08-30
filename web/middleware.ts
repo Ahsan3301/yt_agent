@@ -59,6 +59,10 @@ const API_KEY_ROUTES: string[] = [
   "/api/jobs/claim",
   "/api/maintenance/",
   "/api/backends/wake-kaggle",
+  // Twin of wake-kaggle. Both do their own X-API-Key check AND an
+  // operator-role check internally; without the bypass the middleware
+  // would 401 a server-to-server caller before either runs.
+  "/api/backends/wake-colab",
 ];
 
 export async function middleware(req: NextRequest) {
