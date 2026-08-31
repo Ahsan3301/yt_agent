@@ -40,6 +40,13 @@ async function _validSession(cookie: string, secret: string): Promise<boolean> {
   } catch { return false; }
 }
 
+// Accelerators the dispatch will forward to `kaggle kernels push`.
+// Empty/omitted means a CPU kernel, which is the default and the
+// normal case — no local models run on Kaggle any more, so a GPU
+// session would spend the scarce 30 GPU-hr/week budget on an
+// accelerator nothing touches.
+const ALLOWED_ACCELERATORS = new Set(["NvidiaTeslaT4", "NvidiaTeslaP100"]);
+
 export async function POST(_req: NextRequest) {
   // Auth (2026-07-17 audit): previously NO auth at all — any
   // unauthenticated POST fired a workflow_dispatch and burned Kaggle
@@ -74,6 +81,22 @@ export async function POST(_req: NextRequest) {
         { status: 403 },
       );
     }
+  }
+
+  let accelerator = "";
+  try {
+    const body = (await _req.json()) as { accelerator?: unknown };
+    if (typeof body?.accelerator === "string" && body.accelerator.trim()) {
+      accelerator = body.accelerator.trim();
+    }
+  } catch {
+    // No body is the normal case, and means a CPU kernel.
+  }
+  if (accelerator && !ALLOWED_ACCELERATORS.has(accelerator)) {
+    return NextResponse.json(
+      { error: `unsupported accelerator '${accelerator}'`, supported: [...ALLOWED_ACCELERATORS] },
+      { status: 400 },
+    );
   }
 
   const repoFullName = process.env.GITHUB_REPO_FULL_NAME || "Ahsan3301/yt_agent";
@@ -120,11 +143,12 @@ export async function POST(_req: NextRequest) {
         "X-GitHub-Api-Version": "2022-11-28",
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ ref: "main" }),
+      body: JSON.stringify({ ref: "main", inputs: { accelerator } }),
     });
     if (r.status === 204) {
       return NextResponse.json({
         ok: true,
+        runtime: accelerator ? `GPU (${accelerator})` : "CPU (no GPU quota spent)",
         message: "Kaggle worker dispatch fired. Notebook should boot within ~90 sec; the Monitor card appears when it heartbeats.",
         watch_url: `https://www.kaggle.com/code/${process.env.KAGGLE_USER || "ahsanriaz1337"}/yt-agent-worker`,
         workflow_url: `https://github.com/${owner}/${repo}/actions/workflows/kaggle-dispatch.yml`,

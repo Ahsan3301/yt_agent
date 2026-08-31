@@ -1,10 +1,15 @@
 name: Kaggle on-demand worker
 
-# Wake-on-demand fallback. Every 10 minutes, ask Vercel "is there work
-# pending that no GPU worker is going to pick up?" If yes, push the
-# Kaggle worker notebook so Kaggle spins up a free T4 / P100. The
-# notebook self-terminates after 10 min of idle so we don't waste the
-# 30 GPU hr/week budget.
+# Wake-on-demand fallback. Every 5 minutes, ask the dashboard "is there
+# work pending that no worker is going to pick up?" If yes, push the
+# Kaggle worker notebook so Kaggle spins up a session. The notebook
+# self-terminates after ~25 min of idle.
+#
+# CPU by default since 2026-08-20 — see the long note on the push step.
+# Short version: no local models run on Kaggle any more, so a GPU
+# session spends the scarce 30 GPU-hr/week budget on an accelerator
+# nothing uses. CPU sessions draw on a separate, far larger quota. The
+# GPU path is unchanged and one dispatch input away.
 
 on:
   schedule:
@@ -13,7 +18,14 @@ on:
     # queued with no live GPU worker, so the user usually doesn't wait
     # this long — see web/app/api/jobs/route.ts:_maybeWakeKaggle.
     - cron: "*/5 * * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      accelerator:
+        description: >-
+          Accelerator for this run. Blank = CPU kernel (the default).
+          Pass NvidiaTeslaT4 to get a GPU back.
+        required: false
+        default: ""
 
 concurrency:
   group: kaggle-dispatch
@@ -118,9 +130,42 @@ jobs:
               echo "kernel status $STATUS — safe to push a fresh version."
               ;;
           esac
-          # --accelerator "NvidiaTeslaT4" is CRITICAL. Without it the CLI
-          # ignores the metadata.json accelerator field and Kaggle defaults
-          # to P100. T4 x2 gives sm_7.5 (all modern torch kernels available)
-          # + 2x16 GB VRAM.
-          kaggle kernels push -p kaggle/ --accelerator "NvidiaTeslaT4"
-          echo "::notice::Kaggle worker dispatched on T4 x2. Watch progress at https://www.kaggle.com/$KAGGLE_USERNAME/code"
+          # CPU BY DEFAULT (2026-08-20). Nothing in the pipeline runs a
+          # local model on Kaggle any more — image generation, TTS and
+          # the klein-4B stack are all API-backed, so the kernel's real
+          # job is ffmpeg plus outbound HTTP. Booting a T4 for that
+          # spends the 30 GPU-hr/week budget on an accelerator nothing
+          # touches, and that budget is the binding constraint: it ran
+          # to ~18 minutes remaining, while CPU sessions draw on a
+          # separate and far larger quota.
+          #
+          # `--accelerator` OVERRIDES the metadata boolean (per the
+          # Kaggle API docs for the acc parameter), so the two must
+          # agree: pass the flag only when a GPU is actually wanted, and
+          # set enable_gpu to match either way.
+          #
+          # The GPU path is kept intact, not deleted — pass
+          # accelerator=NvidiaTeslaT4 on a manual dispatch to get the
+          # old behaviour back verbatim. That value stays CRITICAL when
+          # used: without it Kaggle defaults to P100 (sm_6.0), which
+          # modern PyTorch has no kernels for, and the notebook's
+          # gpu-guard then forces CPU anyway.
+          # Exported, not just assigned — the heredoc below reads it from
+          # the environment, and a bare shell variable would arrive as
+          # None there, quietly forcing CPU even on a GPU dispatch.
+          export ACC="${{ inputs.accelerator }}"
+          python3 - <<'PY'
+          import json, os
+          p = 'kaggle/kernel-metadata.json'
+          m = json.load(open(p))
+          m['enable_gpu'] = 'true' if os.environ.get('ACC') else 'false'
+          json.dump(m, open(p, 'w'), indent=2)
+          print('enable_gpu =', m['enable_gpu'])
+          PY
+          if [ -n "$ACC" ]; then
+            kaggle kernels push -p kaggle/ --accelerator "$ACC"
+            echo "::notice::Kaggle worker dispatched on $ACC. Watch progress at https://www.kaggle.com/$KAGGLE_USERNAME/code"
+          else
+            kaggle kernels push -p kaggle/
+            echo "::notice::Kaggle worker dispatched on CPU (no GPU quota spent). Watch progress at https://www.kaggle.com/$KAGGLE_USERNAME/code"
+          fi
