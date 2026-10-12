@@ -294,8 +294,75 @@ def _voice_config(channel_type, language=None, voice_override=None):
 EDGE_TTS_TIMEOUT = 90  # seconds per attempt — generous; normal runs take 5-15s
 
 
+# ── edge-tts host failover ───────────────────────────────────
+# Microsoft is moving Edge Read Aloud from speech.platform.bing.com to
+# api.msedgeservices.com, region by region. Once a region is moved, the
+# legacy WebSocket refuses the handshake with HTTP 403 — every voice,
+# every time — while the voice LIST on the legacy host still returns
+# 200, so nothing looks wrong until synthesis. From Oracle it began on
+# 2026-10-12 and killed every narrated render (the voiceover step
+# aborts the pipeline before footage is even fetched).
+#
+# Upstream: rany2/edge-tts#490, still open with no release as of
+# 2026-10-12; 7.2.8 is current and affected. The workaround confirmed
+# there, and re-verified from Oracle the same day: send the SAME
+# request (same client token, same legacy Sec-MS-GEC) to the new host.
+# Output is identical — mp3, 24 kHz, mono.
+#
+# New host first, legacy second, and remember whichever answered, so
+# a region that has not migrated yet (or a reversal) still works.
+# edge-tts reads communicate.WSS_URL at connect time, so swapping the
+# module global is enough — no fork of the library. Once an edge-tts
+# release ships the real fix, this is harmless: the first host works.
+_EDGE_HOST_PREF: list = []
+
+
+def _edge_hosts():
+    import edge_tts.communicate as _comm
+    from edge_tts.constants import TRUSTED_CLIENT_TOKEN, WSS_URL as _LEGACY
+    new = ("wss://api.msedgeservices.com/tts/cognitiveservices/websocket/v1"
+           f"?Ocp-Apim-Subscription-Key={TRUSTED_CLIENT_TOKEN}")
+    hosts = [new, _LEGACY]
+    if _EDGE_HOST_PREF and _EDGE_HOST_PREF[0] in hosts:
+        hosts.remove(_EDGE_HOST_PREF[0])
+        hosts.insert(0, _EDGE_HOST_PREF[0])
+    return _comm, hosts
+
+
+def _is_handshake_403(e) -> bool:
+    return getattr(e, "status", None) == 403
+
+
 async def _edge_tts_async(text, voice, output_path, rate="+0%", pitch="+0Hz"):
-    """Generate audio using edge-tts (async). Supports rate/pitch prosody."""
+    """Generate audio using edge-tts, failing over between Microsoft's
+    old and new speech hosts on a handshake 403 (see _edge_hosts)."""
+    _comm, hosts = _edge_hosts()
+    last = None
+    for i, url in enumerate(hosts):
+        _comm.WSS_URL = url
+        try:
+            await _edge_tts_once(text, voice, output_path, rate=rate, pitch=pitch)
+            if not _EDGE_HOST_PREF or _EDGE_HOST_PREF[0] != url:
+                _EDGE_HOST_PREF[:] = [url]
+                log.info(f"edge-tts: using host {url.split('/')[2]}")
+            return
+        except Exception as e:
+            if not _is_handshake_403(e) or i == len(hosts) - 1:
+                raise
+            last = e
+            log.warning(f"edge-tts: {url.split('/')[2]} refused the handshake (403) — "
+                        f"trying {hosts[i + 1].split('/')[2]}")
+    if last:
+        raise last
+
+
+async def _edge_tts_once(text, voice, output_path, rate="+0%", pitch="+0Hz"):
+    """One synthesis attempt against whichever host is in WSS_URL.
+
+    Starts from scratch each call — the output file is opened "wb" and
+    the word-timing list is local — so a failed first host cannot leave
+    a half-written file or stale timings behind for the second.
+    """
     import edge_tts
     # Capture the audio AND the WordBoundary events edge-tts emits
     # during synthesis. WordBoundary carries millisecond-accurate
