@@ -526,6 +526,12 @@ def plan_shots(narration, num_shots, channel: str = "horror",
                 _named = ", ".join(m["name"] for m in cast)
                 _n = sum(1 for sh in good if sh.get("cast_seed"))
                 log.info(f"Storyboard: cast={_named} — {_n}/{len(good)} shots pinned to a fixed likeness")
+            # Logged because scene continuity hangs entirely on these
+            # labels matching, and without this line a missing or
+            # inconsistent label could only be inferred from the frames.
+            log.info("Storyboard: locations = " + " | ".join(
+                f"{i + 1}:{sh.get('location') or '-'}" + ("*" if sh.get("cast_names") else "")
+                for i, sh in enumerate(good)) + "   (* = character pinned)")
             return good
 
         # Otherwise keep the best partial in case all attempts come up short.

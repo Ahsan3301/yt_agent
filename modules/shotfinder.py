@@ -10,6 +10,7 @@ match. Failed shots are skipped (caller falls through gracefully).
 """
 import os
 import time
+import re
 import threading as _threading
 import logging
 import base64
@@ -1267,6 +1268,44 @@ def _continuity_reference(shot: dict, shot_idx) -> tuple:
     return ref, prefix
 
 
+# A continuity edit gets this many tries before the shot falls back to
+# a fresh frame. One was not enough: on a live render the edit kept the
+# set perfectly (same table, lamp, envelopes) but redrew the character's
+# head at the bottom of the frame, and discarding it threw away exactly
+# the continuity it had achieved — the fresh frame shared nothing with
+# the shot before. Single-person edits measured 5/5 clean in isolation,
+# so a second try is cheap and usually enough.
+_CONTINUITY_EDIT_TRIES = 2
+# How many fresh frames a character-less shot may reject for containing
+# an uninvited person before it accepts one anyway (the shot must never
+# be dropped — that pushes it to a different-looking provider).
+_EMPTY_FRAME_REJECTS = 2
+
+# Words that mean a shot DOES want a person in it, so an unnamed figure
+# is intended rather than invented ("a crowd gathers", "hands press the
+# stamp"). Pronouns are deliberately absent: "his old stamp" is an
+# object shot that merely refers to someone.
+_PEOPLE_WORDS = re.compile(
+    r"\b(person|people|man|men|woman|women|boy|boys|girl|girls|child|children|kid|kids|"
+    r"baby|crowd|crowds|villager|villagers|customer|customers|family|couple|figure|figures|"
+    r"someone|stranger|strangers|silhouette|hand|hands|finger|fingers|face|faces)\b", re.I)
+
+
+def _expects_empty_frame(shot: dict) -> bool:
+    """True when a shot has no character and its text names no people.
+
+    Such a shot is about a place or an object, and a person in its frame
+    was invented by the image model. Measured 2026-10-12: "Interior of a
+    cozy village post office ..." came back with an unexplained boy at
+    the counter — in no script and no cast, and easy to read as the
+    protagonist as a child.
+    """
+    if shot.get("cast_names") or []:
+        return False
+    blob = " ".join(str(shot.get(k) or "") for k in ("ai_prompt", "visual_description"))
+    return bool(blob.strip()) and not _PEOPLE_WORDS.search(blob)
+
+
 _FIGURE_Q = ("Look at this image. Is there ANY person, animal, creature or character in it "
              "— including a partial body, a face, or a pair of hands? Answer with exactly "
              "one word: YES or NO.")
@@ -1505,6 +1544,11 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror",
             _cont_ref, _cont_prefix = _continuity_reference(shot, shot_idx)
         except Exception as _ce:
             log.info(f"continuity: lookup failed ({_ce}) — generating without it")
+    _cont_tries = _CONTINUITY_EDIT_TRIES if _cont_ref else 0
+    # Character-less shot about a place or object: reject frames where
+    # the model invented a person (see _expects_empty_frame).
+    _empty_frame = _expects_empty_frame(shot)
+    _empty_rejects = 0
 
     visual = shot.get("visual_description") or shot.get("search_query") or ""
     query = shot.get("search_query") or ""
@@ -1789,6 +1833,7 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror",
         log.info(f"  [ai-{slot+1}] {provider_name}: trying ({ai_attempts} attempts)")
         for trial in range(ai_attempts):
             _rs.check_cancel()
+            _last_trial = trial == ai_attempts - 1
             # DIRECTED NICHES KEEP THEIR OWN PROMPT.
             #
             # craft_image_prompt rewrites the shot from scratch with an
@@ -1868,23 +1913,31 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror",
             if provider_name == "agnes" and _use_ref:
                 path, seed = fn(prompt_to_use, output_dir, trial,
                                 negative_prompt, ref_image_path=_cast_ref)
-            elif provider_name == "agnes" and _cont_ref:
-                # One continuity attempt per shot: edit the previous
-                # shot's still, then verify nobody was left in — or
-                # invented. A dirty result is discarded for a fresh
-                # generation, i.e. exactly the old behaviour.
-                _ref_used, _cont_ref = _cont_ref, ""
+            elif provider_name == "agnes" and _cont_tries > 0:
+                # Continuity edit of the previous shot's still, verified:
+                # a frame with someone left in it (or invented) is
+                # discarded and the edit is retried, then the shot falls
+                # back to a fresh frame — exactly the old behaviour. The
+                # last trial accepts whatever it gets, so the check can
+                # never cost the shot outright.
+                _cont_tries -= 1
                 path, seed = fn(_cont_prefix + prompt_to_use, output_dir, trial,
-                                negative_prompt, ref_image_path=_ref_used)
-                if path and _has_figure(path):
-                    log.info(f"continuity: shot {(shot_idx or 0) + 1} edit has a figure "
-                             f"in frame — discarded, generating fresh")
-                    path, seed = fn(prompt_to_use, output_dir, trial, negative_prompt)
-                elif path:
+                                negative_prompt, ref_image_path=_cont_ref)
+                if path and not _last_trial and _has_figure(path):
+                    log.info(f"continuity: shot {(shot_idx or 0) + 1} edit left a figure in "
+                             f"frame — {'retrying the edit' if _cont_tries else 'falling back to a fresh frame'}")
+                    continue
+                if path:
                     log.info(f"continuity: shot {(shot_idx or 0) + 1} carries the setting "
                              f"of shot {shot_idx} ({shot.get('location')!r})")
             else:
                 path, seed = fn(prompt_to_use, output_dir, trial, negative_prompt)
+                if (path and _empty_frame and not _last_trial
+                        and _empty_rejects < _EMPTY_FRAME_REJECTS and _has_figure(path)):
+                    _empty_rejects += 1
+                    log.info(f"shot {(shot_idx or 0) + 1}: frame contains a person the shot "
+                             f"does not call for — regenerating ({_empty_rejects}/{_EMPTY_FRAME_REJECTS})")
+                    continue
             if not path:
                 continue
             # First image of a character becomes its anchor. setdefault
