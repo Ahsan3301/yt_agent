@@ -1203,13 +1203,36 @@ def _directed_prompt(channel: str) -> bool:
 # face. Anchoring these to a character reference overrides the framing —
 # image-to-image copies the reference's pose — and buys nothing, because
 # at this scale the identity is not legible anyway.
-_FRAMING_CUES = (
+# Two kinds of framing cue, and they must be treated differently.
+#
+# ILLEGIBLE: the character cannot be recognised at this framing anyway —
+# a speck in a wide, a silhouette, just a pair of hands. Identity lock
+# buys nothing here and image-to-image would drag the shot back to the
+# reference's medium portrait, so the reference is always skipped.
+_ILLEGIBLE_CUES = (
     "extreme wide", "very wide", "wide establishing", "aerial", "bird's eye",
     "birds eye", "overhead", "top-down", "top down", "from high above",
-    "macro", "extreme close", "close-up of", "close up of", "only the hands",
-    "hands only", "silhouette", "backlit", "no face", "no body",
+    "only the hands", "hands only", "silhouette", "no face", "no body",
     "tiny in frame", "small in frame", "percent of the frame",
 )
+# CLOSE: a close-up or macro that is ABOUT an object — "a close-up of
+# the rag". Skipping the reference is right only if no character is in
+# the shot. If the storyboard has pinned one (cast_names), it has also
+# appended that character's look to the prompt, so the image model WILL
+# draw them — and without the reference it draws a stranger.
+#
+# Measured 2026-10-12 on a cozy render: shot 4 opened "A close-up of a
+# smouldering oil-soaked rag ..." with the child pinned. The cue matched,
+# the reference was skipped, and the model put the child front and
+# centre anyway — a third different face in four shots, drifted toward
+# photoreal because the reference is also what carries the animated
+# style. "backlit" belongs here too: it is usually a lighting adjective
+# on a perfectly visible character, not a silhouette.
+_CLOSE_CUES = (
+    "macro", "extreme close", "close-up of", "close up of", "backlit",
+)
+# Kept for anything that imports the combined list.
+_FRAMING_CUES = _ILLEGIBLE_CUES + _CLOSE_CUES
 
 
 def _framing_over_identity(shot: dict) -> bool:
@@ -1224,7 +1247,13 @@ def _framing_over_identity(shot: dict) -> bool:
                         ("camera", "visual_description", "ai_prompt")).lower()
     except Exception:
         return False
-    return any(cue in blob for cue in _FRAMING_CUES)
+    if any(cue in blob for cue in _ILLEGIBLE_CUES):
+        return True
+    if any(cue in blob for cue in _CLOSE_CUES):
+        # A close shot with a character pinned to it shows that
+        # character, so identity must win.
+        return not (shot.get("cast_names") or [])
+    return False
 
 
 def _motion_hint(channel: str) -> str:
@@ -1649,14 +1678,14 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror",
                     language=language,
                 )
                 prompt_to_use = crafted or ai_prompt
-            # Log what is ACTUALLY SENT. This printed
-            # `(crafted or ai_prompt)` — the prompt BEFORE the style
-            # tail is applied — which made a style-injection bug
-            # undiagnosable from the log: the render came back
-            # photorealistic and the log showed a prompt that could
-            # not explain it either way.
-            log.info(f"    {provider_name} prompt (try {trial+1}) [{len(prompt_to_use)} ch]: "
-                     f"{prompt_to_use[:110]}"
+            # Log what is ACTUALLY SENT. This printed
+            # `(crafted or ai_prompt)` — the prompt BEFORE the style
+            # tail is applied — which made a style-injection bug
+            # undiagnosable from the log: the render came back
+            # photorealistic and the log showed a prompt that could
+            # not explain it either way.
+            log.info(f"    {provider_name} prompt (try {trial+1}) [{len(prompt_to_use)} ch]: "
+                     f"{prompt_to_use[:110]}"
                      f"{' ... TAIL: ' + prompt_to_use[-70:] if len(prompt_to_use) > 180 else ''}")
             # Character anchor: only Agnes supports image-to-image, so
             # only it takes the reference. Everything else keeps the
