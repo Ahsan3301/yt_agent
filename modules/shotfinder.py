@@ -1148,6 +1148,157 @@ def reset_cast_anchors() -> None:
         _CAST_ANCHORS.clear()
 
 
+# ── Scene continuity for shots with no character in them ──────
+#
+# The cast reference keeps FACES stable, but a shot with nobody pinned
+# to it got no reference at all and re-imagined its setting from text.
+# Measured 2026-10-12: shot 1 put a CHARRED roll on a GREY porch with
+# house number 2003; shot 2 — "Single charred bread roll on the porch
+# step" — drew a GOLDEN roll on a different porch with a teal door. The
+# prompt said "charred"; the model ignored it. Text alone does not hold
+# props or places.
+#
+# Fix: when a character-less shot is in the SAME location as the shot
+# before it, generate it as an EDIT of that shot's still. Measured on
+# the live model before building this, because a reference image copies
+# composition and the obvious version failed:
+#
+#   "same scene as the reference" ........ redrew the character, 0/1
+#   "remove every person" ................ kept her, or swapped the two
+#                                          kitchen characters for an
+#                                          invented cartoon animal, 0/2
+#   "remove the elderly woman", 1 person . clean, same porch, 3/3
+#   "remove the boy and the elderly woman" swapped them for an animal, 0/2
+#
+# So it is unreliable on its own, and every edit is VERIFIED: a vision
+# check asks whether any person, animal or character is in frame (7/7
+# correct on those samples, including the invented creatures). A dirty
+# edit is discarded and the shot is generated exactly as it was before
+# this existed — the worst case is today's behaviour, never a stranger
+# in the frame.
+#
+# Shots run in parallel, so a shot may have to wait for its
+# predecessor's still. Submission is in index order, so the predecessor
+# is always already running or finished — the wait cannot deadlock —
+# and every shot marks itself done when its fetch ends however it ends,
+# so nobody waits on a shot that never produced a still.
+_SHOT_STILLS: dict[int, str] = {}
+_SHOT_DONE: dict[int, "_threading.Event"] = {}
+_RENDER_SHOTS: list = []
+_SHOT_STILLS_LOCK = _threading.Lock()
+_CONTINUITY_WAIT_SEC = 240
+
+
+def reset_shot_stills(shots) -> None:
+    with _SHOT_STILLS_LOCK:
+        _SHOT_STILLS.clear()
+        _SHOT_DONE.clear()
+        _RENDER_SHOTS[:] = list(shots or [])
+        for i in range(len(_RENDER_SHOTS)):
+            _SHOT_DONE[i] = _threading.Event()
+
+
+def _shot_still_put(idx, src) -> None:
+    """Record shot `idx`'s still (first one wins) and release waiters."""
+    if idx is None:
+        return
+    path = (src or {}).get("path") if isinstance(src, dict) else ""
+    if path and (src or {}).get("type") == "image" and os.path.exists(path):
+        with _SHOT_STILLS_LOCK:
+            _SHOT_STILLS.setdefault(idx, path)
+    _shot_done(idx)
+
+
+def _shot_done(idx) -> None:
+    ev = _SHOT_DONE.get(idx)
+    if ev is not None:
+        ev.set()
+
+
+def _short_look(look: str) -> str:
+    """'an elderly woman with a white bun, cream cardigan, ...' ->
+    'the elderly woman'.
+
+    The definite article and the bare noun are what work. Measured:
+    "remove the elderly woman" cleared the frame 3/3, while "remove an
+    elderly woman with a white bun" left her in it — "an" does not point
+    at the person in the picture, and a costume description only gives
+    the model more to redraw.
+    """
+    head = str(look or "").split(",")[0].split(";")[0].strip().lower()
+    for cut in (" with ", " wearing ", " in a ", " in an ", " in ", " who "):
+        if cut in head:
+            head = head.split(cut)[0]
+    words = head.split()
+    if words and words[0] in ("a", "an", "the"):
+        words = words[1:]
+    return ("the " + " ".join(words[:5])) if words else ""
+
+
+def _continuity_reference(shot: dict, shot_idx) -> tuple:
+    """(reference_path, edit_prefix) for a character-less shot that
+    continues the previous shot's location, else ("", "")."""
+    if shot_idx is None or shot_idx < 1 or (shot.get("cast_names") or []):
+        return "", ""
+    loc = str(shot.get("location") or "").strip().lower()
+    with _SHOT_STILLS_LOCK:
+        prev = _RENDER_SHOTS[shot_idx - 1] if shot_idx - 1 < len(_RENDER_SHOTS) else None
+    if not loc or not isinstance(prev, dict):
+        return "", ""
+    if str(prev.get("location") or "").strip().lower() != loc:
+        return "", ""   # a scene change — inheriting the old place would be wrong
+    ev = _SHOT_DONE.get(shot_idx - 1)
+    if ev is not None and not ev.wait(_CONTINUITY_WAIT_SEC):
+        log.info(f"continuity: shot {shot_idx + 1} gave up waiting for shot {shot_idx}'s still")
+        return "", ""
+    with _SHOT_STILLS_LOCK:
+        ref = _SHOT_STILLS.get(shot_idx - 1, "")
+    if not ref or not os.path.exists(ref):
+        return "", ""
+    looks = prev.get("cast_looks") or {}
+    who = [_short_look(looks.get(n, "")) or n for n in (prev.get("cast_names") or [])]
+    remove = f"remove {' and '.join(w for w in who if w)} entirely, then " if who else ""
+    # Wording kept to the form that measured clean ("Edit this image:
+    # remove X entirely, then move the camera in close on ..."). A
+    # vaguer "reframe to show the shot below" left the person in frame.
+    prefix = (f"Edit this image: {remove}move the camera in close on the subject "
+              f"described below so it fills the frame. Keep the same location, "
+              f"objects, colours and light. Subject: ")
+    return ref, prefix
+
+
+_FIGURE_Q = ("Look at this image. Is there ANY person, animal, creature or character in it "
+             "— including a partial body, a face, or a pair of hands? Answer with exactly "
+             "one word: YES or NO.")
+
+
+def _has_figure(path: str) -> bool:
+    """True if a person/animal/character is in frame. Fails CLOSED: any
+    error counts as a figure, so an unverifiable edit is discarded."""
+    try:
+        import io as _io
+        from PIL import Image as _Img
+        im = _Img.open(path).convert("RGB")
+        im.thumbnail((768, 768))
+        buf = _io.BytesIO()
+        im.save(buf, "JPEG", quality=85)
+        uri = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+        r = nim._agnes_chat_post(f"{nim._AGNES_BASE}/chat/completions", {
+            "model": nim._AGNES_VISION_MODEL, "max_tokens": 1024, "temperature": 0.0,
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": _FIGURE_Q},
+                {"type": "image_url", "image_url": {"url": uri}}]}]}, 60)
+        if r.status_code != 200:
+            return True
+        ans = (r.json()["choices"][0]["message"].get("content") or "").strip().upper()
+        # Only an unambiguous NO counts as clean; YES or anything
+        # unparseable counts as a figure (fail closed).
+        return not ans.startswith("NO")
+    except Exception as e:
+        log.info(f"continuity: figure check failed ({e}) — treating as dirty")
+        return True
+
+
 def _cast_anchor_get(names) -> str:
     with _CAST_ANCHOR_LOCK:
         for n in (names or []):
@@ -1331,7 +1482,7 @@ def _score_local_image(path, visual, premise):
 # ── Per-shot finder ──────────────────────────────────────────
 
 def find_image_for_shot(shot, output_dir, used_ids, channel="horror",
-                        tone_override: str = "", language: str = ""):
+                        tone_override: str = "", language: str = "", shot_idx=None):
     # Cancel check at entry — a user clicking Cancel between shots
     # shouldn't have to wait for the current shot to fully resolve
     # before the pipeline unwinds.
@@ -1346,6 +1497,14 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror",
     # Anchor for any character already drawn in an earlier shot. Empty
     # on the first appearance, which is what makes that shot the anchor.
     _cast_ref = _cast_anchor_get(shot.get("cast_names") or [])
+    # Scene continuity for a character-less shot (see _continuity_reference).
+    # Resolved once, up front: it may wait on the previous shot's still.
+    _cont_ref, _cont_prefix = ("", "")
+    if not _cast_ref:
+        try:
+            _cont_ref, _cont_prefix = _continuity_reference(shot, shot_idx)
+        except Exception as _ce:
+            log.info(f"continuity: lookup failed ({_ce}) — generating without it")
 
     visual = shot.get("visual_description") or shot.get("search_query") or ""
     query = shot.get("search_query") or ""
@@ -1709,6 +1868,21 @@ def find_image_for_shot(shot, output_dir, used_ids, channel="horror",
             if provider_name == "agnes" and _use_ref:
                 path, seed = fn(prompt_to_use, output_dir, trial,
                                 negative_prompt, ref_image_path=_cast_ref)
+            elif provider_name == "agnes" and _cont_ref:
+                # One continuity attempt per shot: edit the previous
+                # shot's still, then verify nobody was left in — or
+                # invented. A dirty result is discarded for a fresh
+                # generation, i.e. exactly the old behaviour.
+                _ref_used, _cont_ref = _cont_ref, ""
+                path, seed = fn(_cont_prefix + prompt_to_use, output_dir, trial,
+                                negative_prompt, ref_image_path=_ref_used)
+                if path and _has_figure(path):
+                    log.info(f"continuity: shot {(shot_idx or 0) + 1} edit has a figure "
+                             f"in frame — discarded, generating fresh")
+                    path, seed = fn(prompt_to_use, output_dir, trial, negative_prompt)
+                elif path:
+                    log.info(f"continuity: shot {(shot_idx or 0) + 1} carries the setting "
+                             f"of shot {shot_idx} ({shot.get('location')!r})")
             else:
                 path, seed = fn(prompt_to_use, output_dir, trial, negative_prompt)
             if not path:
@@ -1881,6 +2055,7 @@ def fetch_shots(shots, output_dir, channel="horror", preset_sources=None,
     # starts, or a worker that stays up would reference the last
     # video's protagonist in this video's shots.
     reset_cast_anchors()
+    reset_shot_stills(shots)
     reset_degraded()
     used_ids = set(F._load_used_clips())
     presets = list(preset_sources or [])
@@ -2008,7 +2183,9 @@ def fetch_shots(shots, output_dir, channel="horror", preset_sources=None,
                             _isnap = set(used_ids)
                         _still = find_image_for_shot(
                             shot, output_dir, _isnap, channel=channel,
-                            tone_override=tone_override, language=language)
+                            tone_override=tone_override, language=language,
+                            shot_idx=idx)
+                        _shot_still_put(idx, _still)
                         with used_lock:
                             used_ids.update(_isnap)
                         _init = ""
@@ -2135,7 +2312,9 @@ def fetch_shots(shots, output_dir, channel="horror", preset_sources=None,
                 with used_lock:
                     snap = set(used_ids)
                 src = find_image_for_shot(shot, output_dir, snap, channel=channel,
-                                          tone_override=tone_override, language=language)
+                                          tone_override=tone_override, language=language,
+                                          shot_idx=idx)
+                _shot_still_put(idx, src)
                 with used_lock:
                     used_ids.update(snap)
         if src:
@@ -2209,8 +2388,17 @@ def fetch_shots(shots, output_dir, channel="horror", preset_sources=None,
     results: list[dict | None] = [None] * len(shots)
     done_count = 0
     with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="shotfetch") as ex:
+        def _fetch_tracked(i, s, p):
+            # Release anyone waiting on this shot's still however the
+            # fetch ends — preset image, stock clip, failure or cancel —
+            # so a continuity wait never runs to its timeout for nothing.
+            try:
+                return _fetch_one(i, s, p)
+            finally:
+                _shot_done(i)
+
         futures = [
-            ex.submit(_fetch_one, i, s, preset_by_idx.get(i))
+            ex.submit(_fetch_tracked, i, s, preset_by_idx.get(i))
             for i, s in enumerate(shots)
         ]
         for fut in as_completed(futures):

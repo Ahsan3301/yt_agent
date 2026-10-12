@@ -127,6 +127,13 @@ shows the viewer nothing to stay for, while "departure board panels
 flipping, one row resolving to a name" shows them the wrong thing
 itself. Establish the place later, or not at all.
 
+Give every shot a `location`: a short label for the place it happens,
+such as "the front porch" or "the kitchen". Use the EXACT same label,
+word for word, for every shot in the same place, and a new label only
+when the story genuinely moves somewhere else. The images are kept
+consistent shot to shot by matching these labels, so two names for
+one place breaks that, and one name for two places is worse.
+
 Respond with ONLY a JSON object in this shape:
 {{
   "story_period": "...",
@@ -137,6 +144,7 @@ Respond with ONLY a JSON object in this shape:
     {{
       "narration_excerpt": "...",
       "period": "...",
+      "location": "...",
       "visual_description": "...",
       "search_query": "...",
       "ai_prompt": "..."
@@ -476,6 +484,11 @@ def plan_shots(narration, num_shots, channel: str = "horror",
             # but always fills story_period when we ask.
             if isinstance(sh, dict) and not str(sh.get("period") or "").strip() and story_period:
                 sh["period"] = story_period
+            # Normalise the location label so "The Porch" and "the porch"
+            # match — shotfinder compares them to decide whether a
+            # character-less shot inherits the previous shot's setting.
+            if isinstance(sh, dict):
+                sh["location"] = " ".join(str(sh.get("location") or "").lower().split())
             # Substitute each named cast member's fixed description into
             # the prompts. The model refers to them by name ("Marcus
             # opens the door"); the image model has no idea who Marcus
@@ -496,6 +509,10 @@ def plan_shots(narration, num_shots, channel: str = "horror",
                     sh["ai_prompt"] = f"{_ap}. Character reference — {_looks}"[:1500]
                     sh["cast_seed"] = _stable_seed(_present[0]["look"])
                     sh["cast_names"] = [m["name"] for m in _present]
+                    # The NEXT shot may need to remove these people from
+                    # this shot's frame (scene continuity), and the image
+                    # model knows them by appearance, not by name.
+                    sh["cast_looks"] = {m["name"]: m["look"] for m in _present}
             good.append(sh)
         dropped = len(raw_shots) - len(good)
         if dropped:
