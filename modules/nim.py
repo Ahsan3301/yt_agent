@@ -399,6 +399,69 @@ _AGNES_DEFAULT_MODEL = "agnes-2.5-flash"
 _AGNES_BASE = os.getenv("AGNES_BASE_URL", "https://apihub.agnes-ai.com/v1").rstrip("/")
 
 
+# ── Agnes text RPM limiter ───────────────────────────────────
+# Agnes halved text-model RPM on 2026-09-23: Enterprise 40 -> 20,
+# Free 20 -> 10. Our key is in the enterprise group (its errors name
+# "group enterprise"), so 20/min covers every /chat/completions call:
+# scripts, beat sheets, prompt crafting AND the vision judge, which
+# scores several frames per clip and is the burstiest caller.
+#
+# Without pacing, a 429 here raises, counts as a failure, and three in
+# a row trip the outage breaker below — sending EVERY LLM call to NIM
+# for three minutes over what is only a pacing problem. Pace instead.
+#
+# 18 rather than 20 leaves headroom for clock skew and for the other
+# Agnes callers in this process. The limit is per KEY, not per worker:
+# if two workers render at once on the same key, set AGNES_TEXT_RPM to
+# roughly 20 / workers on each, or they will 429 each other.
+_AGNES_TEXT_RPM = int(os.getenv("AGNES_TEXT_RPM", "18") or 18)
+_agnes_text_calls: list = []
+_agnes_text_lock = threading.Lock()
+
+
+def _agnes_text_gate() -> None:
+    """Block until another Agnes chat call fits under the RPM cap."""
+    if _AGNES_TEXT_RPM <= 0:
+        return
+    while True:
+        with _agnes_text_lock:
+            now = time.time()
+            while _agnes_text_calls and now - _agnes_text_calls[0] > 60.0:
+                _agnes_text_calls.pop(0)
+            if len(_agnes_text_calls) < _AGNES_TEXT_RPM:
+                _agnes_text_calls.append(now)
+                return
+            wait = 60.0 - (now - _agnes_text_calls[0]) + 0.25
+        time.sleep(max(0.5, min(wait, 60.0)))
+
+
+def _agnes_chat_post(url: str, body: dict, timeout) -> requests.Response:
+    """POST to Agnes chat under the RPM cap, absorbing one 429.
+
+    A single 429 is waited out (Retry-After, else a short back-off)
+    rather than reported, so it never counts toward the outage breaker.
+    A second consecutive 429 is returned to the caller as-is — at that
+    point something other than our own pacing is going on, and falling
+    through to NIM is the right call.
+    """
+    key = (os.getenv("AGNES_API_KEY") or "").strip()
+    hdrs ={"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    r = None
+    for attempt in range(2):
+        _agnes_text_gate()
+        r = requests.post(url, headers=hdrs, json=body, timeout=timeout)
+        if r.status_code != 429 or attempt == 1:
+            return r
+        try:
+            wait = float(r.headers.get("Retry-After") or 0)
+        except Exception:
+            wait = 0
+        wait = min(30.0, wait or 60.0 / max(1, _AGNES_TEXT_RPM) * 3)
+        log.info(f"Agnes text: 429 — pacing {wait:.0f}s then retrying once")
+        time.sleep(wait)
+    return r
+
+
 def _agnes_chat_fallback(messages, model=None, max_tokens=2048, temperature=0.7,
                          response_format=None, timeout=45):
     """Call Agnes' OpenAI-compatible chat endpoint."""
@@ -428,11 +491,7 @@ def _agnes_chat_fallback(messages, model=None, max_tokens=2048, temperature=0.7,
     }
     if response_format:
         body["response_format"] = response_format
-    r = requests.post(
-        f"{_AGNES_BASE}/chat/completions",
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-        json=body, timeout=timeout,
-    )
+    r = _agnes_chat_post(f"{_AGNES_BASE}/chat/completions", body, timeout)
     r.raise_for_status()
     j = r.json() or {}
     return ((j.get("choices") or [{}])[0].get("message", {}) or {}).get("content") or ""
@@ -1084,12 +1143,11 @@ def _agnes_vision_score(messages, timeout: int = 60):
     if not key:
         return None
     try:
-        r = requests.post(
+        r = _agnes_chat_post(
             f"{os.getenv('AGNES_API_BASE', 'https://apihub.agnes-ai.com/v1')}/chat/completions",
-            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-            json={"model": _AGNES_VISION_MODEL, "messages": messages,
-                  "max_tokens": 1024, "temperature": 0.0},
-            timeout=timeout,
+            {"model": _AGNES_VISION_MODEL, "messages": messages,
+             "max_tokens": 1024, "temperature": 0.0},
+            timeout,
         )
         if r.status_code != 200:
             log.warning(f"vision_score: agnes HTTP {r.status_code}")

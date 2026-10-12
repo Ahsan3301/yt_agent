@@ -68,18 +68,81 @@ def _agnes_key() -> str:
 # aspect ratio, so nothing is cropped or letterboxed.
 #
 # This is a DIFFERENT endpoint from the chat/image ones and is
-# asynchronous: POST /v1/videos returns a task id, then you poll
-# GET /v1/videos/<id> until status=completed and read metadata.url.
+# asynchronous: POST /v1/videos returns a task, then you poll
+# GET /agnesapi?video_id=<id>&model_name=<model> (note: NO /v1) until
+# status=completed and read the top-level `url`.
 # Calling the video model through /chat/completions returns
 # 403 "Model is blocked", which reads like an account restriction but
 # only means the model is not served on that endpoint.
+#
+# AGNES VIDEO 2.5 (2026-10-12). v2.0 was discontinued 2026-09-25 and
+# every create since returned 503 model_not_found — 99 failures and 0
+# clips in the 72h before this was noticed. 2.5 is not a rename; the
+# request shape changed almost entirely. Each point below was checked
+# against the live endpoint, not just the docs:
+#
+#   * width / height / num_frames / frame_rate / num_inference_steps
+#     are FORBIDDEN fields (HTTP 400 "width is a forbidden field").
+#     Shape is now aspect_ratio="9:16" plus a size TIER ("720P"/"1080P").
+#   * negative_prompt is also forbidden ("not an allowed request
+#     field"), so the negatives cannot be sent at all.
+#   * `mode` is required: "keyframe" with first_frame for image-to-video,
+#     "text" without. first_frame accepts our base64 data URI (verified:
+#     completed in 159s, valid mp4) — no upload step needed.
+#   * seconds is a STRING in ["4", "12"]; "3" is rejected. Our beats are
+#     2-3.5s, so clips are generated at 4s and the editor trims them.
+#   * flash only accepts size "720P" (rejected otherwise) and returns
+#     704x1280; full 2.5 offers 1080P.
+#   * Video creates are still limited to 2/min, and REJECTED requests
+#     count against it — two 400s used up the window and the next two
+#     creates bounced with 429.
 #
 # Cost control: ~90 s per 5 s clip, so generating every shot this way
 # would add 15-30 min to a render. AGNES_VIDEO_SHOTS caps how many
 # shots get a real clip; the rest fall through to the image chain. The
 # cap applies to the FIRST shots because Shorts retention is decided in
 # the opening seconds — that is where motion earns the most.
-_AGNES_VIDEO_MODEL = os.getenv("AGNES_VIDEO_MODEL", "agnes-video-v2.0")
+# Flash by default, and for a money reason rather than a quality one.
+# Full agnes-video-2.5 is $0.040/s at 1080P — $0.16 per 4s clip — and
+# the account held $0.03 on 2026-10-12 ("insufficient_user_quota ...
+# required: $0.160000"), so it could not produce a single clip. Flash
+# is free for a limited time and was verified working on our key.
+#
+# The cost of that choice is resolution: flash is 720P only (704x1280),
+# so clips are upscaled ~1.5x to the 1080x1920 output — the softening
+# that the 1080 move under v2.0 existed to remove. Once the balance is
+# topped up, AGNES_VIDEO_MODEL=agnes-video-2.5 restores 1080P without a
+# code change; the size follows the model automatically.
+_AGNES_VIDEO_MODEL = os.getenv("AGNES_VIDEO_MODEL", "agnes-video-2.5-flash")
+# The size tier for non-flash models. Flash ignores this and always
+# sends 720P, since anything else is rejected before generation.
+_AGNES_VIDEO_SIZE = os.getenv("AGNES_VIDEO_SIZE", "1080P")
+# Retrieval lives on the API root, not under /v1 like the create call.
+_AGNES_VIDEO_POLL_BASE = os.getenv(
+    "AGNES_VIDEO_POLL_BASE",
+    os.getenv("AGNES_API_BASE", "https://apihub.agnes-ai.com/v1").rstrip("/").removesuffix("/v1"),
+)
+
+# Process-wide off switch for errors that retrying cannot fix.
+#
+# v2.0's death showed the cost of not having one: model_not_found came
+# back as HTTP 503, our retry list treats 503 as transient, so EVERY
+# shot spent ~2.5 minutes retrying a model that no longer existed
+# before falling back. Same for an empty balance. Once either is seen,
+# stop asking for a while — every shot would get the same answer.
+# Time-boxed rather than permanent so a top-up or a provider fix is
+# picked up without restarting the worker.
+_AGNES_VIDEO_OFF_UNTIL = 0.0
+_AGNES_VIDEO_OFF_REASON = ""
+_AGNES_VIDEO_OFF_SECONDS = int(os.getenv("AGNES_VIDEO_OFF_SECONDS", "1800"))
+
+
+def _agnes_video_off(reason: str) -> None:
+    global _AGNES_VIDEO_OFF_UNTIL, _AGNES_VIDEO_OFF_REASON
+    _AGNES_VIDEO_OFF_UNTIL = time.time() + _AGNES_VIDEO_OFF_SECONDS
+    _AGNES_VIDEO_OFF_REASON = reason
+    log.warning(f"agnes-video: DISABLED for {_AGNES_VIDEO_OFF_SECONDS}s — {reason}. "
+                f"Shots fall through to stills/other sources until then.")
 # 180 -> 600. Measured: a task exceeded 180s while the provider's
 # queue was full (503 video_queue_full on a neighbouring shot), and
 # the shot degraded to a still. The task was still processing
@@ -146,33 +209,22 @@ def _agnes_video_generate(prompt: str, output_dir: str, idx: int, seconds: float
     Never raises: a video miss must fall through to the image chain
     rather than fail the shot, since a missing shot kills the render.
     """
+    import math
     import requests as _rq
     key = _agnes_key()
     if not key:
         return None
+    if time.time() < _AGNES_VIDEO_OFF_UNTIL:
+        log.info(f"agnes-video: shot {idx} skipped — off ({_AGNES_VIDEO_OFF_REASON})")
+        return None
     headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    model = _AGNES_VIDEO_MODEL
     try:
-        # Parameters per the Agnes Video V2.0 reference:
-        #   wiki.agnes-ai.com/en/docs/agnes-video-v20.md
-        #
-        # width/height are what select the aspect ratio — there is no
-        # aspect_ratio/size/ratio parameter, and passing one is accepted
-        # with HTTP 200 and silently ignored. Omitting width/height
-        # entirely gives the 1152x768 LANDSCAPE default, which is wrong
-        # for Shorts. The service normalises whatever it is given to the
-        # nearest preset tier (720x1280 comes back as 704x1280).
-        #
-        # Duration is num_frames / frame_rate, and num_frames MUST
-        # satisfy 8n+1 (max 441). 24fps rather than 16: the docs' own
-        # duration table is built on 24, and 16fps reads as judder on a
-        # slow push-in, which is most of what we ask for.
-        _secs = max(2.0, min(float(seconds or 5.0), 10.0))
-        # Snap UP to the next legal 8n+1, never down: a clip shorter than
-        # its shot leaves a gap the editor has to fill by freezing or
-        # stretching. Rounding up reproduces the reference table exactly
-        # (5s -> 121 frames, 10s -> 241).
-        _frames = int(round(_secs * 24))
-        _frames = max(9, min(441, ((_frames - 1 + 7) // 8) * 8 + 1))
+        # Seconds: a string in ["4", "12"]. Round UP, never down — a
+        # clip shorter than its shot leaves a gap the editor has to fill
+        # by freezing or stretching, while a longer one is just trimmed.
+        _secs = int(math.ceil(float(seconds or 5.0)))
+        _secs = max(4, min(12, _secs))
         # Direction, not just description.
         #
         # The prompt handed in here is the DIFFUSION prompt — it
@@ -186,67 +238,55 @@ def _agnes_video_generate(prompt: str, output_dir: str, idx: int, seconds: float
         # intended movement instead of hallucinated wobble.
         _moves = ("slow dolly-in", "slow push-in", "gentle handheld drift",
                   "slow tilt up", "steady tracking shot")
+        # The quality clause carries what negative_prompt used to, and it
+        # is phrased POSITIVELY on purpose. 2.5 forbids negative_prompt,
+        # and pasting the old list ("extra limbs, watermark, text ...")
+        # into the prompt would ask the model to draw those things: a
+        # term named in a prompt tends to be summoned, negated or not —
+        # measured on the image side, where naming an object in a
+        # "don't" clause put it in frame.
         _directed = (
             f"{prompt[:900]}. "
             f"Cinematography: {_moves[idx % len(_moves)]}, "
             f"single continuous take, stable framing, natural motion, "
-            f"consistent lighting throughout the shot."
+            f"consistent lighting throughout the shot. "
+            f"Crisp clean detail, steady anatomy, and every character keeps "
+            f"the same body, posture and outfit from first frame to last."
         )
+        is_flash = "flash" in model.lower()
         body = {
-            "model": _AGNES_VIDEO_MODEL,
+            "model": model,
             "prompt": _directed[:1200],
-            # 1080x1920, not 720x1280. The model normalises to 480p/720p/
-            # 1080p tiers (wiki.agnes-ai.com/en/docs/agnes-video-v20.md),
-            # so asking for 720p meant every clip was then scaled UP 1.5x
-            # to the 1080x1920 output — softening detail and smearing
-            # exactly the fine texture that reads as "artifacting". The
-            # 1080p tier is available; generate at output resolution and
-            # the upscale disappears.
-            "width": int(os.getenv("AGNES_VIDEO_W", "1080")),
-            "height": int(os.getenv("AGNES_VIDEO_H", "1920")),
-            "num_frames": _frames, "frame_rate": 24,
-            # Documented and never sent. This is the standard lever for
-            # artifact reduction — more denoising steps mean fewer of
-            # the warped hands, smeared faces and boiling textures that
-            # show up on a default-step generation.
-            "num_inference_steps": int(os.getenv("AGNES_VIDEO_STEPS", "40")),
-            "negative_prompt": (
-                "blurry, low quality, distorted, deformed, warped face, "
-                "extra limbs, extra fingers, melting features, flickering, "
-                "morphing, jitter, ghosting, duplicated subject, "
-                "watermark, text, subtitles, letterboxing, static, still image, "
-                # The clip drifts the same way the stills did: a
-                # four-legged animal stands up on two legs partway
-                # through, or acquires a coat it never had.
-                "animal standing on two legs, anthropomorphic animal, "
-                "animal wearing human clothing, character changing appearance"
-            ),
+            "seconds": str(_secs),
+            "aspect_ratio": "9:16",
+            # Flash rejects anything but 720P before generation, so do not
+            # let a 1080P setting meant for full 2.5 break it.
+            "size": "720P" if is_flash else _AGNES_VIDEO_SIZE,
+            "mode": "text",
         }
         # Image-to-video when we already have a still for this shot.
         # Animating our own 9:16 frame beats text-to-video on both
         # fidelity and consistency: the composition is already the one
         # the shot called for, so the model interpolates motion instead
-        # of reinventing the scene.
+        # of reinventing the scene. The data URI shotfinder builds is
+        # accepted as first_frame directly — verified live.
         if init_image_url:
-            # Accepts a public URL or a base64 data URI — both verified
-            # against the live endpoint before relying on it, so a local
-            # portrait needs no upload anywhere.
-            body["image"] = init_image_url
+            body["mode"] = "keyframe"
+            body["first_frame"] = init_image_url
             log.info(f"agnes-video: shot {idx} driven by a character reference")
-        # Retry the two errors the live endpoint actually returns under
-        # load. Measured against it directly:
+        # Retry only what is genuinely transient.
         #
-        #   429 {"code":"rate_limit_exceeded"} — "allows 2 requests per
-        #       1 minute(s)". Six shots means we WILL hit this.
-        #   503 {"code":"video_queue_full"}    — their queue is busy.
+        #   429 rate_limit — "2 requests per 1 minute". Six shots WILL hit it.
+        #   503 video_queue_full — their queue is busy.
         #
-        # Both are transient and explicitly retryable, and the previous
-        # code treated every >=400 as fatal and returned None. The caller
-        # reads None as "no motion available" and quietly substitutes a
-        # still, so a momentary rate limit permanently downgraded that
-        # shot. That is the likeliest reason motion looked inconsistent
-        # across a video and across niches — nothing errored, shots just
-        # went missing.
+        # A momentary rate limit must not cost a shot its motion: the
+        # caller reads None as "no motion available" and quietly
+        # substitutes a still.
+        #
+        # But a 503 is NOT always transient. v2.0's discontinuation came
+        # back as 503 model_not_found, and an empty balance as 403
+        # insufficient_user_quota. Retrying those just burns minutes per
+        # shot, so they switch video off for the process instead.
         _RETRYABLE = (408, 409, 425, 429, 500, 502, 503, 504)
         r = None
         for _attempt in range(_AGNES_VIDEO_MAX_TRIES):
@@ -254,8 +294,15 @@ def _agnes_video_generate(prompt: str, output_dir: str, idx: int, seconds: float
             r = _rq.post(f"{_AGNES_BASE}/videos", headers=headers, timeout=60, json=body)
             if r.status_code < 400:
                 break
+            _txt = r.text or ""
+            if "model_not_found" in _txt:
+                _agnes_video_off(f"model {model} not available on this key (HTTP {r.status_code})")
+                return None
+            if "insufficient_user_quota" in _txt or "insufficient_quota" in _txt:
+                _agnes_video_off(f"Agnes balance too low for {model} — top up, or use a flash model")
+                return None
             if r.status_code not in _RETRYABLE or _attempt == _AGNES_VIDEO_MAX_TRIES - 1:
-                log.warning(f"agnes-video: create failed HTTP {r.status_code}: {r.text[:160]}")
+                log.warning(f"agnes-video: create failed HTTP {r.status_code}: {_txt[:200]}")
                 return None
             # Honour Retry-After when present, else back off. The window
             # is a minute, so waiting out a rate limit is cheap next to
@@ -266,12 +313,15 @@ def _agnes_video_generate(prompt: str, output_dir: str, idx: int, seconds: float
                 _wait = 0
             _wait = _wait or min(90.0, 20.0 * (_attempt + 1))
             log.info(f"agnes-video: shot {idx} got HTTP {r.status_code} "
-                     f"({(r.text or '')[:60]}) — retrying in {_wait:.0f}s "
+                     f"({_txt[:60]}) — retrying in {_wait:.0f}s "
                      f"[{_attempt + 1}/{_AGNES_VIDEO_MAX_TRIES}]")
             time.sleep(_wait)
-        task_id = (r.json() or {}).get("task_id") or (r.json() or {}).get("id")
-        if not task_id:
-            log.warning("agnes-video: no task id in create response")
+        j = r.json() or {}
+        # Retrieval is keyed by video_id. On 2.5 it equals the task id,
+        # but the docs name video_id for polling, so prefer it.
+        video_id = j.get("video_id") or j.get("task_id") or j.get("id")
+        if not video_id:
+            log.warning(f"agnes-video: no video id in create response: {str(j)[:160]}")
             return None
     except Exception as e:
         log.warning(f"agnes-video: create error: {e}")
@@ -280,21 +330,28 @@ def _agnes_video_generate(prompt: str, output_dir: str, idx: int, seconds: float
     deadline = time.time() + _AGNES_VIDEO_POLL_SECONDS
     url = ""
     while time.time() < deadline:
-        time.sleep(10)
+        time.sleep(6)
         try:
-            p = _rq.get(f"{_AGNES_BASE}/videos/{task_id}", headers=headers, timeout=30)
+            p = _rq.get(f"{_AGNES_VIDEO_POLL_BASE}/agnesapi",
+                        params={"video_id": video_id, "model_name": model},
+                        headers=headers, timeout=30)
             d = p.json() if p.status_code < 400 else {}
         except Exception:
             continue
         status = str(d.get("status") or "")
-        if status in ("completed", "succeeded", "success", "finished"):
-            url = str((d.get("metadata") or {}).get("url") or "")
+        if status == "completed":
+            # Top-level `url` on 2.5. metadata.url was v2.0's location —
+            # kept as a fallback only so a provider-side revert does not
+            # silently lose finished clips.
+            url = str(d.get("url") or (d.get("metadata") or {}).get("url") or "")
             break
-        if status in ("failed", "error"):
-            log.warning(f"agnes-video: task {task_id} reported {status}")
+        if status == "failed":
+            _err = d.get("error") or {}
+            _msg = _err.get("message") if isinstance(_err, dict) else str(_err)
+            log.warning(f"agnes-video: task {video_id} failed: {str(_msg)[:200]}")
             return None
     if not url:
-        log.warning(f"agnes-video: task {task_id} did not finish within "
+        log.warning(f"agnes-video: task {video_id} did not finish within "
                     f"{_AGNES_VIDEO_POLL_SECONDS}s — falling back to a still")
         return None
 
@@ -360,14 +417,19 @@ def _agnes_generate(prompt, output_dir, trial, negative_prompt="", ref_image_pat
     # negative and every per-niche negative_style was dead config for
     # the primary image provider.
     #
-    # Sent as a field AND folded into the prompt text, deliberately.
-    # The field returns 200, but a 200 only proves it was accepted, not
-    # honoured — this is a Gemini-class model and those generally have
-    # no true negative conditioning. The prompt text definitely reaches
-    # the model, so the constraint travels both ways and costs one
-    # clause either way.
+    # Folded into the prompt text ONLY. The negative_prompt FIELD is no
+    # longer sent.
+    #
+    # It used to go both ways, on the reasoning that the field returned
+    # 200 but a 200 only proves acceptance, not that a Gemini-class model
+    # honours it. Agnes then started rejecting the field outright —
+    # HTTP 400 "negative_prompt is not supported by text image queue" —
+    # and because every call carried it, EVERY Agnes image failed: 655 of
+    # 655 in the 72h before 2026-10-12. Renders kept finishing only
+    # because shots fell through to Cloudflare, Pollinations and stock,
+    # which quietly cost the animated niches their consistent look.
+    # The prompt text is the half that demonstrably reaches the model.
     if negative_prompt:
-        body["negative_prompt"] = negative_prompt[:400]
         final_prompt = f"{final_prompt}. Avoid: {negative_prompt[:260]}"
         body["prompt"] = final_prompt
     # Character reference. The cast description alone keeps a face
@@ -435,7 +497,13 @@ def _agnes_generate(prompt, output_dir, trial, negative_prompt="", ref_image_pat
             _AGNES_COOLDOWN_UNTIL = time.time() + 600
             log.warning(f"agnes: HTTP {r.status_code} — cooling provider 10 min")
             return None, seed
-        r.raise_for_status()
+        if r.status_code >= 400:
+            # Log the BODY. raise_for_status() alone produced "400 Client
+            # Error: Bad Request" 655 times while the actual reason — a
+            # field the API had started rejecting — sat unread in the
+            # response. One line of body would have named it immediately.
+            log.warning(f"agnes gen failed: HTTP {r.status_code}: {(r.text or '')[:240]}")
+            return None, seed
         data = (r.json() or {}).get("data") or []
         if not data:
             return None, seed
